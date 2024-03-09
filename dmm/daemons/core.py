@@ -4,10 +4,14 @@ from networkx import MultiGraph
 from dmm.db.session import databased
 from dmm.utils.db import get_requests, mark_requests, update_bandwidth, get_site, get_unused_endpoint
 
+import logging
+
 @databased
 def decider(session=None):
+    logging.debug('Decides which routers it wants to go to. Once data has reached final destination, removes deleted requests.')
     network_graph = MultiGraph()
     # Get all active requests
+    # Understanding: Adds all nodes corresponding to possible routes to graph
     reqs =  get_requests(status=["STAGED", "ALLOCATED", "MODIFIED", "DECIDED", "STALE", "PROVISIONED", "FINISHED", "CANCELED"], session=session)
     for req in reqs:
             src_port_capacity = get_site(req.src_site, attr="port_capacity", session=session)
@@ -23,6 +27,7 @@ def decider(session=None):
     # for prio modified reqs, update prio in graph, this is a very bad way of doing things and can be fixed by sharing the network_graph object
     # between processes and update the prio in the graph where I set modified bandwidth, but sharing complex objects between multiprocessing
     # processes is non-trivial
+    # Understanding: Updates the priority of all modified requests
     reqs_modified = [req for req in get_requests(status=["MODIFIED"], session=session)]
     for req in reqs_modified:
         for _, _, key, data in network_graph.edges(keys=True, data=True):
@@ -32,6 +37,7 @@ def decider(session=None):
     network_graph_copy = copy.deepcopy(network_graph)
     # recursively update the graph, probably garbage scaling but I am assuming this will never be used for more than O(10) nodes.
     #TODO: update this comment to explain how this works.
+    # Question: Are we updating the graph based on the updated priorities? 
     while len(network_graph_copy.nodes) > 1:
         total_priority_filter = lambda x : sum(rule['priority'] for rules in network_graph_copy[x].values() for rule in rules.values())
         max_node = sorted(network_graph_copy.nodes, key=total_priority_filter, reverse=True)[0]
@@ -51,6 +57,7 @@ def decider(session=None):
         network_graph_copy.remove_node(max_node)
 
     # for staged reqs, allocate new bandwidth
+    # Understanding: Allocates bandwidth to requests without bandwidth
     reqs_staged = [req for req in get_requests(status=["STAGED"], session=session)]
     for req in reqs_staged:
         for _, _, key, data in network_graph.edges(keys=True, data=True):
@@ -60,6 +67,7 @@ def decider(session=None):
         mark_requests([req], "DECIDED", session)
 
     # for already provisioned reqs, modify bandwidth and mark as stale
+    # Understanding: If the reqs already have allocated bandwidth, update and then mark as outdated(?)
     reqs_provisioned = [req for req in get_requests(status=["MODIFIED", "PROVISIONED"], session=session)]
     for req in reqs_provisioned:
         for _, _, key, data in network_graph.edges(keys=True, data=True):
@@ -71,8 +79,14 @@ def decider(session=None):
 
 @databased
 def allocator(session=None):
+    logging.debug('Allocates IP addresses for data flow to each request')
     reqs_init = [req_init for req_init in get_requests(status=["INIT"], session=session)]
-    for new_request in reqs_init:        
+    for new_request in reqs_init:
+        '''
+        Understanding: Checks if new reqs have the same source/destination as finished reqs
+                        If yes, allocates those resources to the new req and deletes old ones
+                        If not, finds unused nodes to assign to the new req
+        '''         
         reqs_finished = [req_fin for req_fin in get_requests(status=["FINISHED"], session=session)]
         for req_fin in reqs_finished:
             if (req_fin.src_site == new_request.src_site and req_fin.dst_site == new_request.dst_site):

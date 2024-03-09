@@ -16,7 +16,7 @@ def get_engine():
         host = config_get("db", "db_host", default="localhost")
         port = config_get("db", "db_port", default="5432")
         db_name = config_get("db", "db_name", default="dmm")
-        _ENGINE = create_engine(f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{db_name}")
+        _ENGINE = create_engine('sqlite:///dmm.db')
     assert _ENGINE
     return _ENGINE
 
