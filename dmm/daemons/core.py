@@ -37,7 +37,7 @@ def decider(session=None):
     network_graph_copy = copy.deepcopy(network_graph)
     # recursively update the graph, probably garbage scaling but I am assuming this will never be used for more than O(10) nodes.
     #TODO: update this comment to explain how this works.
-    # Question: Are we updating the graph based on the updated priorities? 
+    # Understanding: Are we updating the graph based on the updated priorities? 
     while len(network_graph_copy.nodes) > 1:
         total_priority_filter = lambda x : sum(rule['priority'] for rules in network_graph_copy[x].values() for rule in rules.values())
         max_node = sorted(network_graph_copy.nodes, key=total_priority_filter, reverse=True)[0]

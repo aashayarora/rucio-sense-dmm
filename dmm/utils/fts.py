@@ -5,6 +5,7 @@ import requests
 from dmm.utils.config import config_get
 
 def setup_request(req):
+    logging.debug('For a given request, returns the url, certification, path, source port, and destination port')
     url = config_get("fts", "fts_host")
     cert = (config_get("fts", "cert"), config_get("fts", "key"))
     capath = "/etc/grid-security/certificates/"
@@ -24,6 +25,7 @@ def setup_request(req):
     return url, cert, capath, headers, src_url_no_port, dst_url_no_port
 
 def modify_link_config(req, max_active, min_active):
+    logging.debug('Modifies link configuration')
     url, cert, capath, headers, src_url_no_port, dst_url_no_port = setup_request(req)
 
     data = {
@@ -48,6 +50,7 @@ def modify_link_config(req, max_active, min_active):
         return None
     
 def modify_se_config(req, max_inbound, max_outbound):
+    logging.debug('Updates storage configuration')
     url, cert, capath, headers, src_url_no_port, dst_url_no_port = setup_request(req)
     data = {
         src_url_no_port: {
