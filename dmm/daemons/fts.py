@@ -17,7 +17,7 @@ num_active = {
 
 @databased
 def fts_modifier(session=None):
-    logging.debug('Prepares ALLOCATED and PROVISIONED requests')
+    #logging.debug('Prepares ALLOCATED and PROVISIONED requests')
     #Understanding: Retrieves all Allocated reqs
     reqs_new = [req for req in get_requests(status=["ALLOCATED"], session=session)]
     for allocated_req in reqs_new:
