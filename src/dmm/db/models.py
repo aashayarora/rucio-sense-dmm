@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, JSON, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -47,6 +47,7 @@ class Request(BASE, ModelBase):
     sense_circuit_status = Column(String(255))
     fts_modified = Column(Boolean())
     sense_provisioned_at = Column(DateTime())
+    bytes_at_t = Column(JSON())
 
     def __init__(self, **kwargs):
         super(Request, self).__init__(**kwargs)
@@ -87,3 +88,15 @@ class Mesh(BASE, ModelBase):
 
     def __init__(self, **kwargs):
         super(Mesh, self).__init__(**kwargs)
+
+# class Throughput(BASE, ModelBase):
+#     __tablename__ = "throughput"
+#     ipv6 = Column(String(255), primary_key=True)
+#     interval_1 = Column(Integer())
+#     interval_2 = Column(Integer())
+#     interval_3 = Column(Integer())
+#     interval_4 = Column(Integer())
+#     interval_5 = Column(Integer())
+
+#     def __init__(self, **kwargs):
+#         super(Throughput, self).__init__(**kwargs)

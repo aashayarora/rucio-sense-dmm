@@ -43,6 +43,13 @@ def get_dmm_status(session=None):
         logging.error(e)
         return "Problem in the DMM frontend\n"
 
+''' 
+Need some way to integrate particular rule information from Prometheus 
+Current metrics: transfer state (might be redunandt with circuit status), transfer start time,
+                    transfer end time, transfer completion time, transfer operation time (how long it took),
+                    transfer file size, volume of data transferred, number of retries, errors (if any)
+Is there a way to constantly refresh this so people don't constantly have to reopen the page? 
+'''
 @frontend_app.route("/details/<rule_id>", methods=["GET", "POST"])
 @databased
 def open_rule_details(rule_id,session=None):
@@ -50,11 +57,19 @@ def open_rule_details(rule_id,session=None):
     try:
         req = get_request_from_id(rule_id, session=session)
         cursor = get_request_cursor(session=session)
-        cursor.execute(f"SELECT rule_id, bandwidth, sense_circuit_status FROM requests WHERE rule_id = '{req.rule_id}'")
+        cursor.execute(f"SELECT rule_id, bandwidth, sense_circuit_status, src_ipv6_block, sense_provisioned_at FROM requests WHERE rule_id = '{req.rule_id}'")
         data = cursor.fetchone()
-        rule_id, bandwidth, sense_circuit_status = data
+        rule_id, bandwidth, sense_circuit_status, src_ipv6, prov_time = data
         logging.debug(f"Cursor data: {data}")
-        return render_template("details.html",rule_id=rule_id, bandwidth=bandwidth, sense_circuit_status=sense_circuit_status)
+        fts_query = fts_submit_job_query(rule_id)
+        logging.debug(fts_query)
+        final_state, error = fts_query['t_final_transfer_state'], fts_query['tr_error_category']
+        #prom_get_throughput_at_t()
+        logging.debug(f"Final state: {final_state}, Error: {error}")
+        
+        return render_template("details.html",rule_id=rule_id, bandwidth=bandwidth, 
+                               sense_circuit_status=sense_circuit_status)
+                            #    t_final_state=final_state, tr_error_category=error)
     except Exception as e:
         logging.error(e)
         return "Failed to retrieve rule info\n"
@@ -67,3 +82,22 @@ def process_id(session=None):
     logging.debug(f"Rule ID:{rule_id}")
     url = url_for('open_rule_details', rule_id=rule_id, _external=True)
     return url
+
+# def fts_get_monit_metrics(rule_id):
+#     result_query = fts_submit_job_query(rule_id)
+#     transferred_vol = result_query['transferred_vol']
+#     #transferred_vol @ timestamp
+#     src_ip, dst_ip = result_query['src_hostname'], result_query['dst_hostname']
+#     src_ipv6 = socket.getaddrinfo(src_ip,None)[-1][-1][0]
+#     dst_ipv6 = socket.getaddrinfo(dst_ip,None)[-1][-1][0] 
+
+'''
+Potential trends to graph:
+Correlation between src/dst sites and transfer rates
+Success/failure rates at a given src/dst, given time
+Throughput at given time (see high traffic) - time series graph
+'''
+@frontend_app.route('/statistics', methods=['GET','POST'])
+@databased
+def see_correlations(session=None):
+    return render_template("correlation.html")

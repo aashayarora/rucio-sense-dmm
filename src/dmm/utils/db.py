@@ -3,6 +3,7 @@ import ipaddress
 from sqlalchemy import text, or_
 
 from dmm.db.models import Request, Site, Endpoint, Mesh
+#from dmm.db.models import Request, Site, Endpoint, Mesh, Throughput
 from dmm.utils.sense import get_allocation, free_allocation
 
 # Requests
@@ -51,6 +52,30 @@ def mark_fts_modified(req, session=None):
         "fts_modified": True
     })
     logging.debug(f"Marked fts_modified for {req.rule_id}")
+
+def update_bytes_at_t(req, volume, session=None):
+    current = req.bytes_at_t
+    #If no dictionary exists, create one
+    if current is None:
+        values = {
+                    'interval_1': 0, 
+                    'interval_2': 0, 
+                    'interval_3': 0,
+                    'interval_4':0,
+                    'interval_5':volume
+                  }
+        req.update({'bytes_at_t':values})
+    #Otherwise update values in the dictionary
+    else:
+        values = {
+            'interval_1': current['interval_2'], 
+            'interval_2': current['interval_3'], 
+            'interval_3': current['interval_4'],
+            'interval_4': current['interval_5'],
+            'interval_5':volume
+        }
+        req.update({'bytes_at_t':values})
+    logging.debug(f"Updated throughput calculations for {req.src_ipv6_block}")
 
 # Sites
 def get_site(site_name, attr=None, session=None):
@@ -104,4 +129,5 @@ def get_max_bandwidth(site, session=None):
     mesh = session.query(Mesh).filter(or_(Mesh.site_1 == site, Mesh.site_2 == site)).all()
     bandwidths = {m.max_bandwidth for m in mesh}
     return max(bandwidths) 
+
     
