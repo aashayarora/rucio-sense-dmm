@@ -9,34 +9,34 @@ PASSWORD = "dmm"
 def add_rule(rule_id, src_site, dst_site, priority):
     conn = psycopg.connect(f"host={HOST} dbname={DBNAME} user={USER} password={PASSWORD}")
     cur = conn.cursor()
-    cur.execute(f"INSERT INTO requests (rule_id, src_site, dst_site, priority, transfer_status) VALUES ('{rule_id}', '{src_site}', '{dst_site}', '{priority}', 'INIT');")
+    cur.execute(f"INSERT INTO request (rule_id, src_site, dst_site, priority, transfer_status) VALUES ('{rule_id}', '{src_site}', '{dst_site}', '{priority}', 'INIT');")
     conn.commit()
     conn.close()
 
 def modify_rule(rule_id, priority):
     conn = psycopg.connect(f"host={HOST} dbname={DBNAME} user={USER} password={PASSWORD}")
     cur = conn.cursor()
-    cur.execute(f"UPDATE requests SET priority='{priority}', modified_priority='{priority}', transfer_status='MODIFIED' WHERE rule_id='{rule_id}';")
+    cur.execute(f"UPDATE request SET priority='{priority}', modified_priority='{priority}', transfer_status='MODIFIED' WHERE rule_id='{rule_id}';")
     conn.commit()
     conn.close()
 
 def finish_rule(rule_id):
     conn = psycopg.connect(f"host={HOST} dbname={DBNAME} user={USER} password={PASSWORD}")
     cur = conn.cursor()
-    cur.execute(f"UPDATE requests SET transfer_status='FINISHED' WHERE rule_id='{rule_id}';")
+    cur.execute(f"UPDATE request SET transfer_status='FINISHED' WHERE rule_id='{rule_id}';")
     conn.commit()
     conn.close()
 
 def delete_rule(rule_id):
     conn = psycopg.connect(f"host={HOST} dbname={DBNAME} user={USER} password={PASSWORD}")
     cur = conn.cursor()
-    cur.execute(f"DELETE FROM requests WHERE rule_id='{rule_id}';")
+    cur.execute(f"DELETE FROM request WHERE rule_id='{rule_id}';")
     conn.commit()
     conn.close()  
 
 
 if __name__ == "__main__":
-    argparser = argparse.ArgumentParser(description="Fake Rucio Requests to DMM")
+    argparser = argparse.ArgumentParser(description="Fake Rucio Request to DMM")
     argparser.add_argument("action", help="Action to perform: add, finish, modify")
     argparser.add_argument("--rule_id", help="Rule ID")
     argparser.add_argument("--src_site", help="Source Site")

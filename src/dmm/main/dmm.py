@@ -19,13 +19,13 @@ from waitress import serve
 
 from rucio.client import Client
 from dmm.utils.config import config_get_int, config_get_bool
-from dmm.main.orchestrator import fork
+from dmm.utils.orchestrator import fork
 
-from dmm.daemons.rucio import preparer, rucio_modifier, finisher
-from dmm.daemons.fts import fts_modifier
+from dmm.daemons.rucio import RucioInitDaemon, RucioModifierDaemon, RucioFinisherDaemon
+from dmm.daemons.fts import FTSModifierDaemon
 from dmm.daemons.sense import status_updater, stager, provision, sense_modifier, canceller, deleter
-from dmm.daemons.core import decider, allocator
-from dmm.daemons.sites import refresh_site_db
+from dmm.daemons.core import AllocatorDaemon, DeciderDaemon
+from dmm.daemons.sites import RefreshSiteDBDaemon
 from dmm.frontend.frontend import frontend_app
 
 class DMM:
@@ -56,16 +56,22 @@ class DMM:
     def start(self):
         logging.info("Starting Daemons")
 
-        database_builder_daemons = {
-            refresh_site_db: None
-        }
-        fork(self.database_builder_daemon_frequency, self.lock, database_builder_daemons)
-        
-        fts_daemons = {
-            fts_modifier: None
-        }
-        fork(self.dmm_daemon_frequency, self.lock, fts_daemons)
-        
+        allocator = AllocatorDaemon()
+        decider = DeciderDaemon()
+        sitedb = RefreshSiteDBDaemon()
+        fts = FTSModifierDaemon()
+        rucio_init = RucioInitDaemon(kwargs={"client": self.rucio_client})
+        rucio_modifier = RucioModifierDaemon(kwargs={"client": self.rucio_client})
+        rucio_finisher = RucioFinisherDaemon(kwargs={"client": self.rucio_client})
+
+        sitedb.start(self.database_builder_daemon_frequency, self.lock)
+        fts.start(self.fts_daemon_frequency, self.lock)
+        allocator.start(self.dmm_daemon_frequency, self.lock)
+        decider.start(self.dmm_daemon_frequency, self.lock)
+        rucio_init.start(self.rucio_daemon_frequency, self.lock)
+        rucio_modifier.start(self.rucio_daemon_frequency, self.lock)
+        rucio_finisher.start(self.rucio_daemon_frequency, self.lock)
+
         sense_daemons = {
             status_updater: {"debug_mode": self.debug_mode},
             stager: {"debug_mode": self.debug_mode}, 
@@ -76,19 +82,6 @@ class DMM:
         }
         fork(self.sense_daemon_frequency, self.lock, sense_daemons)
         
-        dmm_daemons = {
-            decider: None,
-            allocator: None,
-        }
-        fork(self.dmm_daemon_frequency, self.lock, dmm_daemons)
-
-        if self.use_rucio:
-            rucio_daemons = {
-                preparer: {"client": self.rucio_client}, 
-                rucio_modifier: {"client": self.rucio_client}, 
-                finisher: {"client": self.rucio_client}
-            }
-            fork(self.rucio_daemon_frequency, self.lock, rucio_daemons)
         try:
             serve(frontend_app, port=self.port)
         except:

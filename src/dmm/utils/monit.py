@@ -31,25 +31,19 @@ def prom_get_total_bytes_at_t(time, ipv6) -> float:
     """
     device, instance, job, sitename = prom_get_interface(ipv6)
     query_params = f"device=\"{device}\",instance=\"{instance}\",job=\"{job}\",sitename=\"{sitename}\""
-    print(query_params)
     metric = f"node_network_transmit_bytes_total{{{query_params}}}"
     # Get bytes transferred at the start time
     response = prom_submit_query({"query": metric, "time": time})
-    print(response)
     if response is not None and response["status"] == "success":
         bytes_at_t = prom_get_val_from_response(response)
     else:
         raise Exception(f"query {metric} failed")
     return float(bytes_at_t)
 
-def prom_get_throughput_at_t(time, ipv6, t_avg_over=None) -> float:
+def prom_get_throughput_at_t(time, ipv6, t_avg_over=5) -> float:
     bytes_transmitted = sum([i * prom_get_total_bytes_at_t(time + i * 0.5 * t_avg_over, ipv6) for i in [-1,1]])
     # TODO account for bin edges
     return bytes_transmitted / (t_avg_over)
-
-def fts_get_val_from_response(response):
-    """Extract desired value from typical location in Prometheus response"""
-    return response["hits"]["hits"][0]["_source"]["data"]
 
 def fts_submit_job_query(rule_id):
     fts_host = config_get("fts", "monit_host")
@@ -58,7 +52,7 @@ def fts_submit_job_query(rule_id):
     endpoint = "api/datasources/proxy/9233/monit_prod_fts_enr_complete*/_search"
     query_addr = f"{fts_host}/{endpoint}"
     data = {
-        "size": 2,
+        "size": 1,
         "query":{
             "bool":{
                 "filter":[{
@@ -73,8 +67,18 @@ def fts_submit_job_query(rule_id):
     }
     data_string = json.dumps(data)
     response = requests.get(query_addr, data=data_string, headers=headers).json()
-    timestamps = fts_get_val_from_response(response)
+    timestamps = [hit["_source"]["data"] for hit in response["hits"]["hits"]]
     return timestamps
 
 if __name__ == "__main__":
-    print(fts_submit_job_query("61b9e48e0de94ad394a6fe49d8560e5f"))
+    # print(fts_submit_job_query("95069e5365bd4381b9b2668ce739047b"))
+    # prom_get_interface("")
+    from datetime import datetime
+    import time
+    timestamp = round(datetime.timestamp(datetime.now()))
+    a = prom_get_total_bytes_at_t(timestamp, "2001:48d0:3001:114::700")
+    time.sleep(10)
+    timestamp = round(datetime.timestamp(datetime.now()))
+    b = prom_get_total_bytes_at_t(timestamp, "2001:48d0:3001:114::700")
+
+    print(b-a)

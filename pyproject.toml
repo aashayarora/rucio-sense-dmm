@@ -15,7 +15,8 @@ dependencies = [
     "networkx",
     "rucio-clients",
     "flask",
-    "waitress"
+    "waitress",
+    "scipy"
 ]
 description = "Data Movement Manager for Rucio SENSE interoperatio prototype"
 readme = "README.md"

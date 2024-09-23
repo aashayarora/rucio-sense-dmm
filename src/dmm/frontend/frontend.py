@@ -4,7 +4,7 @@ import json
 import os
 
 from dmm.db.session import databased
-from dmm.utils.db import get_request_from_id, get_request_cursor
+from dmm.db.request import Request
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 templates_folder = os.path.join(current_directory, "templates")
@@ -15,7 +15,7 @@ frontend_app = Flask(__name__, template_folder=templates_folder)
 def handle_client(rule_id, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
     try:
-        req = get_request_from_id(rule_id, session=session)
+        req = Request.from_id(rule_id, session=session)
         if req and req.src_url and req.dst_url:
             result = json.dumps({"source": req.src_url, "destination": req.dst_url})
             response = Response(result, content_type="application/json")
@@ -31,10 +31,10 @@ def handle_client(rule_id, session=None):
         response.headers.add("Content-Type", "text/plain")
         return response
 
-@frontend_app.route("/status", methods=["GET", "POST"])
+@frontend_app.route("/", methods=["GET"])
 @databased
 def get_dmm_status(session=None):
-    cursor = get_request_cursor(session=session)
+    cursor = Request.cursor(session=session)
     data = cursor.fetchall() 
     try:
         return render_template("index.html", data=data)

@@ -33,7 +33,6 @@ def get_uri(rse_name):
         response = discover_api.discover_lookup_name_get(rse_name, search="metadata", type="/sitename")
         if not good_response(response):
             raise ValueError(f"Discover query failed for {rse_name}")
-        response = json.loads(response)
         if not response["results"]:
             raise ValueError(f"No results for {rse_name}")
         matched_results = [result for result in response["results"] if rse_name in result["name/tag/value"]]
@@ -104,20 +103,19 @@ def get_list_of_endpoints(site_uri):
     try:
         logging.info(f"Getting list of endpoints for {site_uri}")
         workflow_api = WorkflowCombinedApi()
-        placeholder_uuid = config_get("sense", "dummy_uuid")
         manifest_json = {
             "Metadata": "?metadata?",
-            "sparql": "SELECT ?bp WHERE { ?bp a nml:BidirectionalPort } LIMIT 1",
             "sparql-ext": f"SELECT ?metadata WHERE {{ ?site nml:hasService ?md_svc. ?md_svc mrs:hasNetworkAttribute ?dir_xrootd. ?dir_xrootd mrs:type 'metadata:directory'. ?dir_xrootd mrs:tag '/xrootd'. ?dir_xrootd mrs:value ?metadata.  FILTER regex(str(?site), '{site_uri}') }} LIMIT 1",
             "required": "true"
         }
-        sense_response = workflow_api.manifest_create(json.dumps(manifest_json), si_uuid=placeholder_uuid)
-        response = json.loads(sense_response)
+        response = workflow_api.manifest_create(json.dumps(manifest_json))
+        metadata = response["jsonTemplate"]
+        response = workflow_api.manifest_create(json.dumps(manifest_json))
         metadata = json.loads(response["jsonTemplate"])
         logging.debug(f"Got list of endpoints: {metadata} for {site_uri}")
         return json.loads(metadata["Metadata"].replace("'", "\""))
     except Exception as e:
-        raise ValueError(f"Getting list of endpoints failed for {site_uri}, {e}, SENSE response: {sense_response}")
+        raise ValueError(f"Getting list of endpoints failed for {site_uri}, {e}, SENSE response: {response}")
 
 def stage_link(src_uri, dst_uri, src_ipv6, dst_ipv6, vlan_range, instance_uuid="", alias=""):
     logging.info(f"staging sense link for request {alias}")
@@ -145,7 +143,6 @@ def stage_link(src_uri, dst_uri, src_ipv6, dst_ipv6, vlan_range, instance_uuid="
     response = workflow_api.instance_create(json.dumps(intent))
     if not good_response(response):
         raise ValueError(f"SENSE query failed for {instance_uuid}")
-    response = json.loads(response)
     logging.debug(f"Staging returned response {response}")
     for query in response["queries"]:
         if query["asked"] == "maximum-bandwidth":

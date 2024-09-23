@@ -1,8 +1,12 @@
 import logging
-import ipaddress
 from sqlalchemy import text, or_
 
-from dmm.db.models import Request, Site, Endpoint, Mesh
+from dmm.db.request import Request
+from dmm.db.site import Site
+from dmm.db.endpoint import Endpoint
+from dmm.db.mesh import Mesh
+
+import ipaddress
 from dmm.utils.sense import get_allocation, free_allocation
 
 # Requests

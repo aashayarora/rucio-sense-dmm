@@ -1,11 +1,13 @@
 import logging
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
 
-from dmm.utils.db import get_requests, mark_requests, get_site, update_sense_circuit_status, get_vlan_range
 import dmm.utils.sense as sense
 
+from dmm.daemons.base import DaemonBase
+
 from dmm.db.session import databased
+from dmm.db.request import Request
+
 import re
 
 @databased
@@ -22,6 +24,7 @@ def status_updater(debug_mode=False, session=None):
                 req.update({"sense_provisioned_at": datetime.utcnow()})
     else:
         logging.debug("status_updater: skipping status update in debug mode")
+
 @databased
 def stager(debug_mode=False, session=None):
     def stage_sense_link(req, session):
@@ -147,3 +150,52 @@ def deleter(debug_mode=False, session=None):
                 mark_requests([req], "DELETED", session=session)
             except Exception as e:
                 logging.error(f"Failed to delete link for {req.rule_id}, {e}, will try again")
+
+class SENSEStatusUpdaterDaemon(DaemonBase):
+    @databased
+    def process(self, debug_mode=False, session=None):
+        if not debug_mode:
+            reqs_provisioned = Request.from_status(status=["STAGED", "PROVISIONED", "CANCELED", "STALE", "DECIDED", "FINISHED"], session=session)
+            if reqs_provisioned == []:
+                logging.debug("status_updater: nothing to do")
+                return
+            for req in reqs_provisioned:
+                status = sense.get_sense_circuit_status(req.sense_uuid)
+                req.update_sense_circuit_status(status=status, session=session)
+                if req.sense_provisioned_at is None and re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
+                    req.update({"sense_provisioned_at": datetime.utcnow()})
+        else:
+            logging.debug("status_updater: skipping status update in debug mode")
+
+class SENSEStagerDaemon(DaemonBase):
+    @databased
+    def process(self, debug_mode=False, session=None):
+        def stage_sense_link(req, session):
+            if not debug_mode:
+                try:
+                    sense_uuid, max_bandwidth = sense.stage_link(
+                        src_uri=get_site(req.src_site, attr="sense_uri", session=session),
+                        dst_uri=get_site(req.dst_site, attr="sense_uri", session=session),
+                        src_ipv6=req.src_ipv6_block,
+                        dst_ipv6=req.dst_ipv6_block,
+                        vlan_range=get_vlan_range(req.src_site, req.dst_site, session=session),
+                        instance_uuid="",
+                        alias=req.rule_id
+                    )
+                    req.update({"sense_uuid": sense_uuid, "max_bandwidth": max_bandwidth})
+                    mark_requests([req], "STAGED", session)
+                except Exception as e:
+                    logging.error(f"Failed to stage link for {req.rule_id}, {e}, will try again")
+            else:
+                try:
+                    req.update({"sense_uuid": "debug", "max_bandwidth": 10000})
+                    mark_requests([req], "STAGED", session)
+                except Exception as e:
+                    logging.error(f"Failed to stage link for {req.rule_id}, {e}, will try again")
+        reqs_init = Request.from_status(status=["ALLOCATED"], session=session)
+        if reqs_init == []:
+            logging.debug("stager: nothing to do")
+            return
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            for req in reqs_init:
+                executor.submit(stage_sense_link, req, session)
