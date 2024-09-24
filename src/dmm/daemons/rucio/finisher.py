@@ -6,11 +6,13 @@ from dmm.db.session import databased
 import logging
 
 class RucioFinisherDaemon(DaemonBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     @databased
     def process(self, client=None, session=None):
         reqs = Request.from_status(status=["ALLOCATED", "STAGED", "DECIDED", "PROVISIONED"], session=session)
         if reqs == []:
-            logging.debug("finisher: nothing to do")
             return
         for req in reqs:
             status = client.get_replication_rule(req.rule_id)['state']

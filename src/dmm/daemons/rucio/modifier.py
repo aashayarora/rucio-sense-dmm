@@ -6,11 +6,13 @@ from dmm.db.session import databased
 import logging
 
 class RucioModifierDaemon(DaemonBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     @databased
     def process(self, client=None, session=None):
         reqs = Request.from_status(status=["ALLOCATED", "STAGED", "DECIDED", "PROVISIONED"], session=session)
         if reqs == []:
-            logging.debug("rucio_modifier: nothing to do")
             return
         req_prio_changed = False
         for req in reqs:

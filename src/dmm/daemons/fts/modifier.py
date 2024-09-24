@@ -10,6 +10,10 @@ from dmm.utils.fts import FTSUtils
 from dmm.daemons.base import DaemonBase
 
 class FTSModifierDaemon(DaemonBase, FTSUtils):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        FTSUtils.__init__(self)
+    
     @databased
     def process(self, session=None):
         reqs_new = Request.from_status(status=["ALLOCATED"], session=session)

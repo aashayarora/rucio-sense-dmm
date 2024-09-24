@@ -6,6 +6,9 @@ from dmm.db.session import databased
 import logging
 
 class RucioInitDaemon(DaemonBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     @databased
     def process(self, client=None, session=None):
         rules = client.list_replication_rules()

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: dmm
-        image: aaarora/dmm:latest
+        image: aaarora/dmm-dev:latest
         resources:
           requests:
             memory: "1Gi"
@@ -99,10 +99,9 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  annotations:
-    kubernetes.io/ingress.class: haproxy
   name: dmm
 spec:
+  ingressClassName: haproxy
   rules:
   - host: dmm.nrp-nautilus.io
     http:

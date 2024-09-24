@@ -11,6 +11,10 @@ from dmm.db.request import Request
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
 class SENSEDeleterDaemon(DaemonBase, SENSEUtils):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        SENSEUtils.__init__(self)
+        
     @databased
     def process(self, debug_mode=False, session=None):
         reqs_cancelled = Request.from_status(status=["CANCELED"], session=session)

@@ -10,13 +10,15 @@ from dmm.db.mesh import Mesh
 from dmm.db.session import databased
 
 class DeciderDaemon(DaemonBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     @databased
     def process(self, session=None):
         network_graph = nx.MultiGraph()
         # Get all active requests
         reqs = Request.from_status(status=["STAGED", "ALLOCATED", "MODIFIED", "DECIDED", "STALE", "PROVISIONED", "FINISHED", "CANCELED"], session=session)
         if reqs == []:
-            logging.debug("decider: nothing to do")
             return
         for req in reqs:
             src_port_capacity = Mesh.max_bandwidth(req.src_site, session=session)

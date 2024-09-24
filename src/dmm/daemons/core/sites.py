@@ -16,6 +16,10 @@ from sense.client.discover_api import DiscoverApi
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
 class RefreshSiteDBDaemon(DaemonBase, SENSEUtils):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        SENSEUtils.__init__(self)
+        
     @databased
     def process(self, session=None):
         sites = config_get("sites", "sites", default=None)

@@ -80,12 +80,12 @@ class DMM:
         rucio_modifier = RucioModifierDaemon(kwargs={"client": self.rucio_client})
         rucio_finisher = RucioFinisherDaemon(kwargs={"client": self.rucio_client})
         
-        sense_updater = SENSEStatusUpdaterDaemon({"debug_mode": self.debug_mode})
-        stager = SENSEStagerDaemon({"debug_mode": self.debug_mode})
-        provision = SENSEProvisionerDaemon({"debug_mode": self.debug_mode})
-        sense_modifier = SENSEModifierDaemon({"debug_mode": self.debug_mode})
-        canceller = SENSECancellerDaemon({"debug_mode": self.debug_mode})
-        deleter = SENSEDeleterDaemon({"debug_mode": self.debug_mode})
+        sense_updater = SENSEStatusUpdaterDaemon()
+        stager = SENSEStagerDaemon()
+        provision = SENSEProvisionerDaemon()
+        sense_modifier = SENSEModifierDaemon()
+        canceller = SENSECancellerDaemon()
+        deleter = SENSEDeleterDaemon()
 
         sitedb.start(self.database_builder_daemon_frequency, self.lock)
         fts.start(self.fts_daemon_frequency, self.lock)

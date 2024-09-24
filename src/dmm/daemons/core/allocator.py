@@ -8,12 +8,17 @@ from dmm.db.endpoint import Endpoint
 from dmm.db.site import Site
 from dmm.db.session import databased
 
-class AllocatorDaemon(DaemonBase):
+from dmm.utils.sense import SENSEUtils
+
+class AllocatorDaemon(DaemonBase, SENSEUtils):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        SENSEUtils.__init__(self)
+        
     @databased
     def process(self, session=None):
         reqs_init = Request.from_status(status=["INIT"], session=session)
         if len(reqs_init) == 0:
-            logging.debug("allocator: nothing to do")
             return
         for new_request in reqs_init:  
             reqs_finished = Request.from_status(status=["FINISHED"], session=session)
@@ -38,10 +43,10 @@ class AllocatorDaemon(DaemonBase):
                     if src_site is None or dst_site is None:
                         raise Exception("Could not find sites")
                     
-                    free_src_ipv6 = get_allocation(new_request.src_site, new_request.rule_id)
+                    free_src_ipv6 = self.get_allocation(new_request.src_site, new_request.rule_id)
                     free_src_ipv6 = ipaddress.IPv6Network(free_src_ipv6).compressed
                     
-                    free_dst_ipv6 = get_allocation(new_request.dst_site, new_request.rule_id)
+                    free_dst_ipv6 = self.get_allocation(new_request.dst_site, new_request.rule_id)
                     free_dst_ipv6 = ipaddress.IPv6Network(free_dst_ipv6).compressed
 
                     src_endpoint = Endpoint.for_rule(site_name=new_request.src_site, ip_block=free_src_ipv6, session=session)
@@ -61,6 +66,6 @@ class AllocatorDaemon(DaemonBase):
                     })
 
                 except Exception as e:
-                    free_allocation(new_request.src_site, new_request.rule_id)
-                    free_allocation(new_request.dst_site, new_request.rule_id)
+                    self.free_allocation(new_request.src_site, new_request.rule_id)
+                    self.free_allocation(new_request.dst_site, new_request.rule_id)
                     logging.error(e)
