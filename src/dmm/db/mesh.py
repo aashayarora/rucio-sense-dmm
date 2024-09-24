@@ -7,7 +7,7 @@ class Mesh(BASE, ModelBase):
     site_2 = Column(String(255), ForeignKey('site.name'))
     vlan_range_start = Column(Integer())
     vlan_range_end = Column(Integer())
-    max_bandwidth = Column(Integer())
+    maximum_bandwidth = Column(Integer())
 
     site1 = relationship("Site", foreign_keys=[site_1])
     site2 = relationship("Site", foreign_keys=[site_2])
@@ -28,5 +28,5 @@ class Mesh(BASE, ModelBase):
     @classmethod
     def max_bandwidth(cls, site, session=None):
         mesh = session.query(cls).filter(or_(cls.site_1 == site, cls.site_2 == site)).all()
-        bandwidths = {m.max_bandwidth for m in mesh}
+        bandwidths = {m.maximum_bandwidth for m in mesh}
         return max(bandwidths)

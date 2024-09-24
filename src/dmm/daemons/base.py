@@ -11,16 +11,15 @@ class DaemonBase:
     def process(self):
         raise NotImplementedError("Subclasses must implement this method")
     
-    @staticmethod
-    def run_daemon(process, lock, frequency, **kwargs):
+    def run_daemon(self, process, lock, frequency, **kwargs):
         while True:
             with lock:
-                logging.info(f"{process.__name__} acquired lock")
+                logging.debug(f"{self.__class__.__name__} acquired lock")
                 try:
                     process(**kwargs)
                 except Exception as e:
-                    raise e
-            logging.info(f"{process.__name__} released lock, sleeping for {frequency} seconds")
+                    logging.error(f"Error in {self.__class__.__name__}: {e}")
+            logging.debug(f"{self.__class__.__name__} released lock, sleeping for {frequency} seconds")
             sleep(frequency)
 
     def start(self, frequency, lock):

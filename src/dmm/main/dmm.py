@@ -19,13 +19,26 @@ from waitress import serve
 
 from rucio.client import Client
 from dmm.utils.config import config_get_int, config_get_bool
-from dmm.utils.orchestrator import fork
 
-from dmm.daemons.rucio import RucioInitDaemon, RucioModifierDaemon, RucioFinisherDaemon
-from dmm.daemons.fts import FTSModifierDaemon
-from dmm.daemons.sense import status_updater, stager, provision, sense_modifier, canceller, deleter
-from dmm.daemons.core import AllocatorDaemon, DeciderDaemon
-from dmm.daemons.sites import RefreshSiteDBDaemon
+from dmm.daemons.core.sites import RefreshSiteDBDaemon
+
+from dmm.daemons.rucio.initializer import RucioInitDaemon
+from dmm.daemons.rucio.modifier import RucioModifierDaemon
+from dmm.daemons.rucio.finisher import RucioFinisherDaemon
+
+from dmm.daemons.fts.modifier import FTSModifierDaemon
+
+from dmm.daemons.sense.status_updater import SENSEStatusUpdaterDaemon
+from dmm.daemons.sense.stager import SENSEStagerDaemon
+from dmm.daemons.sense.provisioner import SENSEProvisionerDaemon
+from dmm.daemons.sense.modifier import SENSEModifierDaemon
+from dmm.daemons.sense.canceller import SENSECancellerDaemon
+from dmm.daemons.sense.deleter import SENSEDeleterDaemon
+
+from dmm.daemons.core.allocator import AllocatorDaemon
+from dmm.daemons.core.decider import DeciderDaemon
+
+
 from dmm.frontend.frontend import frontend_app
 
 class DMM:
@@ -45,24 +58,34 @@ class DMM:
         self.database_builder_daemon_frequency = config_get_int("daemons", "db", default=7200)
         
         self.lock = Lock()
-        self.use_rucio = False
         
         try:
             self.rucio_client = Client()
-            self.use_rucio = True
         except Exception as e:
-            logging.error(f"Rucio not available, running in rucio-free mode")
+            logging.error(f"Failed to initialize Rucio client: {e}")
+            raise "Failed to initialize Rucio client, exiting..."
+
 
     def start(self):
         logging.info("Starting Daemons")
 
+        sitedb = RefreshSiteDBDaemon()
+        
         allocator = AllocatorDaemon()
         decider = DeciderDaemon()
-        sitedb = RefreshSiteDBDaemon()
+
         fts = FTSModifierDaemon()
+        
         rucio_init = RucioInitDaemon(kwargs={"client": self.rucio_client})
         rucio_modifier = RucioModifierDaemon(kwargs={"client": self.rucio_client})
         rucio_finisher = RucioFinisherDaemon(kwargs={"client": self.rucio_client})
+        
+        sense_updater = SENSEStatusUpdaterDaemon({"debug_mode": self.debug_mode})
+        stager = SENSEStagerDaemon({"debug_mode": self.debug_mode})
+        provision = SENSEProvisionerDaemon({"debug_mode": self.debug_mode})
+        sense_modifier = SENSEModifierDaemon({"debug_mode": self.debug_mode})
+        canceller = SENSECancellerDaemon({"debug_mode": self.debug_mode})
+        deleter = SENSEDeleterDaemon({"debug_mode": self.debug_mode})
 
         sitedb.start(self.database_builder_daemon_frequency, self.lock)
         fts.start(self.fts_daemon_frequency, self.lock)
@@ -71,17 +94,13 @@ class DMM:
         rucio_init.start(self.rucio_daemon_frequency, self.lock)
         rucio_modifier.start(self.rucio_daemon_frequency, self.lock)
         rucio_finisher.start(self.rucio_daemon_frequency, self.lock)
+        sense_updater.start(self.sense_daemon_frequency, self.lock)
+        stager.start(self.sense_daemon_frequency, self.lock)
+        provision.start(self.sense_daemon_frequency, self.lock)
+        sense_modifier.start(self.sense_daemon_frequency, self.lock)
+        canceller.start(self.sense_daemon_frequency, self.lock)
+        deleter.start(self.sense_daemon_frequency, self.lock)
 
-        sense_daemons = {
-            status_updater: {"debug_mode": self.debug_mode},
-            stager: {"debug_mode": self.debug_mode}, 
-            provision: {"debug_mode": self.debug_mode}, 
-            sense_modifier: {"debug_mode": self.debug_mode},
-            canceller: {"debug_mode": self.debug_mode},
-            deleter: {"debug_mode": self.debug_mode}
-        }
-        fork(self.sense_daemon_frequency, self.lock, sense_daemons)
-        
         try:
             serve(frontend_app, port=self.port)
         except:

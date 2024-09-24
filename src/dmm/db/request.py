@@ -38,7 +38,7 @@ class Request(BASE, ModelBase):
 
     @classmethod
     def cursor(cls, session=None):
-        return session.execute(text("SELECT * FROM requests")).cursor
+        return session.execute(text("SELECT * FROM request")).cursor
 
     def mark_as(self, status, session=None):
         self.transfer_status = status 
