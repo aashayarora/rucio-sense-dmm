@@ -14,6 +14,20 @@ spec:
         app: dmm
     spec:
       containers:
+      - name: postgres
+        image: postgres
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "4"
+        env:
+        - name: POSTGRES_USER
+          value: "dmm"
+        - name: POSTGRES_PASSWORD
+          value: "dmm"
       - name: dmm
         image: aaarora/dmm-dev:latest
         resources:
@@ -43,20 +57,6 @@ spec:
         - name: certs
           mountPath: /opt/certs/cert.pem
           subPath: cert.pem
-      - name: postgres
-        image: postgres
-        resources:
-          requests:
-            memory: "1Gi"
-            cpu: "1"
-          limits:
-            memory: "4Gi"
-            cpu: "4"
-        env:
-        - name: POSTGRES_USER
-          value: "dmm"
-        - name: POSTGRES_PASSWORD
-          value: "dmm"
       nodeSelector:
         nautilus.io/ipv6: "true"
       volumes:

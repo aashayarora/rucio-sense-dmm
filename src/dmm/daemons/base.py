@@ -4,14 +4,15 @@ from time import sleep
 import os
 
 class DaemonBase:
-    def __init__(self, kwargs={}):
+    def __init__(self, frequency, kwargs={}):
+        self.frequency = frequency
         self.kwargs = kwargs
         self.pid = None
 
     def process(self):
         raise NotImplementedError("Subclasses must implement this method")
     
-    def run_daemon(self, process, lock, frequency, **kwargs):
+    def run_daemon(self, process, lock, **kwargs):
         while True:
             with lock:
                 logging.debug(f"{self.__class__.__name__} acquired lock")
@@ -19,14 +20,14 @@ class DaemonBase:
                     process(**kwargs)
                 except Exception as e:
                     logging.error(f"Error in {self.__class__.__name__}: {e}")
-            logging.debug(f"{self.__class__.__name__} released lock, sleeping for {frequency} seconds")
-            sleep(frequency)
+            logging.debug(f"{self.__class__.__name__} released lock, sleeping for {self.frequency} seconds")
+            sleep(self.frequency)
 
-    def start(self, frequency, lock):
+    def start(self, lock):
         logging.info(f"Starting {self.__class__.__name__}")
         try:
             proc = Process(target=self.run_daemon,
-                        args=(self.process, lock, frequency),
+                        args=(self.process, lock),
                         kwargs=self.kwargs,
                         name=self.__class__.__name__)
             proc.start()

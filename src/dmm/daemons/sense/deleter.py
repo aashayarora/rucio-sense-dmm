@@ -11,8 +11,8 @@ from dmm.db.request import Request
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
 class SENSEDeleterDaemon(DaemonBase, SENSEUtils):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
         SENSEUtils.__init__(self)
         
     @databased

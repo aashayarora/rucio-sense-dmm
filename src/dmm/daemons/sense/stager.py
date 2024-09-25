@@ -14,8 +14,8 @@ from dmm.utils.sense import SENSEUtils
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
 class SENSEStagerDaemon(DaemonBase, SENSEUtils):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
         SENSEUtils.__init__(self)
         
     @databased
@@ -25,7 +25,6 @@ class SENSEStagerDaemon(DaemonBase, SENSEUtils):
             return
         for req in reqs_init:
             try:
-                
                 vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()
                 workflow_api.instance_new()

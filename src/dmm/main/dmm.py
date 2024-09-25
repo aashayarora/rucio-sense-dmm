@@ -37,7 +37,7 @@ from dmm.daemons.sense.deleter import SENSEDeleterDaemon
 
 from dmm.daemons.core.allocator import AllocatorDaemon
 from dmm.daemons.core.decider import DeciderDaemon
-
+from dmm.daemons.core.monit import MonitDaemon
 
 from dmm.frontend.frontend import frontend_app
 
@@ -51,11 +51,12 @@ class DMM:
         else:
             logging.info("Running in production mode, sense will be used")
 
-        self.rucio_daemon_frequency = config_get_int("daemons", "rucio", default=60)
-        self.fts_daemon_frequency = config_get_int("daemons", "fts", default=60)
-        self.dmm_daemon_frequency = config_get_int("daemons", "dmm", default=60)
-        self.sense_daemon_frequency = config_get_int("daemons", "sense", default=60)
-        self.database_builder_daemon_frequency = config_get_int("daemons", "db", default=7200)
+        self.rucio_frequency = config_get_int("daemons", "rucio", default=60)
+        self.fts_frequency = config_get_int("daemons", "fts", default=60)
+        self.dmm_frequency = config_get_int("daemons", "dmm", default=60)
+        self.sense_frequency = config_get_int("daemons", "sense", default=60)
+        self.monit_frequency = config_get_int("daemons", "monit", default=60)
+        self.sites_frequency = config_get_int("daemons", "db", default=7200)
         
         self.lock = Lock()
         
@@ -68,43 +69,46 @@ class DMM:
 
     def start(self):
         logging.info("Starting Daemons")
-
-        sitedb = RefreshSiteDBDaemon()
+        sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency)
         
-        allocator = AllocatorDaemon()
-        decider = DeciderDaemon()
-
-        fts = FTSModifierDaemon()
+        allocator = AllocatorDaemon(frequency=self.dmm_frequency)
+        decider = DeciderDaemon(frequency=self.dmm_frequency)
         
-        rucio_init = RucioInitDaemon(kwargs={"client": self.rucio_client})
-        rucio_modifier = RucioModifierDaemon(kwargs={"client": self.rucio_client})
-        rucio_finisher = RucioFinisherDaemon(kwargs={"client": self.rucio_client})
-        
-        sense_updater = SENSEStatusUpdaterDaemon()
-        stager = SENSEStagerDaemon()
-        provision = SENSEProvisionerDaemon()
-        sense_modifier = SENSEModifierDaemon()
-        canceller = SENSECancellerDaemon()
-        deleter = SENSEDeleterDaemon()
+        monit = MonitDaemon(frequency=self.monit_frequency)
 
-        sitedb.start(self.database_builder_daemon_frequency, self.lock)
-        fts.start(self.fts_daemon_frequency, self.lock)
-        allocator.start(self.dmm_daemon_frequency, self.lock)
-        decider.start(self.dmm_daemon_frequency, self.lock)
-        rucio_init.start(self.rucio_daemon_frequency, self.lock)
-        rucio_modifier.start(self.rucio_daemon_frequency, self.lock)
-        rucio_finisher.start(self.rucio_daemon_frequency, self.lock)
-        sense_updater.start(self.sense_daemon_frequency, self.lock)
-        stager.start(self.sense_daemon_frequency, self.lock)
-        provision.start(self.sense_daemon_frequency, self.lock)
-        sense_modifier.start(self.sense_daemon_frequency, self.lock)
-        canceller.start(self.sense_daemon_frequency, self.lock)
-        deleter.start(self.sense_daemon_frequency, self.lock)
+        fts = FTSModifierDaemon(frequency=self.fts_frequency)
+        
+        rucio_init = RucioInitDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
+        rucio_modifier = RucioModifierDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
+        rucio_finisher = RucioFinisherDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
+        
+        sense_updater = SENSEStatusUpdaterDaemon(frequency=self.sense_frequency)
+        stager = SENSEStagerDaemon(frequency=self.sense_frequency)
+        provision = SENSEProvisionerDaemon(frequency=self.sense_frequency)
+        sense_modifier = SENSEModifierDaemon(frequency=self.sense_frequency)
+        canceller = SENSECancellerDaemon(frequency=self.sense_frequency)
+        deleter = SENSEDeleterDaemon(frequency=self.sense_frequency)
+
+        sitedb.start(self.lock)
+        fts.start(self.lock)
+        allocator.start(self.lock)
+        decider.start(self.lock)
+        monit.start(self.lock)
+        rucio_init.start(self.lock)
+        rucio_modifier.start(self.lock)
+        rucio_finisher.start(self.lock)
+        sense_updater.start(self.lock)
+        stager.start(self.lock)
+        provision.start(self.lock)
+        sense_modifier.start(self.lock)
+        canceller.start(self.lock)
+        deleter.start(self.lock)
 
         try:
             serve(frontend_app, port=self.port)
         except:
-            serve(frontend_app, port=8080)
+            logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
+            serve(frontend_app, port=31601)
 
 def main():
     logging.info("Starting DMM")

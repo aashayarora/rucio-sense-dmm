@@ -34,10 +34,20 @@ def handle_client(rule_id, session=None):
 @frontend_app.route("/", methods=["GET"])
 @databased
 def get_dmm_status(session=None):
-    cursor = Request.cursor(session=session)
-    data = cursor.fetchall() 
+    reqs = Request.get_all(session=session)
     try:
-        return render_template("index.html", data=data)
+        return render_template("index.html", data=reqs)
     except Exception as e:
         logging.error(e)
         return "Problem in the DMM frontend\n"
+    
+# When users click on "See More" button, get detailed metrics
+@frontend_app.route("/details/<rule_id>", methods=["GET", "POST"])
+@databased
+def open_rule_details(rule_id,session=None):
+    try:
+        req = Request.from_id(rule_id, session=session)
+        return render_template("details.html", data=req)
+    except Exception as e:
+        logging.error(e)
+        return "Failed to retrieve rule info\n"

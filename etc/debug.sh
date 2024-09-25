@@ -4,7 +4,7 @@ echo "Starting DMM development environment"
 docker build . -t dmm-debug 
 
 # if --rm passed then trap docker rm postgres
-trap "docker stop postgres" EXIT
+# trap "docker stop postgres" EXIT
 
 echo "Starting Postgres"
 docker run -d --rm \

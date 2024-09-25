@@ -22,19 +22,20 @@
             background-color: #0078D4;
             color: white;
         }
-        
         table {
             border-collapse: collapse;
             width: 100%;
             margin: 20px auto;
             background-color: white;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            table-layout: fixed;
         }
         
         th, td {
             border: 1px solid #ddd;
             padding: 4px;
             text-align: center;
+            word-wrap: break-word;
         }
         
         th {
@@ -60,6 +61,33 @@
     </style>
 </head>
 <body>
+    <script>
+        function sendRuleID(button) {
+            console.log('Button clicked');
+            let rowElement = button.closest('tr'); 
+            let rule_id = rowElement.cells[0].innerText;
+
+            console.log('Rule ID:', rule_id);
+            fetch('/process_id', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ rule_id: rule_id })
+            })
+            .then(response => response.text())
+            .then(url => {
+                if (url) {
+                    window.open(url, '_blank');
+                } else {
+                    alert('Failed to retrieve rule ID.');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+    </script>
     <h1>DMM Status</h1>
     <table>
         <thead>
@@ -76,23 +104,39 @@
                 <th>Bandwidth</th>
                 <th>Sense UUID</th>
                 <th>Circuit Status</th>
+                <th>Throughput (Gbps)</th>
+                <th>Health</th>
+                <th>Details</th>
+                <!-- <th>Cancel</th> -->
             </tr>
         </thead>
         <tbody>
-            {% for row in data %}
+            {% for req in data %}
             <tr>
-                <td>{{ row[0] }}</td>
-                <td>{{ row[1] }}</td>
-                <td>{{ row[2] }}</td>
-                <td>{{ row[3] }}</td>
-                <td>{{ row[4] }}</td>
-                <td>{{ row[5] }}</td>
-                <td>{{ row[6] }}</td>
-                <td>{{ row[7] }}</td>
-                <td>{{ row[8] }}</td>
-                <td>{{ row[11] }}</td>
-                <td>{{ row[12] }}</td>
-                <td>{{ row[13] }}</td>
+                <td>{{ req.rule_id }}</td>
+                <td>{{ req.transfer_status }}</td>
+                <td>{{ req.src_site }}</td>
+                <td>{{ req.src_ipv6_block }}</td>
+                <td>{{ req.src_url }}</td>
+                <td>{{ req.dst_site }}</td>
+                <td>{{ req.dst_ipv6_block }}</td>
+                <td>{{ req.dst_url }}</td>
+                <td>{{ req.priority }}</td>
+                <td>{{ req.bandwidth }}</td>
+                <td>{{ req.sense_uuid }}</td>
+                <td>{{ req.sense_circuit_status }}</td>
+                <td>{{ req.prometheus_throughput }}</td>
+                <td>
+                    {% if req.health == "GOOD" %}
+                        <span style="color: green;">&#9632;</span>
+                    {% elif req.health == "BAD" %}
+                        <span style="color: red;">&#9632;</span>
+                    {% else %}
+                        {{ req.health }}
+                    {% endif %}
+                </td>
+                <td><button onclick="sendRuleID(this)">See More</button></td>
+                <!-- <td><button onclick="sendRuleID(this)">Cancel Circuit</button></td> -->
             </tr>
             {% endfor %}
         </tbody>

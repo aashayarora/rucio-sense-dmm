@@ -6,8 +6,8 @@ from dmm.db.session import databased
 import logging
 
 class RucioFinisherDaemon(DaemonBase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
 
     @databased
     def process(self, client=None, session=None):

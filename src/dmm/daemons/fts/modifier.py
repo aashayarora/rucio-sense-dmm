@@ -10,8 +10,8 @@ from dmm.utils.fts import FTSUtils
 from dmm.daemons.base import DaemonBase
 
 class FTSModifierDaemon(DaemonBase, FTSUtils):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
         FTSUtils.__init__(self)
     
     @databased

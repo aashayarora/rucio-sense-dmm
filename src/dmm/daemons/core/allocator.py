@@ -11,8 +11,8 @@ from dmm.db.session import databased
 from dmm.utils.sense import SENSEUtils
 
 class AllocatorDaemon(DaemonBase, SENSEUtils):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
         SENSEUtils.__init__(self)
         
     @databased

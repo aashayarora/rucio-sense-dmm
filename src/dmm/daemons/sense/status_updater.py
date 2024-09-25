@@ -10,8 +10,8 @@ from sense.client.workflow_combined_api import WorkflowCombinedApi
 import re
 
 class SENSEStatusUpdaterDaemon(DaemonBase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
         
     @databased
     def process(self, debug_mode=False, session=None):

@@ -17,6 +17,9 @@ class Request(BASE, ModelBase):
     sense_circuit_status = Column(String(255))
     fts_modified = Column(Boolean())
     sense_provisioned_at = Column(DateTime())
+    prometheus_throughput = Column(Float())
+    prometheus_bytes = Column(Float())
+    health = Column(String(255))
 
     def __init__(self, **kwargs):
         super(Request, self).__init__(**kwargs)
@@ -35,11 +38,7 @@ class Request(BASE, ModelBase):
     @classmethod
     def get_all(cls, session=None):
         return [req for req in session.query(cls).all()]
-
-    @classmethod
-    def cursor(cls, session=None):
-        return session.execute(text("SELECT * FROM request")).cursor
-
+    
     def mark_as(self, status, session=None):
         self.transfer_status = status 
         self.fts_modified = False
@@ -60,4 +59,16 @@ class Request(BASE, ModelBase):
     
     def mark_fts_modified(self, session=None):
         self.fts_modified = True
+        self.save(session)
+
+    def update_prometheus_bytes(self, prom_bytes, session=None):
+        self.prometheus_bytes = prom_bytes
+        self.save(session)
+
+    def update_prometheus_throughput(self, throughput, session=None):
+        self.prometheus_throughput = throughput
+        self.save(session)
+
+    def update_request_health(self, health, session=None):
+        self.health = health
         self.save(session)

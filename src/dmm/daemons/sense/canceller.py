@@ -12,8 +12,8 @@ from dmm.utils.sense import SENSEUtils
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
 class SENSECancellerDaemon(DaemonBase, SENSEUtils):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, frequency, **kwargs):
+        super().__init__(frequency, **kwargs)
         SENSEUtils.__init__(self)
         
     @databased
@@ -22,7 +22,7 @@ class SENSECancellerDaemon(DaemonBase, SENSEUtils):
         if reqs_finished == []:
             return
         for req in reqs_finished:
-            if (datetime.utcnow() - req.updated_at).seconds > 600:
+            if (datetime.utcnow() - req.updated_at).seconds > 60:
                 try:
                     logging.info(f"cancelling sense link with uuid {req.sense_uuid}")
                     workflow_api = WorkflowCombinedApi()
