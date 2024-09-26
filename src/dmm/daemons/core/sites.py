@@ -94,7 +94,7 @@ class RefreshSiteDBDaemon(DaemonBase, SENSEUtils):
                 else:
                     logging.debug(f"Site {site} already exists in database")
                     site_ = site_exists
-                    sense_uri = site_.sense_uri
+                    # sense_uri = site_.sense_uri #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ASIDHOHIWOHDOAHOIWHDOIAHOWD UNCOMMENT THIS LINE
 
                 logging.debug("Checking for new / adding endpoints...")
                 # get endpoints for this site

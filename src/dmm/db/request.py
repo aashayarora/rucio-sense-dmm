@@ -3,12 +3,6 @@ from dmm.db.base import *
 class Request(BASE, ModelBase):
     rule_id = Column(String(255), primary_key=True)
     transfer_status = Column(String(255))
-    src_site = Column(String(255))
-    src_ipv6_block = Column(String(255))
-    src_url = Column(String(255))
-    dst_site = Column(String(255))
-    dst_ipv6_block = Column(String(255))
-    dst_url = Column(String(255))
     priority = Column(Integer())
     modified_priority = Column(Integer())
     max_bandwidth = Column(Float())
@@ -20,6 +14,16 @@ class Request(BASE, ModelBase):
     prometheus_throughput = Column(Float())
     prometheus_bytes = Column(Float())
     health = Column(String(255))
+    
+    src_site_ = Column(String(255), ForeignKey('site.name'))
+    dst_site_ = Column(String(255), ForeignKey('site.name'))
+    src_endpoint_ = Column(Integer(), ForeignKey('endpoint.id'))
+    dst_endpoint_ = Column(Integer(), ForeignKey('endpoint.id'))
+
+    src_site = relationship('Site', back_populates='site_request_src', foreign_keys=[src_site_])
+    dst_site = relationship('Site', back_populates='site_request_dst', foreign_keys=[dst_site_])
+    src_endpoint = relationship('Endpoint', back_populates='ep_request_src', foreign_keys=[src_endpoint_])
+    dst_endpoint = relationship('Endpoint', back_populates='ep_request_dst', foreign_keys=[dst_endpoint_])
 
     def __init__(self, **kwargs):
         super(Request, self).__init__(**kwargs)

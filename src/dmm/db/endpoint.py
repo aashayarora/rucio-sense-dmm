@@ -1,13 +1,17 @@
 from dmm.db.base import *
+from dmm.db.request import Request
 
 class Endpoint(BASE, ModelBase):
     id = Column(Integer(), autoincrement=True, primary_key=True)
     site_name = Column(String(255), ForeignKey('site.name'))
-    ip_block = Column(String(255))
-    hostname = Column(String(255))
+    ip_block = Column(String(255), unique=True)
+    hostname = Column(String(255), unique=True)
     in_use = Column(Boolean())
 
     site = relationship('Site', back_populates='endpoints')
+
+    ep_request_src = relationship('Request', back_populates='src_endpoint', foreign_keys=[Request.src_endpoint_])
+    ep_request_dst = relationship('Request', back_populates='dst_endpoint', foreign_keys=[Request.dst_endpoint_])
 
     def __init__(self, **kwargs):
         super(Endpoint, self).__init__(**kwargs)

@@ -1,6 +1,7 @@
 from dmm.daemons.base import DaemonBase
 
 from dmm.db.request import Request
+from dmm.db.site import Site
 from dmm.db.session import databased
 
 import logging
@@ -21,16 +22,16 @@ class RucioInitDaemon(DaemonBase):
                 if ((rule["meta"] is None) and ("sense" not in rule["meta"])):
                     logging.debug(f"rule {rule['id']} is not a sense rule, will add to db but do nothing")
                     new_request = Request(rule_id=rule["id"],
-                                            src_site=rule["source_replica_expression"], 
-                                            dst_site=rule["rse_expression"],
+                                            src_site=Site.from_name(rule["source_replica_expression"], session=session), 
+                                            dst_site=Site.from_name(rule["rse_expression"], session=session),
                                             priority=rule["priority"],
                                             transfer_status="NOT_SENSE",
                                         )
                 else:
                     logging.debug(f"rule {rule['id']} identified as a sense rule")
                     new_request = Request(rule_id=rule["id"],
-                                            src_site=rule["source_replica_expression"], 
-                                            dst_site=rule["rse_expression"],
+                                            src_site=Site.from_name(rule["source_replica_expression"], session=session), 
+                                            dst_site=Site.from_name(rule["rse_expression"], session=session),
                                             priority=rule["priority"],
                                             transfer_status="INIT",
                                         )

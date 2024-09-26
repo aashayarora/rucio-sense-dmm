@@ -14,7 +14,7 @@ class SENSEStatusUpdaterDaemon(DaemonBase):
         super().__init__(frequency, **kwargs)
         
     @databased
-    def process(self, debug_mode=False, session=None):
+    def process(self, session=None):
         reqs_provisioned = Request.from_status(status=["STAGED", "PROVISIONED", "CANCELED", "STALE", "DECIDED", "FINISHED"], session=session)
         if reqs_provisioned == []:
             return

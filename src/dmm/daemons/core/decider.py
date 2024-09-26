@@ -22,10 +22,10 @@ class DeciderDaemon(DaemonBase):
             return
         for req in reqs:
             src_port_capacity = Mesh.max_bandwidth(req.src_site, session=session)
-            network_graph.add_node(req.src_site, port_capacity=src_port_capacity)
+            network_graph.add_node(req.src_site.name, port_capacity=src_port_capacity)
             dst_port_capacity = Mesh.max_bandwidth(req.dst_site, session=session)
-            network_graph.add_node(req.dst_site, port_capacity=dst_port_capacity)
-            network_graph.add_edge(req.src_site, req.dst_site, rule_id=req.rule_id, priority=req.priority, bandwidth=req.bandwidth)
+            network_graph.add_node(req.dst_site.name, port_capacity=dst_port_capacity)
+            network_graph.add_edge(req.src_site.name, req.dst_site.name, rule_id=req.rule_id, priority=req.priority, bandwidth=req.bandwidth)
         
         # exit if graph is empty
         if not network_graph.nodes:

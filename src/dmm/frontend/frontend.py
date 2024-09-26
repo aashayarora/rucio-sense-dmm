@@ -17,8 +17,8 @@ def handle_client(rule_id, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
     try:
         req = Request.from_id(rule_id, session=session)
-        if req and req.src_url and req.dst_url:
-            result = json.dumps({"source": req.src_url, "destination": req.dst_url})
+        if req and req.src_endpoint and req.dst_endpoint:
+            result = json.dumps({"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname})
             response = Response(result, content_type="application/json")
             response.headers.add("Content-Type", "application/json")
             return response
@@ -40,7 +40,7 @@ def get_dmm_status(session=None):
         return render_template("index.html", data=reqs)
     except Exception as e:
         logging.error(e)
-        return "Problem in the DMM frontend\n"
+        return str(e)
 
 @frontend_app.route("/sites", methods=["GET"])
 @databased

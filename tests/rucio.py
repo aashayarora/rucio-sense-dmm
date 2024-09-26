@@ -9,7 +9,7 @@ PASSWORD = "dmm"
 def add_rule(rule_id, src_site, dst_site, priority):
     conn = psycopg.connect(f"host={HOST} dbname={DBNAME} user={USER} password={PASSWORD}")
     cur = conn.cursor()
-    cur.execute(f"INSERT INTO request (rule_id, src_site, dst_site, priority, transfer_status) VALUES ('{rule_id}', '{src_site}', '{dst_site}', '{priority}', 'INIT');")
+    cur.execute(f"INSERT INTO request (rule_id, src_site_, dst_site_, priority, transfer_status) VALUES ('{rule_id}', '{src_site}', '{dst_site}', '{priority}', 'INIT');")
     conn.commit()
     conn.close()
 

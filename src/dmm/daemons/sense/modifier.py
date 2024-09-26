@@ -19,7 +19,7 @@ class SENSEModifierDaemon(DaemonBase, SENSEUtils):
         SENSEUtils.__init__(self)
         
     @databased
-    def process(self, debug_mode=False, session=None):
+    def process(self, session=None):
         reqs_stale = Request.from_status(status=["STALE"], session=session)
         if reqs_stale == []:
             return
@@ -38,10 +38,10 @@ class SENSEModifierDaemon(DaemonBase, SENSEUtils):
                             "ask": "edit",
                             "options": [
                                 {"data.connections[0].bandwidth.capacity": str(int(req.bandwidth))},
-                                {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_ipv6_block},
-                                {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_ipv6_block},
+                                {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site.name, attr="sense_uri", session=session)},
+                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_block},
+                                {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site.name, attr="sense_uri", session=session)},
+                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_block},
                                 {"data.connections[0].terminals[0].vlan_tag": vlan_range},
                                 {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                             ]

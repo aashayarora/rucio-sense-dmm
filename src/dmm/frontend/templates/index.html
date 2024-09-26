@@ -143,12 +143,12 @@
                 <tr>
                     <td>{{ req.rule_id }}</td>
                     <td>{{ req.transfer_status }}</td>
-                    <td>{{ req.src_site }}</td>
-                    <td>{{ req.src_ipv6_block }}</td>
-                    <td>{{ req.src_url }}</td>
-                    <td>{{ req.dst_site }}</td>
-                    <td>{{ req.dst_ipv6_block }}</td>
-                    <td>{{ req.dst_url }}</td>
+                    <td>{{ req.src_site.name }}</td>
+                    <td>{{ req.src_endpoint.ip_block }}</td>
+                    <td>{{ req.src_endpoint.hostname }}</td>
+                    <td>{{ req.dst_site.name }}</td>
+                    <td>{{ req.dst_endpoint.ip_block }}</td>
+                    <td>{{ req.dst_endpoint.hostname }}</td>
                     <td>{{ req.priority }}</td>
                     <td>{{ req.bandwidth / 1000 }}</td>
                     <td>{{ req.sense_uuid }}</td>

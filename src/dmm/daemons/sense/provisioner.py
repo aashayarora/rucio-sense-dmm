@@ -18,7 +18,7 @@ class SENSEProvisionerDaemon(DaemonBase, SENSEUtils):
         SENSEUtils.__init__(self)
         
     @databased
-    def process(self, debug_mode=False, session=None):
+    def process(self, session=None):
         reqs_decided = Request.from_status(status=["DECIDED"], session=session)
         if reqs_decided == []:
             return
@@ -28,6 +28,10 @@ class SENSEProvisionerDaemon(DaemonBase, SENSEUtils):
                 workflow_api = WorkflowCombinedApi()
                 workflow_api.si_uuid = req.sense_uuid
                 status = req.sense_circuit_status
+                if re.match(r"(CREATE) - READY$", status):
+                    logging.debug(f"Request {req.sense_uuid} already in ready status, marking as provisioned")
+                    req.mark_as(status="PROVISIONED", session=session)
+                    continue
                 if not re.match(r"(CREATE) - COMPILED$", status):
                     logging.debug(f"Request {req.sense_uuid} not in compiled status, will try to provision again")
                     raise AssertionError(f"Request {req.sense_uuid} not in compiled status, will try to provision again")
@@ -38,10 +42,10 @@ class SENSEProvisionerDaemon(DaemonBase, SENSEUtils):
                             "ask": "edit",
                             "options": [
                                 {"data.connections[0].bandwidth.capacity": str(int(req.bandwidth))},
-                                {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_ipv6_block},
-                                {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_ipv6_block},
+                                {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site.name, attr="sense_uri", session=session)},
+                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_block},
+                                {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site.name, attr="sense_uri", session=session)},
+                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_block},
                                 {"data.connections[0].terminals[0].vlan_tag": vlan_range},
                                 {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                             ]

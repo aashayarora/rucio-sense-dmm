@@ -16,8 +16,8 @@ class FTSUtils:
         }
 
     def modify_link_config(self, req, max_active, min_active):
-        src_url_no_port = "davs://" + req.src_url.split(":")[0]
-        dst_url_no_port = "davs://" + req.dst_url.split(":")[0]
+        src_url_no_port = "davs://" + req.src_endpoint.hostname.split(":")[0]
+        dst_url_no_port = "davs://" + req.dst_endpoint.hostname.split(":")[0]
 
         data = {
             "symbolicname": "-".join([src_url_no_port, dst_url_no_port]),
@@ -41,8 +41,8 @@ class FTSUtils:
             return None
         
     def modify_se_config(self, req, max_inbound, max_outbound):
-        src_url_no_port = "davs://" + req.src_url.split(":")[0]
-        dst_url_no_port = "davs://" + req.dst_url.split(":")[0]
+        src_url_no_port = "davs://" + req.src_endpoint.hostname.split(":")[0]
+        dst_url_no_port = "davs://" + req.dst_endpoint.hostname.split(":")[0]
 
         data = {
             src_url_no_port: {
@@ -84,8 +84,8 @@ class FTSUtils:
             return None
     
     def delete_config(self, req):
-        src_url_no_port = "davs://" + req.src_url.split(":")[0]
-        dst_url_no_port = "davs://" + req.dst_url.split(":")[0]
+        src_url_no_port = "davs://" + req.src_endpoint.hostname.split(":")[0]
+        dst_url_no_port = "davs://" + req.dst_endpoint.hostname.split(":")[0]
         try:
             response_link = requests.delete(self.fts_host + "/config/links/" + urllib.parse.quote("-".join([src_url_no_port, dst_url_no_port]), safe=""), headers=self.headers, cert=self.cert, verify=False)
             return (response_link.status_code == 200 or response_link.status_code == 201 or response_link.status_code == 204)

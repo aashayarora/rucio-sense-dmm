@@ -31,7 +31,7 @@ class FTSModifierDaemon(DaemonBase, FTSUtils):
         if reqs != []:
             for provisioned_req in reqs:
                 if not provisioned_req.fts_modified and re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", provisioned_req.sense_circuit_status):
-                    num_streams = config_get_int("fts-streams", f"{provisioned_req.src_site}-{provisioned_req.dst_site}", 200)
+                    num_streams = config_get_int("fts-streams", f"{provisioned_req.src_site.name}-{provisioned_req.dst_site.name}", 200)
                     logging.debug(f"request {provisioned_req.rule_id} in ready state, modifying fts limits to {num_streams} max streams.")
                     link_modified = self.modify_link_config(provisioned_req, max_active=num_streams, min_active=num_streams)
                     se_modified = self.modify_se_config(provisioned_req, max_inbound=num_streams, max_outbound=num_streams)

@@ -18,7 +18,7 @@ class SENSECancellerDaemon(DaemonBase, SENSEUtils):
         SENSEUtils.__init__(self)
         
     @databased
-    def process(self, debug_mode=False, session=None):
+    def process(self, session=None):
         reqs_finished = Request.from_status(status=["FINISHED"], session=session)
         if reqs_finished == []:
             return
@@ -28,13 +28,17 @@ class SENSECancellerDaemon(DaemonBase, SENSEUtils):
                     logging.info(f"cancelling sense link with uuid {req.sense_uuid}")
                     workflow_api = WorkflowCombinedApi()
                     status = req.sense_circuit_status
+                    if re.match(r"(CANCEL) - READY$", status):
+                        logging.debug(f"Request {req.sense_uuid} already in ready status, marking as canceled")
+                        req.mark_as(status="CANCELED", session=session)
+                        continue
                     if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
                         raise ValueError(f"Cannot cancel an instance in status '{status}', will try to cancel again")
                     response = workflow_api.instance_operate("cancel", si_uuid=req.sense_uuid, sync="true", force=str("READY" not in status).lower())
-                    self.free_allocation(req.src_site, req.rule_id)
-                    self.free_allocation(req.dst_site, req.rule_id)
-                    Endpoint.from_hostname(req.src_url, session=session).mark_inuse(in_use=False, session=session)
-                    Endpoint.from_hostname(req.dst_url, session=session).mark_inuse(in_use=False, session=session)
+                    self.free_allocation(req.src_site.name, req.rule_id)
+                    self.free_allocation(req.dst_site.name, req.rule_id)
+                    req.src_endpoint.mark_inuse(in_use=False, session=session)
+                    req.dst_endpoint.mark_inuse(in_use=False, session=session)
                     req.mark_as(status="CANCELED", session=session)
                 except Exception as e:
                     logging.error(f"Failed to cancel link for {req.rule_id}, {e}, will try again")
