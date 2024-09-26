@@ -6,6 +6,7 @@ from dmm.daemons.base import DaemonBase
 
 from dmm.db.session import databased
 from dmm.db.request import Request
+from dmm.db.endpoint import Endpoint
 
 from dmm.utils.sense import SENSEUtils
 
@@ -32,6 +33,8 @@ class SENSECancellerDaemon(DaemonBase, SENSEUtils):
                     response = workflow_api.instance_operate("cancel", si_uuid=req.sense_uuid, sync="true", force=str("READY" not in status).lower())
                     self.free_allocation(req.src_site, req.rule_id)
                     self.free_allocation(req.dst_site, req.rule_id)
+                    Endpoint.from_hostname(req.src_url, session=session).mark_inuse(in_use=False, session=session)
+                    Endpoint.from_hostname(req.dst_url, session=session).mark_inuse(in_use=False, session=session)
                     req.mark_as(status="CANCELED", session=session)
                 except Exception as e:
                     logging.error(f"Failed to cancel link for {req.rule_id}, {e}, will try again")

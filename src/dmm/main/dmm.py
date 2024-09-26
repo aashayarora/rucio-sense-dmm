@@ -44,12 +44,6 @@ from dmm.frontend.frontend import frontend_app
 class DMM:
     def __init__(self):
         self.port = config_get_int("dmm", "port")
-        self.debug_mode = config_get_bool("dmm", "debug_mode", default=False)
-
-        if self.debug_mode:
-            logging.info("Running in debug mode, sense will not be used")
-        else:
-            logging.info("Running in production mode, sense will be used")
 
         self.rucio_frequency = config_get_int("daemons", "rucio", default=60)
         self.fts_frequency = config_get_int("daemons", "fts", default=60)
@@ -73,9 +67,8 @@ class DMM:
         
         allocator = AllocatorDaemon(frequency=self.dmm_frequency)
         decider = DeciderDaemon(frequency=self.dmm_frequency)
-        
-        monit = MonitDaemon(frequency=self.monit_frequency)
 
+        monit = MonitDaemon(frequency=self.monit_frequency)
         fts = FTSModifierDaemon(frequency=self.fts_frequency)
         
         rucio_init = RucioInitDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})

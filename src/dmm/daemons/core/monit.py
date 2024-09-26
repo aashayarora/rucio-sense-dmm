@@ -20,13 +20,12 @@ class MonitDaemon(DaemonBase, PrometheusUtils):
             if req.prometheus_bytes is None:
                 req.update_prometheus_bytes(bytes_now, session=session)
                 continue
-            throughput = round((bytes_now - req.prometheus_bytes) / self.frequency / 1024 / 1024 * 8, 2)
+            throughput = round((bytes_now - req.prometheus_bytes) / self.frequency / 1024 / 1024 / 1024 * 8, 2)
             req.update_prometheus_throughput(throughput, session=session)
             req.update_prometheus_bytes(bytes_now, session=session)
 
-            if (req.prometheus_throughput is not None):
-                if(req.prometheus_throughput < 0.8 * req.bandwidth):
-                    req.update_health("BAD")
-                else:
-                    req.update_health("GOOD")
+            if(throughput < 0.8 * req.bandwidth):
+                req.update_health("0", session=session)
+            else:
+                req.update_health("1", session=session)
     

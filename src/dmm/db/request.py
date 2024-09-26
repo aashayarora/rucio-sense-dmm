@@ -35,10 +35,6 @@ class Request(BASE, ModelBase):
     def from_id(cls, rule_id, session=None):
         return session.query(cls).filter(cls.rule_id == rule_id).first()
     
-    @classmethod
-    def get_all(cls, session=None):
-        return [req for req in session.query(cls).all()]
-    
     def mark_as(self, status, session=None):
         self.transfer_status = status 
         self.fts_modified = False
@@ -69,6 +65,6 @@ class Request(BASE, ModelBase):
         self.prometheus_throughput = throughput
         self.save(session)
 
-    def update_request_health(self, health, session=None):
+    def update_health(self, health, session=None):
         self.health = health
         self.save(session)

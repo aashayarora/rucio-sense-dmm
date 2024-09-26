@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy import text, or_
 from datetime import datetime
@@ -38,3 +39,7 @@ class ModelBase(object):
     def update(self, values, session=None):
         for k, v in values.items():
             self[k] = v
+
+    @classmethod
+    def get_all(cls, session=None):
+        return [obj for obj in session.query(cls).all()]

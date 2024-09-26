@@ -1,81 +1,124 @@
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta http-equiv="refresh" content="5">
-        <title>Current Request</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background-color: #f2f2f2;
-                margin: 0;
-                padding: 0;
-                display: flex;
-                flex-direction: column;
-                min-height: 100vh;
-            }
-            
-            h1 {
-                text-align: center;
-                color: #333;
-                padding: 20px;
-                margin: 0;
-                background-color: #0078D4;
-                color: white;
-            }
-            
-            table {
-                border-collapse: collapse;
-                width: 100%;
-                margin: 20px auto;
-                background-color: white;
-                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            }
-            
-            th, td {
-                border: 1px solid #ddd;
-                padding: 4px;
-                text-align: center;
-            }
-            
-            th {
-                background-color: #f2f2f2;
-                font-weight: bold;
-            }
-            
-            tbody tr:nth-child(even) {
-                background-color: #f9f9f9;
-            }
-            
-            tbody tr:hover {
-                background-color: #e6e6e6;
-            }
-            
-            footer {
-                text-align: center;
-                font-size: 12px;
-                color: #999;
-                margin-top: auto;
-                opacity: 0.5;
-            }
-        </style>
-        <h1>DMM Status</h1>
-        <table>
-            <thead>
-                <tr>
-                    <th>Rule ID</th>
-                    <th>Bandwidth</th>
-                    <th>Circuit Status</th>
-                    <th>State of rule transfer</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>{{ data.rule_id }}</td>
-                    <td>{{ data.bandwidth }}</td>
-                    <td>{{ data.sense_circuit_status }}</td>
-                    <td>{{ data.transfer_status }}</td>
-                </tr>
-            </tbody>
-        </table>
-    </body>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="5">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Movement Manager</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f2f2f2;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            color: #333;
+        }
+
+        h1 {
+            text-align: center;
+            color: white;
+            background-color: #0078D4;
+            padding: 20px;
+            margin: 0;
+            font-size: 26px;
+        }
+
+        nav {
+            background-color: #005a9e;
+            padding: 10px;
+            text-align: center;
+        }
+
+        nav a {
+            color: white;
+            text-decoration: none;
+            margin: 0 15px;
+            font-size: 16px;
+            transition: color 0.3s;
+        }
+
+        nav a:hover {
+            color: #ffdd57;
+        }
+
+        .container {
+            flex: 1;
+            padding: 20px;
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: white;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+        }
+
+        .card {
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            font-size: 18px;
+            color: #0078D4;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #0078D4;
+            padding-bottom: 5px;
+        }
+
+        .details-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #ddd;
+            font-size: 16px;
+        }
+
+        .details-row:last-child {
+            border-bottom: none;
+        }
+
+        .details-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .details-value {
+            text-align: right;
+            font-weight: normal;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <h1>Rule Details</h1>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/sites">Sites</a>
+    </nav>
+    <div class="container">
+        <div class="card">
+            <h2>{{ data.rule_id }}</h2>
+
+            <div class="details-row">
+                <span class="details-label">Bandwidth:</span>
+                <span class="details-value">{{ data.bandwidth }}</span>
+            </div>
+            <div class="details-row">
+                <span class="details-label">Circuit Status:</span>
+                <span class="details-value">{{ data.sense_circuit_status }}</span>
+            </div>
+            <div class="details-row">
+                <span class="details-label">Transfer Status:</span>
+                <span class="details-value">{{ data.transfer_status }}</span>
+            </div>
+            <div class="details-row">
+                <span class="details-label">Throughput:</span>
+                <span class="details-value">{{ data.prometheus_throughput }}</span>
+            </div>
+    </div>
+</body>
 </html>

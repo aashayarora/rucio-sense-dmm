@@ -5,6 +5,7 @@ import os
 
 from dmm.db.session import databased
 from dmm.db.request import Request
+from dmm.db.site import Site
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 templates_folder = os.path.join(current_directory, "templates")
@@ -40,7 +41,17 @@ def get_dmm_status(session=None):
     except Exception as e:
         logging.error(e)
         return "Problem in the DMM frontend\n"
-    
+
+@frontend_app.route("/sites", methods=["GET"])
+@databased
+def get_sites(session=None):
+    sites = Site.get_all(session=session)
+    try:
+        return render_template("sites.html", data=sites)
+    except Exception as e:
+        logging.error(e)
+        return "Problem in the DMM frontend\n"
+
 # When users click on "See More" button, get detailed metrics
 @frontend_app.route("/details/<rule_id>", methods=["GET", "POST"])
 @databased

@@ -1,5 +1,4 @@
 from dmm.db.base import *
-from sqlalchemy.orm import relationship
 
 class Mesh(BASE, ModelBase):
     id = Column(Integer, autoincrement=True, primary_key=True)

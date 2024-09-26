@@ -24,7 +24,7 @@
             text-align: center;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
-
+        
         header h1 {
             font-size: 26px;
             margin: 0;
@@ -59,6 +59,26 @@
             overflow-x: auto; /* Enable horizontal scrolling */
         }
 
+        .button-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .button-container button {
+            background-color: #0078D4;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        .button-container button:hover {
+            background-color: #005a9e;
+        }
+
         table {
             border-collapse: collapse;
             width: 100%;
@@ -89,10 +109,24 @@
             background-color: #e6e6e6;
         }
 
-        td {
-            white-space: nowrap; /* Prevents text from breaking into new lines */
+        td ul {
+            padding: 0;
+            margin: 0;
+            list-style-type: none; /* Remove bullets */
+        }
+
+        td ul li {
+            color: green;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-align: left;
             overflow: hidden;
-            text-overflow: ellipsis; /* Adds "..." for long text */
+            text-overflow: ellipsis; /* Add ellipsis for long text */
+            white-space: nowrap;
+        }
+
+        td ul li.red {
+            color: red; /* Color red for items not in use */
         }
 
         footer {
@@ -121,41 +155,25 @@
         <table>
             <thead>
                 <tr>
-                    <th>Rule ID</th>
-                    <th>DMM Status</th>
-                    <th>Source RSE</th>
-                    <th>Source IPv6 Range</th>
-                    <th>Source Hostname</th>
-                    <th>Destination RSE</th>
-                    <th>Destination IPv6 Range</th>
-                    <th>Destination Hostname</th>
-                    <th>Request Priority</th>
-                    <th>Allocated Bandwidth (Gbps)</th>
-                    <th>SENSE Instance UUID</th>
-                    <th>SENSE Circuit Status</th>
-                    <th>Throughput (Gbps)</th>
-                    <th>Health</th>
-                    <th>Details</th>
+                    <th>RSE Name</th>
+                    <th>SENSE URI</th>
+                    <th>Endpoints</th>
                 </tr>
             </thead>
             <tbody>
-                {% for req in data %}
+                {% for site in data %}
                 <tr>
-                    <td>{{ req.rule_id }}</td>
-                    <td>{{ req.transfer_status }}</td>
-                    <td>{{ req.src_site }}</td>
-                    <td>{{ req.src_ipv6_block }}</td>
-                    <td>{{ req.src_url }}</td>
-                    <td>{{ req.dst_site }}</td>
-                    <td>{{ req.dst_ipv6_block }}</td>
-                    <td>{{ req.dst_url }}</td>
-                    <td>{{ req.priority }}</td>
-                    <td>{{ req.bandwidth / 1000 }}</td>
-                    <td>{{ req.sense_uuid }}</td>
-                    <td>{{ req.sense_circuit_status }}</td>
-                    <td>{{ req.prometheus_throughput }}</td>
-                    <td style="background-color: {% if req.health == '0' %}red{% else %}green{% endif %};"></td>                    
-                    <td><button onclick="sendRuleID(this)">See More</button></td>
+                    <td>{{ site.name }}</td>
+                    <td>{{ site.sense_uri }}</td>
+                    <td>
+                        <ul>
+                            {% for endpoint in site.endpoints %}
+                            <li class="{{ 'red' if endpoint.in_use else '' }}">
+                                {{ endpoint.hostname }}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -164,12 +182,5 @@
     <footer>
         <p>&copy; Apache License, Version 2.0</p>
     </footer>
-    <script>
-        function sendRuleID(button) {
-            let rowElement = button.closest('tr'); 
-            let rule_id = rowElement.cells[0].innerText;
-            window.location.href = `/details/${rule_id}`;
-        }
-    </script>
 </body>
 </html>

@@ -65,6 +65,9 @@ class AllocatorDaemon(DaemonBase, SENSEUtils):
                         "transfer_status": "ALLOCATED"
                     })
 
+                    src_endpoint.mark_inuse(in_use=True, session=session)
+                    dst_endpoint.mark_inuse(in_use=True, session=session)
+
                 except Exception as e:
                     self.free_allocation(new_request.src_site, new_request.rule_id)
                     self.free_allocation(new_request.dst_site, new_request.rule_id)
