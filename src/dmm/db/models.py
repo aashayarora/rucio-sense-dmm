@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, JSON, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -47,6 +47,11 @@ class Request(BASE, ModelBase):
     sense_circuit_status = Column(String(255))
     fts_modified = Column(Boolean())
     sense_provisioned_at = Column(DateTime())
+    bytes_at_t = Column(JSON())
+    # Added these metrics for throughput calculation. 
+    # Remove if necessary
+    total_bytes = Column(Integer())
+    total_sec = Column(Integer())
 
     def __init__(self, **kwargs):
         super(Request, self).__init__(**kwargs)
