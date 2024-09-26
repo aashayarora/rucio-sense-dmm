@@ -88,9 +88,7 @@ class FTSUtils:
         dst_url_no_port = "davs://" + req.dst_url.split(":")[0]
         try:
             response_link = requests.delete(self.fts_host + "/config/links/" + urllib.parse.quote("-".join([src_url_no_port, dst_url_no_port]), safe=""), headers=self.headers, cert=self.cert, verify=False)
-            response_se1 = requests.delete(self.fts_host + "/config/se/" + urllib.parse.quote(src_url_no_port, safe=""), headers=self.headers, cert=self.cert, verify=False)
-            response_se2 = requests.delete(self.fts_host + "/config/se/" + urllib.parse.quote(dst_url_no_port, safe=""), headers=self.headers, cert=self.cert, verify=False)
-            return (response_link.status_code == 200 and response_se1.status_code == 200 and response_se2.status_code == 200)
+            return (response_link.status_code == 200 or response_link.status_code == 201 or response_link.status_code == 204)
         except:
             logging.exception("Error while deleting FTS configs")
             return None

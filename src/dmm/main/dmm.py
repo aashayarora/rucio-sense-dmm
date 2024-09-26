@@ -18,7 +18,7 @@ from multiprocessing import Lock
 from waitress import serve
 
 from rucio.client import Client
-from dmm.utils.config import config_get_int, config_get_bool
+from dmm.utils.config import config_get_int
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 

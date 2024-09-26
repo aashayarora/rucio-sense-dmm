@@ -32,7 +32,6 @@ class RefreshSiteDBDaemon(DaemonBase, SENSEUtils):
                 site_exists = Site.from_name(name=site, session=session)
                 if not site_exists:
                     logging.debug(f"Site {site} not found in database, adding...")
-                    
                     # get site uri
                     try:
                         logging.debug(f"Getting site info for {site}")
@@ -95,9 +94,9 @@ class RefreshSiteDBDaemon(DaemonBase, SENSEUtils):
                 else:
                     logging.debug(f"Site {site} already exists in database")
                     site_ = site_exists
+                    sense_uri = site_.sense_uri
 
                 logging.debug("Checking for new / adding endpoints...")
-
                 # get endpoints for this site
                 try:
                     logging.info(f"Getting list of endpoints for {sense_uri}")

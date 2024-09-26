@@ -1,6 +1,6 @@
 from dmm.daemons.base import DaemonBase
 from dmm.utils.monit import PrometheusUtils
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from dmm.db.request import Request
 
@@ -28,4 +28,3 @@ class MonitDaemon(DaemonBase, PrometheusUtils):
                 req.update_health("0", session=session)
             else:
                 req.update_health("1", session=session)
-    

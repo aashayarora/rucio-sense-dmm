@@ -41,5 +41,7 @@ class FTSModifierDaemon(DaemonBase, FTSUtils):
         reqs_deleted = Request.from_status(status=["DELETED"], session=session)
         if reqs_deleted != []:
             for deleted_req in reqs_deleted:
-                logging.debug(f"Deleting FTS limits for request {deleted_req.rule_id}")
-                self.delete_config(deleted_req)
+                if not deleted_req.fts_modified:
+                    logging.debug(f"Deleting FTS limits for request {deleted_req.rule_id}")
+                    self.delete_config(deleted_req)
+                    deleted_req.mark_fts_modified(session=session)
