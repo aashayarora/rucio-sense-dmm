@@ -1,7 +1,7 @@
 import psycopg
 import argparse
 
-HOST = "localhost"
+HOST = ""
 DBNAME = "dmm"
 USER = "dmm"
 PASSWORD = "dmm"

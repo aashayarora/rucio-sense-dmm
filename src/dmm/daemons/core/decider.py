@@ -74,8 +74,7 @@ class DeciderDaemon(DaemonBase):
                 if total_priority > 0:
                     proportion = data['priority'] / total_priority
                     bandwidth = bandwidths[edge_index[(u, v)]] * proportion
-                    logging.debug(f"Allocating bandwidth {bandwidth} from {u} to {v}")
-                    network_graph[u][v][key]['bandwidth'] = bandwidth
+                    network_graph[u][v][key]['bandwidth'] = round(bandwidth, -2) # round to nearest 100
                 else:
                     network_graph[u][v][key]['bandwidth'] = 0
         else:
@@ -88,6 +87,7 @@ class DeciderDaemon(DaemonBase):
                 if "rule_id" in data and data["rule_id"] == req.rule_id:
                     allocated_bandwidth = int(data["bandwidth"])
             req.update_bandwidth(allocated_bandwidth, session=session)
+            logging.info(f"Allocated bandwidth for request {req.rule_id}: {allocated_bandwidth}")
             req.mark_as(status="DECIDED", session=session)
 
         # for already provisioned reqs, modify bandwidth and mark as stale
@@ -98,5 +98,6 @@ class DeciderDaemon(DaemonBase):
                     allocated_bandwidth = int(data["bandwidth"])
             if allocated_bandwidth != req.bandwidth:
                 req.update_bandwidth(allocated_bandwidth, session=session)
+                logging.info(f"Modified bandwidth for request {req.rule_id}: {allocated_bandwidth}")
                 req.mark_as(status="STALE", session=session)
 
