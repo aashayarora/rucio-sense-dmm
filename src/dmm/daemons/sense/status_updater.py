@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime
 
+from dmm.utils.config import config_get_int
+
 from dmm.daemons.base import DaemonBase
 from dmm.db.request import Request
 from dmm.db.session import databased
@@ -24,3 +26,5 @@ class SENSEStatusUpdaterDaemon(DaemonBase):
             req.update_sense_circuit_status(status=status, session=session)
             if req.sense_provisioned_at is None and re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
                 req.update({"sense_provisioned_at": datetime.utcnow()})
+                fts_limit = config_get_int("fts-streams", f"{req.src_site.name}-{req.dst_site.name}", 200)
+                req.update_fts_limit(limit=fts_limit, session=session)

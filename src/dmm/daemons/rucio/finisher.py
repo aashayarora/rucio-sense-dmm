@@ -19,3 +19,4 @@ class RucioFinisherDaemon(DaemonBase):
             if status in ["OK", "STUCK"]:
                 logging.debug(f"Request {req.rule_id} finished with status {status}")
                 req.mark_as(status="FINISHED", session=session)  # Mark request as finished
+                req.update_fts_limit(limit=0, session=session)  # Remove FTS limits

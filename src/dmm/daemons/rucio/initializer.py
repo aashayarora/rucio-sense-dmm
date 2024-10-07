@@ -26,6 +26,7 @@ class RucioInitDaemon(DaemonBase):
                                             dst_site=Site.from_name(rule["rse_expression"], session=session),
                                             priority=rule["priority"],
                                             transfer_status="NOT_SENSE",
+                                            fts_limit_desired=20,
                                         )
                 else:
                     logging.debug(f"rule {rule['id']} identified as a sense rule")
@@ -34,5 +35,6 @@ class RucioInitDaemon(DaemonBase):
                                             dst_site=Site.from_name(rule["rse_expression"], session=session),
                                             priority=rule["priority"],
                                             transfer_status="INIT",
+                                            fts_limit_desired=20,
                                         )
                     new_request.save(session=session)

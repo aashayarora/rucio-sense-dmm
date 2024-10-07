@@ -4,7 +4,6 @@ import logging
 from dmm.db.session import databased
 from dmm.db.request import Request
 
-from dmm.utils.config import config_get_int
 from dmm.utils.fts import FTSUtils
 
 from dmm.daemons.base import DaemonBase
@@ -16,32 +15,20 @@ class FTSModifierDaemon(DaemonBase, FTSUtils):
     
     @databased
     def process(self, session=None):
-        reqs_new = Request.from_status(status=["ALLOCATED"], session=session)
-        if reqs_new != []:
-            for allocated_req in reqs_new:
-                if not allocated_req.fts_modified:
-                    num_streams = 20
-                    logging.debug(f"Mofifying FTS limits for request {allocated_req.rule_id} to {num_streams} max streams.")
-                    link_modified = self.modify_link_config(allocated_req, max_active=num_streams, min_active=num_streams)
-                    se_modified = self.modify_se_config(allocated_req, max_inbound=num_streams, max_outbound=num_streams)
-                    if link_modified and se_modified:
-                        allocated_req.mark_fts_modified(session=session)
-
-        reqs = Request.from_status(status=["PROVISIONED"], session=session)
+        reqs = Request.from_status(status=["ALLOCATED", "PROVISIONED"], session=session)
         if reqs != []:
-            for provisioned_req in reqs:
-                if not provisioned_req.fts_modified and re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", provisioned_req.sense_circuit_status):
-                    num_streams = config_get_int("fts-streams", f"{provisioned_req.src_site.name}-{provisioned_req.dst_site.name}", 200)
-                    logging.debug(f"request {provisioned_req.rule_id} in ready state, modifying fts limits to {num_streams} max streams.")
-                    link_modified = self.modify_link_config(provisioned_req, max_active=num_streams, min_active=num_streams)
-                    se_modified = self.modify_se_config(provisioned_req, max_inbound=num_streams, max_outbound=num_streams)
+            for req in reqs:
+                if req.fts_limit_current != req.fts_limit_desired:
+                    logging.debug(f"request {req.rule_id} in ready state, modifying fts limits to {req.fts_limit_desired} max streams.")
+                    link_modified = self.modify_link_config(req, max_active=req.fts_limit_desired, min_active=req.fts_limit_desired)
+                    se_modified = self.modify_se_config(req, max_inbound=req.fts_limit_desired, max_outbound=req.fts_limit_desired)
                     if link_modified and se_modified:
-                        provisioned_req.mark_fts_modified(session=session)
+                        req.update_fts_limit(limit=req.fts_limit_desired, session=session)
 
         reqs_deleted = Request.from_status(status=["DELETED"], session=session)
         if reqs_deleted != []:
             for deleted_req in reqs_deleted:
-                if not deleted_req.fts_modified:
+                if deleted_req.fts_limit_current != 0:
                     logging.debug(f"Deleting FTS limits for request {deleted_req.rule_id}")
                     self.delete_config(deleted_req)
-                    deleted_req.mark_fts_modified(session=session)
+                    deleted_req.update_fts_limit(limit=0, session=session)
