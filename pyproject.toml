@@ -9,7 +9,7 @@ authors = [
   { name="Aashay Arora", email="aaarora@ucsd.edu" },
 ]
 dependencies = [
-    "sense-o-api",
+    "sense-o-api==1.32",
     "sqlalchemy",
     "psycopg2-binary",
     "networkx",
