@@ -111,7 +111,6 @@
 <body>
     <header>
         <div style="display: flex; align-items: center; justify-content: center;">
-            <img src="./dmm.png" alt="DMM Logo" style="height: 50px; margin-right: 10px;">
             <h1 style="margin: 0;">Data Movement Manager</h1>
         </div>
     </header>
@@ -133,6 +132,7 @@
                     <th>Destination Hostname</th>
                     <th>Request Priority</th>
                     <th>Allocated Bandwidth (Gbps)</th>
+                    <th>Current FTS Limits</th>
                     <th>SENSE Instance UUID</th>
                     <th>SENSE Circuit Status</th>
                     <th>Throughput (Gbps)</th>
@@ -153,6 +153,7 @@
                     <td>{{ req.dst_endpoint.hostname }}</td>
                     <td>{{ req.priority }}</td>
                     <td>{{ req.bandwidth / 1000 if req.bandwidth is not none else 0 }}</td>
+                    <td>{{ req.fts_limit_current }}</td>
                     <td>{{ req.sense_uuid }}</td>
                     <td>{{ req.sense_circuit_status }}</td>
                     <td>{{ req.prometheus_throughput }}</td>
