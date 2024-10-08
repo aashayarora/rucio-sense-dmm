@@ -15,6 +15,8 @@ class MonitDaemon(DaemonBase, PrometheusUtils):
     def process(self, session=None):
         reqs = Request.from_status(["PROVISIONED"], session=session)
         for req in reqs:
+            if req.sense_provisioned_at is None:
+                continue
             timestamp = round(datetime.timestamp(datetime.now()))
             bytes_now = self.get_all_bytes_at_t(timestamp, req.src_endpoint.ip_block)
             if req.prometheus_bytes is None:

@@ -15,15 +15,15 @@ class FTSModifierDaemon(DaemonBase, FTSUtils):
     
     @databased
     def process(self, session=None):
-        reqs = Request.from_status(status=["ALLOCATED", "PROVISIONED"], session=session)
+        reqs = Request.from_status(status=["ALLOCATED", "DECIDED", "PROVISIONED"], session=session)
         if reqs != []:
             for req in reqs:
                 if req.fts_limit_current != req.fts_limit_desired:
-                    logging.debug(f"request {req.rule_id} in ready state, modifying fts limits to {req.fts_limit_desired} max streams.")
+                    logging.debug(f"Modifying FTS limits for request {req.rule_id}, from {req.fts_limit_current} to {req.fts_limit_desired}")
                     link_modified = self.modify_link_config(req, max_active=req.fts_limit_desired, min_active=req.fts_limit_desired)
                     se_modified = self.modify_se_config(req, max_inbound=req.fts_limit_desired, max_outbound=req.fts_limit_desired)
                     if link_modified and se_modified:
-                        req.update_fts_limit(limit=req.fts_limit_desired, session=session)
+                        req.update_fts_limit_current(limit=req.fts_limit_desired, session=session)
 
         reqs_deleted = Request.from_status(status=["DELETED"], session=session)
         if reqs_deleted != []:
@@ -31,4 +31,4 @@ class FTSModifierDaemon(DaemonBase, FTSUtils):
                 if deleted_req.fts_limit_current != 0:
                     logging.debug(f"Deleting FTS limits for request {deleted_req.rule_id}")
                     self.delete_config(deleted_req)
-                    deleted_req.update_fts_limit(limit=0, session=session)
+                    deleted_req.update_fts_limit_current(limit=0, session=session)

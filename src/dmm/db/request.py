@@ -57,8 +57,12 @@ class Request(BASE, ModelBase):
         self.sense_circuit_status = status
         self.save(session)
     
-    def update_fts_limit(self, limit, session=None):
+    def update_fts_limit_current(self, limit, session=None):
         self.fts_limit_current = limit
+        self.save(session)
+
+    def update_fts_limit_desired(self, limit, session=None):
+        self.fts_limit_desired = limit
         self.save(session)
 
     def update_prometheus_bytes(self, prom_bytes, session=None):
