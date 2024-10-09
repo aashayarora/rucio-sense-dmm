@@ -36,15 +36,3 @@ class SENSEUtils:
         except Exception as e:
             logging.error(f"free_allocation: {str(e)}")
             raise ValueError(f"Freeing allocation failed for {sitename} and {alloc_name}")
-
-# def get_one_host_ip_interface(site_uri):
-#     manifest_json = {
-#         "HOST": "?hostname?",
-#         "NIC": "?nicname?",
-#         "sparql": "SELECT ?bp WHERE { ?bp a nml:BidirectionalPort } LIMIT 1",
-#         "sparql-ext": "SELECT ?hostname ?nicname WHERE { ?site nml:hasNode ?host. ?host nml:hostname ?hostname. ?host nml:hasBidirectionalPort ?nic. ?nic nml:isAlias ?orther_port. ?nic mrs:hasNetworkAddress ?nic_na_name. ?nic_na_name mrs:type 'sense-rtmon:name'. ?nic_na_name mrs:value ?nicname.  FILTER regex(str(?site), '%s') FILTER NOT EXISTS {?host nml:hasService ?sw_svc. ?sw_svc a nml:SwitchingService.}  } LIMIT 1".format(site_uri),
-#         "required": "true"
-#     }
-#     workflowApi = WorkflowCombinedApi()
-#     placeholder_uuid = config_get("sense", "dummy_uuid")
-#     response = workflowApi.manifest_create(json.dumps(manifest_json), si_uuid=placeholder_uuid)

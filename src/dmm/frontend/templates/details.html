@@ -118,6 +118,57 @@
                 <span class="details-label">Throughput:</span>
                 <span class="details-value">{{ data.prometheus_throughput }}</span>
             </div>
+            <div class="details-row">
+                <form id="markFinishedForm" style="display: inline;"></form>
+                    <button type="button" onclick="markAsFinished('{{ data.rule_id }}')" style="background-color: #0078D4; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                        Mark as Finished
+                    </button>
+                </form>
+                <form id="updateFtsLimitForm" style="display: inline;">
+                    <button type="button" onclick="updateFtsLimit('{{ data.rule_id }}')" style="background-color: #0078D4; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                        Update FTS Limit
+                    </button>
+                </form>
+                <script>
+                    function markAsFinished(ruleId) {
+                        fetch('/mark_finished', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ rule_id: ruleId })
+                        })
+                        .then(response => response.text())
+                        .then(data => {
+                            alert(data);
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            alert("Failed to mark rule as finished.");
+                        });
+                    }
+                    function updateFtsLimit(ruleId) {
+                        const limit = prompt("Enter new FTS limit:");
+                        if (limit !== null) {
+                            fetch('/update_fts_limit', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ rule_id: ruleId, limit: limit })
+                            })
+                            .then(response => response.text())
+                            .then(data => {
+                                alert(data);
+                            })
+                            .catch(error => {
+                                console.error('Error:', error);
+                                alert("Failed to update FTS limit.");
+                            });
+                        }
+                    }
+                </script>
+            </div>
     </div>
 </body>
 </html>
