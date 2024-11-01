@@ -6,16 +6,12 @@ from dmm.daemons.base import DaemonBase
 
 from dmm.db.session import databased
 from dmm.db.request import Request
-from dmm.db.endpoint import Endpoint
-
-from dmm.utils.sense import SENSEUtils
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
-class SENSECancellerDaemon(DaemonBase, SENSEUtils):
+class SENSECancellerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        SENSEUtils.__init__(self)
         
     @databased
     def process(self, session=None):

@@ -3,17 +3,14 @@ import re
 
 from dmm.daemons.base import DaemonBase
 
-from dmm.utils.sense import SENSEUtils
-
 from dmm.db.session import databased
 from dmm.db.request import Request
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
-class SENSEDeleterDaemon(DaemonBase, SENSEUtils):
+class SENSEDeleterDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        SENSEUtils.__init__(self)
         
     @databased
     def process(self, session=None):

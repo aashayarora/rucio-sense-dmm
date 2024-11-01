@@ -6,17 +6,17 @@ from dmm.daemons.base import DaemonBase
 from dmm.db.session import databased
 from dmm.db.request import Request
 
+from dmm.utils.config import config_get
+
 from dmm.db.site import Site
 from dmm.db.mesh import Mesh
 
-from dmm.utils.sense import SENSEUtils
-
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
-class SENSEStagerDaemon(DaemonBase, SENSEUtils):
+class SENSEStagerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        SENSEUtils.__init__(self)
+        self.profile_uuid = config_get("sense", "profile_uuid")
         
     @databased
     def process(self, session=None):
@@ -47,7 +47,7 @@ class SENSEStagerDaemon(DaemonBase, SENSEUtils):
                     "alias": req.rule_id
                 }
                 response = workflow_api.instance_create(json.dumps(intent))
-                if not self.good_response(response):
+                if not self._good_response(response):
                     raise ValueError(f"SENSE req staging failed for {req.rule_id}")
                 logging.debug(f"Staging returned response {response}")
                 for query in response["queries"]:
@@ -60,3 +60,7 @@ class SENSEStagerDaemon(DaemonBase, SENSEUtils):
                 req.mark_as(status="STAGED", session=session)
             except Exception as e:
                 logging.error(f"Failed to stage link for {req.rule_id}, {e}, will try again")
+    
+    @staticmethod
+    def _good_response(response):
+        return bool(response and not any("ERROR" in r for r in response))

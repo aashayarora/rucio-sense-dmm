@@ -9,14 +9,14 @@ from dmm.db.request import Request
 from dmm.db.site import Site
 from dmm.db.mesh import Mesh
 
-from dmm.utils.sense import SENSEUtils
+from dmm.utils.config import config_get
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
-class SENSEModifierDaemon(DaemonBase, SENSEUtils):
+class SENSEModifierDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        SENSEUtils.__init__(self)
+        self.profile_uuid = config_get("sense", "profile_uuid")
         
     @databased
     def process(self, session=None):
