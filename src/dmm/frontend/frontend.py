@@ -83,8 +83,11 @@ def update_fts_limit(session=None):
         rule_id = data.get("rule_id")
         limit = data.get("limit")
         req = Request.from_id(rule_id, session=session)
-        req.update_fts_limit_desired(limit=limit, session=session)
-        return "FTS limit updated"
+        if req.transfer_status not in ["CANCELLED", "FINISHED", "DELETED"]:
+            req.update_fts_limit_desired(limit=limit, session=session)
+            return "FTS limit updated"
+        else:
+            return "Cannot update FTS limit for cancelled, finished or deleted requests"
     except Exception as e:
         logging.error(e)
         return "Failed to update FTS limit\n"

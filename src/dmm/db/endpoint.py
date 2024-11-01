@@ -22,16 +22,16 @@ class Endpoint(BASE, ModelBase):
     
     @classmethod
     def from_hostname(cls, hostname, session=None):
-        return session.query(cls).filter_by(hostname=hostname).first()
+        return session.query(cls).filter(cls.hostname == hostname).first()
     
     @classmethod
     def from_site(cls, site_name, session=None):
-        return session.query(cls).filter_by(site_name=site_name).all()
+        return session.query(cls).filter(cls.site_name == site_name).all()
     
     @classmethod
     def for_rule(cls, site_name, ip_block, session=None):
-        return session.query(cls).filter_by(site_name=site_name, ip_block=ip_block).first()
+        return session.query(cls).filter(cls.site_name == site_name, cls.ip_block == ip_block).first()
 
     def mark_inuse(self, in_use, session=None):
         self.in_use = in_use
-        self.save(session)
+        self.save(session)    
