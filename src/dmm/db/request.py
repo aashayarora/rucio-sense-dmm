@@ -27,7 +27,7 @@ class Request(BASE, ModelBase):
     dst_endpoint = relationship('Endpoint', back_populates='ep_request_dst', foreign_keys=[dst_endpoint_])
 
     def __init__(self, **kwargs):
-        super(Request, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def __eq__(self, other):
         return self.rule_id == other.rule_id

@@ -6,21 +6,21 @@ from datetime import datetime
 
 BASE = declarative_base()
 
-class ModelBase(object):
+class ModelBase:
     @declared_attr
     def __tablename__(cls):
         return cls.__name__.lower()
     
     @declared_attr
     def created_at(cls):
-        return Column("created_at", DateTime, default=datetime.utcnow)
+        return Column(DateTime, default=datetime.utcnow)
     
     @declared_attr
     def updated_at(cls):
-        return Column("updated_at", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+        return Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self):
-        attrs = {k: getattr(self, k) for k in vars(self).keys() if not k.startswith('_')}
+        attrs = {k: getattr(self, k) for k in vars(self) if not k.startswith('_')}
         return f"<{self.__class__.__name__}({attrs})>"
 
     def __setitem__(self, key, value):
