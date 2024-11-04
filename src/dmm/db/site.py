@@ -15,12 +15,13 @@ class Site(BASE, ModelBase):
         super(Site, self).__init__(**kwargs)
 
     def __eq__(self, other):
+        if not isinstance(other, Site):
+            return NotImplemented
         return self.name == other.name
 
     @classmethod
     def from_name(cls, name, attr=None, session=None):
-        if attr:
-            query = session.query(cls).filter(cls.name == name).first()
+        query = session.query(cls).filter(cls.name == name).first()
+        if attr and query:
             return getattr(query, attr)
-        else:
-            return session.query(cls).filter(cls.name == name).first()
+        return query

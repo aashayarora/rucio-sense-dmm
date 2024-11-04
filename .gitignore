@@ -5,3 +5,4 @@ dmm.db
 dist/
 src/sense_dmm.egg-info
 build/
+*.ipynb

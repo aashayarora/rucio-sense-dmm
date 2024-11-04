@@ -9,13 +9,15 @@ from dmm.db.request import Request
 from dmm.db.site import Site
 from dmm.db.mesh import Mesh
 
-from dmm.utils.sense import SENSEUtils
+from dmm.utils.config import config_get
+
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 
-class SENSEProvisionerDaemon(DaemonBase, SENSEUtils):
+class SENSEProvisionerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        SENSEUtils.__init__(self)
+
+        self.profile_uuid = config_get("sense", "profile_uuid")
         
     @databased
     def process(self, session=None):
@@ -54,10 +56,13 @@ class SENSEProvisionerDaemon(DaemonBase, SENSEUtils):
                     "alias": req.rule_id
                 }
                 response = workflow_api.instance_create(json.dumps(intent))
-                if not self.good_response(response):
+                if not self._good_response(response):
                     raise ValueError(f"SENSE query failed for {req.rule_id}")
                 workflow_api.instance_operate("provision", sync="true")
                 req.mark_as(status="PROVISIONED", session=session)
             except Exception as e:
                 logging.error(f"Failed to provision link for {req.rule_id}, {e}, will try again")
-            
+    
+    @staticmethod
+    def _good_response(response):
+        return bool(response and not any("error" in r for r in response))

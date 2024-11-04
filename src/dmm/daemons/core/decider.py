@@ -12,25 +12,39 @@ from dmm.db.session import databased
 class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-
+        
     @databased
     def process(self, session=None):
+        network_graph = self._build_network_graph(session)
+        
+        if not network_graph.nodes:
+            return
+
+        g, nodes, edges = self._simplify_graph(network_graph)
+        A, c, b, edge_index = self._prepare_optimization_matrices(g, nodes, edges)
+        optim_result = self._optimize_bandwidth(A, b, c, edge_index, edges)
+
+        if optim_result.success:
+            self._allocate_bandwidth(network_graph, g, edges, edge_index, optim_result.x)
+        else:
+            logging.error("Optimization failed, no bandwidth allocated.")
+
+        self._process_requests(network_graph, session)
+
+    def _build_network_graph(self, session):
         network_graph = nx.MultiGraph()
-        # Get all active requests
         reqs = Request.from_status(status=["STAGED", "ALLOCATED", "MODIFIED", "DECIDED", "STALE", "PROVISIONED", "FINISHED", "CANCELED"], session=session)
         if reqs == []:
-            return
+            return network_graph
         for req in reqs:
             src_port_capacity = Mesh.max_bandwidth(req.src_site, session=session)
             network_graph.add_node(req.src_site.name, port_capacity=src_port_capacity)
             dst_port_capacity = Mesh.max_bandwidth(req.dst_site, session=session)
             network_graph.add_node(req.dst_site.name, port_capacity=dst_port_capacity)
             network_graph.add_edge(req.src_site.name, req.dst_site.name, rule_id=req.rule_id, priority=req.priority, bandwidth=req.bandwidth)
-        
-        # exit if graph is empty
-        if not network_graph.nodes:
-            return
+        return network_graph
 
+    def _simplify_graph(self, network_graph):
         g = nx.Graph()
         g.add_nodes_from(network_graph.nodes(data=True))
 
@@ -43,7 +57,9 @@ class DeciderDaemon(DaemonBase):
 
         nodes = list(g.nodes)
         edges = list(g.edges(data=True))
+        return g, nodes, edges
 
+    def _prepare_optimization_matrices(self, g, nodes, edges):
         n_nodes = len(nodes)
         n_edges = len(edges)
 
@@ -64,23 +80,37 @@ class DeciderDaemon(DaemonBase):
             c[edge_idx] = -priority
 
         b = np.array([g.nodes[node]['port_capacity'] for node in nodes])
-        optim_result = linprog(c, A_ub=A, b_ub=b, bounds=(0, None))
+        return A, c, b, edge_index
 
-        if optim_result.success:
-            x = optim_result.x  # Optimal flow on each edge
-            bandwidths = x * np.array([data['priority'] for u, v, data in edges])
-            for u, v, key, data in network_graph.edges(keys=True, data=True):
-                total_priority = g[u][v]['priority']  # Get the summed priority in the simple graph
-                if total_priority > 0:
-                    proportion = data['priority'] / total_priority
-                    bandwidth = bandwidths[edge_index[(u, v)]] * proportion
-                    network_graph[u][v][key]['bandwidth'] = round(bandwidth, -2) # round to nearest 100
-                else:
-                    network_graph[u][v][key]['bandwidth'] = 0
-        else:
-            logging.error("Optimization failed, no bandwidth allocated.")
+    def _optimize_bandwidth(self, A, b, c, edge_index, edges):
+        optim_result = None
+        lower_bound = 0
+        while True:
+            bounds = [(lower_bound, None) for _ in range(len(edges))]
+            curr_optim_result = linprog(c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
+            if not curr_optim_result.success:
+                break
+            else:
+                optim_result = curr_optim_result
+                lower_bound += 5
+        return optim_result
 
-        # for staged reqs, allocate new bandwidth
+    def _allocate_bandwidth(self, network_graph, g, edges, edge_index, x):
+        bandwidths = x * np.array([data['priority'] for u, v, data in edges])
+        for u, v, key, data in network_graph.edges(keys=True, data=True):
+            total_priority = g[u][v]['priority']
+            if total_priority > 0:
+                proportion = data['priority'] / total_priority
+                bandwidth = bandwidths[edge_index[(u, v)]] * proportion
+                network_graph[u][v][key]['bandwidth'] = round(bandwidth, -2)
+            else:
+                network_graph[u][v][key]['bandwidth'] = 0
+
+    def _process_requests(self, network_graph, session):
+        self._allocate_new_bandwidth(network_graph, session)
+        self._modify_existing_bandwidth(network_graph, session)
+
+    def _allocate_new_bandwidth(self, network_graph, session):
         reqs_staged = Request.from_status(status=["STAGED"], session=session)
         for req in reqs_staged:
             for _, _, key, data in network_graph.edges(keys=True, data=True):
@@ -90,7 +120,7 @@ class DeciderDaemon(DaemonBase):
             logging.info(f"Allocated bandwidth for request {req.rule_id}: {allocated_bandwidth}")
             req.mark_as(status="DECIDED", session=session)
 
-        # for already provisioned reqs, modify bandwidth and mark as stale
+    def _modify_existing_bandwidth(self, network_graph, session):
         reqs_provisioned = Request.from_status(status=["MODIFIED", "PROVISIONED"], session=session)
         for req in reqs_provisioned:
             for _, _, key, data in network_graph.edges(keys=True, data=True):
@@ -100,4 +130,3 @@ class DeciderDaemon(DaemonBase):
                 req.update_bandwidth(allocated_bandwidth, session=session)
                 logging.info(f"Modified bandwidth for request {req.rule_id}: {allocated_bandwidth}")
                 req.mark_as(status="STALE", session=session)
-

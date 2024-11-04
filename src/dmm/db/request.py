@@ -9,7 +9,8 @@ class Request(BASE, ModelBase):
     bandwidth = Column(Float())
     sense_uuid = Column(String(255))
     sense_circuit_status = Column(String(255))
-    fts_modified = Column(Boolean())
+    fts_limit_current = Column(Integer(), default=0)
+    fts_limit_desired = Column(Integer())
     sense_provisioned_at = Column(DateTime())
     prometheus_throughput = Column(Float())
     prometheus_bytes = Column(Float())
@@ -26,7 +27,7 @@ class Request(BASE, ModelBase):
     dst_endpoint = relationship('Endpoint', back_populates='ep_request_dst', foreign_keys=[dst_endpoint_])
 
     def __init__(self, **kwargs):
-        super(Request, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def __eq__(self, other):
         return self.rule_id == other.rule_id
@@ -41,7 +42,6 @@ class Request(BASE, ModelBase):
     
     def mark_as(self, status, session=None):
         self.transfer_status = status 
-        self.fts_modified = False
         self.save(session)
 
     def update_bandwidth(self, bandwidth, session=None):
@@ -57,8 +57,12 @@ class Request(BASE, ModelBase):
         self.sense_circuit_status = status
         self.save(session)
     
-    def mark_fts_modified(self, session=None):
-        self.fts_modified = True
+    def update_fts_limit_current(self, limit, session=None):
+        self.fts_limit_current = limit
+        self.save(session)
+
+    def update_fts_limit_desired(self, limit, session=None):
+        self.fts_limit_desired = limit
         self.save(session)
 
     def update_prometheus_bytes(self, prom_bytes, session=None):

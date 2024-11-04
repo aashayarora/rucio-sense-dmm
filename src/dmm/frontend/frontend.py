@@ -1,4 +1,4 @@
-from flask import Flask, Response, render_template, url_for, request
+from flask import Flask, Response, render_template, request
 import logging
 import json
 import os
@@ -55,10 +55,39 @@ def get_sites(session=None):
 # When users click on "See More" button, get detailed metrics
 @frontend_app.route("/details/<rule_id>", methods=["GET", "POST"])
 @databased
-def open_rule_details(rule_id,session=None):
+def open_rule_details(rule_id, session=None):
     try:
         req = Request.from_id(rule_id, session=session)
         return render_template("details.html", data=req)
     except Exception as e:
         logging.error(e)
         return "Failed to retrieve rule info\n"
+
+@frontend_app.route("/mark_finished", methods=["POST"])
+@databased
+def mark_finished(session=None):
+    try:
+        rule_id = request.get_json().get("rule_id")
+        req = Request.from_id(rule_id, session=session)
+        req.mark_as("FINISHED", session=session)
+        return "Request marked as finished"
+    except Exception as e:
+        logging.error(e)
+        return "Failed to mark request as finished\n"
+
+@frontend_app.route("/update_fts_limit", methods=["POST"])
+@databased
+def update_fts_limit(session=None):
+    try:
+        data = request.get_json()
+        rule_id = data.get("rule_id")
+        limit = data.get("limit")
+        req = Request.from_id(rule_id, session=session)
+        if req.transfer_status not in ["CANCELLED", "FINISHED", "DELETED"]:
+            req.update_fts_limit_desired(limit=limit, session=session)
+            return "FTS limit updated"
+        else:
+            return "Cannot update FTS limit for cancelled, finished or deleted requests"
+    except Exception as e:
+        logging.error(e)
+        return "Failed to update FTS limit\n"

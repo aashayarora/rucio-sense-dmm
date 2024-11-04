@@ -28,7 +28,7 @@ from dmm.daemons.rucio.finisher import RucioFinisherDaemon
 
 from dmm.daemons.fts.modifier import FTSModifierDaemon
 
-from dmm.daemons.sense.status_updater import SENSEStatusUpdaterDaemon
+from dmm.daemons.sense.status_handler import SENSEStatusHandlerDaemon
 from dmm.daemons.sense.stager import SENSEStagerDaemon
 from dmm.daemons.sense.provisioner import SENSEProvisionerDaemon
 from dmm.daemons.sense.modifier import SENSEModifierDaemon
@@ -75,7 +75,7 @@ class DMM:
         rucio_modifier = RucioModifierDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
         rucio_finisher = RucioFinisherDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
         
-        sense_updater = SENSEStatusUpdaterDaemon(frequency=self.sense_frequency)
+        sense_updater = SENSEStatusHandlerDaemon(frequency=self.sense_frequency)
         stager = SENSEStagerDaemon(frequency=self.sense_frequency)
         provision = SENSEProvisionerDaemon(frequency=self.sense_frequency)
         sense_modifier = SENSEModifierDaemon(frequency=self.sense_frequency)

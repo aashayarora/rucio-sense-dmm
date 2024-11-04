@@ -2,11 +2,11 @@ from dmm.db.base import *
 from dmm.db.request import Request
 
 class Endpoint(BASE, ModelBase):
-    id = Column(Integer(), autoincrement=True, primary_key=True)
+    id = Column(Integer, autoincrement=True, primary_key=True)
     site_name = Column(String(255), ForeignKey('site.name'))
     ip_block = Column(String(255), unique=True)
     hostname = Column(String(255), unique=True)
-    in_use = Column(Boolean())
+    in_use = Column(Boolean)
 
     site = relationship('Site', back_populates='endpoints')
 
@@ -14,7 +14,7 @@ class Endpoint(BASE, ModelBase):
     ep_request_dst = relationship('Request', back_populates='dst_endpoint', foreign_keys=[Request.dst_endpoint_])
 
     def __init__(self, **kwargs):
-        super(Endpoint, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     @classmethod
     def all(cls, session=None):
