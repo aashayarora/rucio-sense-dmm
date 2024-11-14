@@ -2,6 +2,7 @@ from flask import Flask, Response, render_template, request
 import logging
 import json
 import os
+import time
 
 from dmm.db.session import databased
 from dmm.db.request import Request
@@ -91,3 +92,31 @@ def update_fts_limit(session=None):
     except Exception as e:
         logging.error(e)
         return "Failed to update FTS limit\n"
+
+@frontend_app.route("/reinitialize", methods=["POST"])
+@databased
+def reinitialize(session=None):
+    try:
+        rule_id = request.get_json().get("rule_id")
+        req = Request.from_id(rule_id, session=session)
+        req.mark_as("ALLOCATED", session=session)
+        return "Request reinitialize"
+    except Exception as e:
+        logging.error(e)
+        return "Failed to reinitialize request\n"
+
+@frontend_app.route("/logs", methods=["GET"])
+def stream_logs():
+    def generate():
+        while True:
+            try:
+                with open("dmm.log", 'r') as file:
+                    while True:
+                        line = file.readline()
+                        if line:
+                            yield f"data: {line}"
+                        else:
+                            time.sleep(1)  # Wait for new content
+            except Exception as e:
+                yield f"ERROR: {str(e)}"
+    return Response(generate(), content_type="text/event-stream")

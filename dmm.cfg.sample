@@ -37,9 +37,6 @@ fts=10
 monit=60
 db=7200
 
-[sites]
-sites=T2_US_SDSC,T2_US_Caltech,T1_US_FNAL
-
 [vlan-ranges]
 T2_US_SDSC-T2_US_Caltech=3602-3606
 T2_US_SDSC-T2_US_Caltech_Test=3602-3606
