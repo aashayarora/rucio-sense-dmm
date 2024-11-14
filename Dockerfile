@@ -1,7 +1,7 @@
 FROM python:3.7-slim-bullseye
 
-RUN apt update && apt install sqlite3
-RUN apt-get clean autoclean && \
+RUN apt update && \
+    apt-get clean autoclean && \
     apt-get autoremove --yes && \
     rm -rf /var/lib/{apt,dpkg,cache,log}/
 

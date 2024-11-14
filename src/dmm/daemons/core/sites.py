@@ -17,16 +17,15 @@ from sense.client.workflow_combined_api import WorkflowCombinedApi
 class RefreshSiteDBDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        self.sites = config_get("sites", "sites", default=None)
         
     @databased
-    def process(self, session=None):
-        logging.debug(f"Refreshing site database with sites: {self.sites}")
-        if self.sites is None:
-            raise IndexError("No sites found in DMM config")
-        
+    def process(self, client=None, session=None):
+        logging.debug(f"Getting list of sites registered in Rucio")
+        sites = [i['rse'] for i in client.list_rses()]
+        logging.debug(f"Got list of sites: {sites}, adding to database")
+
         site_objs = []
-        for site in self.sites.split(","):
+        for site in sites:
             try:
                 site_ = self._get_or_create_site(site, site_objs, session)
                 site_objs.append(site_)

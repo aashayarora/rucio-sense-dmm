@@ -63,7 +63,7 @@ class DMM:
 
     def start(self):
         logging.info("Starting Daemons")
-        sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency)
+        sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
         
         allocator = AllocatorDaemon(frequency=self.dmm_frequency)
         decider = DeciderDaemon(frequency=self.dmm_frequency)
