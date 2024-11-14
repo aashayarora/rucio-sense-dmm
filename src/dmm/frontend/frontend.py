@@ -108,15 +108,14 @@ def reinitialize(session=None):
 @frontend_app.route("/logs", methods=["GET"])
 def stream_logs():
     def generate():
-        while True:
-            try:
-                with open("dmm.log", 'r') as file:
-                    while True:
-                        line = file.readline()
+        try:
+            with open("dmm.log", 'r') as file:
+                while not file.closed:
+                    for line in (file.readlines()[-1000:]):
                         if line:
-                            yield f"data: {line}"
+                            yield line
                         else:
-                            time.sleep(1)  # Wait for new content
-            except Exception as e:
-                yield f"ERROR: {str(e)}"
+                            time.sleep(1) 
+        except Exception as e:
+            yield f"ERROR: {str(e)}"
     return Response(generate(), content_type="text/event-stream")
