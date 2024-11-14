@@ -17,6 +17,10 @@ class RucioInitDaemon(DaemonBase):
             if self._is_rule_in_db(rule, session):
                 logging.debug(f"rule {rule['id']} already in db, nothing to do")
                 continue
+            
+            if rule["state"] in ["OK", "STUCK"]:
+                logging.debug(f"rule {rule['id']} is already finished, will not add to db")
+                continue
 
             logging.debug(f"evaluating rule {rule['id']}")
             new_request = self._create_request_from_rule(rule, session)

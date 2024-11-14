@@ -18,6 +18,8 @@ class SENSEDeleterDaemon(DaemonBase):
         if reqs_cancelled == []:
             return
         for req in reqs_cancelled:
+            if req.sense_uuid is None:
+                continue
             try:
                 workflow_api = WorkflowCombinedApi()
                 status = req.sense_circuit_status

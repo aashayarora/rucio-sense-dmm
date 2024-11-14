@@ -24,6 +24,8 @@ class SENSEModifierDaemon(DaemonBase):
         if reqs_stale == []:
             return
         for req in reqs_stale:
+            if req.sense_uuid is None:
+                continue
             try:
                 vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()

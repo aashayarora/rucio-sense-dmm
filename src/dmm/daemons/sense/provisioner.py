@@ -25,6 +25,8 @@ class SENSEProvisionerDaemon(DaemonBase):
         if reqs_decided == []:
             return
         for req in reqs_decided:
+            if req.sense_uuid is None:
+                continue
             try:
                 vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()
