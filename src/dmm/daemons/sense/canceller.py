@@ -33,8 +33,6 @@ class SENSECancellerDaemon(DaemonBase):
                     if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
                         raise ValueError(f"Cannot cancel an instance in status '{status}', will try to cancel again")
                     response = workflow_api.instance_operate("cancel", si_uuid=req.sense_uuid, sync="true", force=str("READY" not in status).lower())
-                    self.free_allocation(req.src_site.name, req.rule_id)
-                    self.free_allocation(req.dst_site.name, req.rule_id)
                     req.src_endpoint.mark_inuse(in_use=False, session=session)
                     req.dst_endpoint.mark_inuse(in_use=False, session=session)
                     req.mark_as(status="CANCELED", session=session)
