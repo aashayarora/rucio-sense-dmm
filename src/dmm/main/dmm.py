@@ -98,10 +98,10 @@ class DMM:
         deleter.start(self.lock)
 
         try:
-            uvicorn.run(frontend_app, port=self.port)
+            uvicorn.run(frontend_app, host="0.0.0.0", port=self.port)
         except:
             logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
-            uvicorn.run(frontend_app, port=31601)
+            uvicorn.run(frontend_app, host="0.0.0.0", port=31601)
 def main():
     logging.info("Starting DMM")
     dmm = DMM()

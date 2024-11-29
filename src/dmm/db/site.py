@@ -1,7 +1,7 @@
-from dmm.db.base import *
-from dmm.db.request import Request
 from sqlmodel import Field, Relationship
 from typing import List, Optional
+
+from dmm.db.base import *
 
 class Site(ModelBase, table=True):
     name: str = Field(primary_key=True)
@@ -10,8 +10,8 @@ class Site(ModelBase, table=True):
     
     endpoints: List["Endpoint"] = Relationship(back_populates='site')
     
-    site_request_src: List["Request"] = Relationship(back_populates='src_site', sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"})
-    site_request_dst: List["Request"] = Relationship(back_populates='dst_site', sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"})
+    site_request_src: List["Request"] = Relationship(back_populates='src_site', sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"}) 
+    site_request_dst: List["Request"] = Relationship(back_populates='dst_site', sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"}) 
 
     def __init__(self, **kwargs):
         super(Site, self).__init__(**kwargs)
