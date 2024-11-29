@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 
 from multiprocessing import Lock
-from waitress import serve
+import uvicorn
 
 from rucio.client import Client
 from dmm.utils.config import config_get_int
@@ -98,11 +98,10 @@ class DMM:
         deleter.start(self.lock)
 
         try:
-            serve(frontend_app, port=self.port)
+            uvicorn.run(frontend_app, port=self.port)
         except:
             logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
-            serve(frontend_app, port=31601)
-
+            uvicorn.run(frontend_app, port=31601)
 def main():
     logging.info("Starting DMM")
     dmm = DMM()

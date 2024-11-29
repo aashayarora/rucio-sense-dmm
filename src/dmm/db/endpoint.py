@@ -1,17 +1,20 @@
+from sqlmodel import Field, Relationship
+from typing import List, Optional
+
 from dmm.db.base import *
 from dmm.db.request import Request
 
-class Endpoint(BASE, ModelBase):
-    id = Column(Integer, autoincrement=True, primary_key=True)
-    site_name = Column(String(255), ForeignKey('site.name'))
-    ip_block = Column(String(255), unique=True)
-    hostname = Column(String(255), unique=True)
-    in_use = Column(Boolean)
+class Endpoint(ModelBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    site_name: Optional[str] = Field(default=None, foreign_key='site.name')
+    ip_block: Optional[str] = Field(default=None, unique=True)
+    hostname: Optional[str] = Field(default=None, unique=True)
+    in_use: Optional[bool] = Field(default=None)
 
-    site = relationship('Site', back_populates='endpoints')
-
-    ep_request_src = relationship('Request', back_populates='src_endpoint', foreign_keys=[Request.src_endpoint_])
-    ep_request_dst = relationship('Request', back_populates='dst_endpoint', foreign_keys=[Request.dst_endpoint_])
+    site: Optional["Site"] = Relationship(back_populates='endpoints')
+    
+    ep_request_src: List["Request"] = Relationship(back_populates='src_endpoint', sa_relationship_kwargs={"foreign_keys": "[Request.src_endpoint_]"})
+    ep_request_dst: List["Request"] = Relationship(back_populates='dst_endpoint', sa_relationship_kwargs={"foreign_keys": "[Request.dst_endpoint_]"})
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -34,4 +37,4 @@ class Endpoint(BASE, ModelBase):
 
     def mark_inuse(self, in_use, session=None):
         self.in_use = in_use
-        self.save(session)    
+        self.save(session)

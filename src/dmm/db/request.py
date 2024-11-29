@@ -1,30 +1,32 @@
+from sqlmodel import Field, Relationship
+from typing import Optional
 from dmm.db.base import *
 
-class Request(BASE, ModelBase):
-    rule_id = Column(String(255), primary_key=True)
-    transfer_status = Column(String(255))
-    priority = Column(Integer())
-    modified_priority = Column(Integer())
-    max_bandwidth = Column(Float())
-    bandwidth = Column(Float())
-    sense_uuid = Column(String(255))
-    sense_circuit_status = Column(String(255))
-    fts_limit_current = Column(Integer(), default=0)
-    fts_limit_desired = Column(Integer())
-    sense_provisioned_at = Column(DateTime())
-    prometheus_throughput = Column(Float())
-    prometheus_bytes = Column(Float())
-    health = Column(String(255))
+class Request(ModelBase, table=True):
+    rule_id: str = Field(primary_key=True)
+    transfer_status: Optional[str] = Field(default=None)
+    priority: Optional[int] = Field(default=None)
+    modified_priority: Optional[int] = Field(default=None)
+    max_bandwidth: Optional[float] = Field(default=None)
+    bandwidth: Optional[float] = Field(default=None)
+    sense_uuid: Optional[str] = Field(default=None)
+    sense_circuit_status: Optional[str] = Field(default=None)
+    fts_limit_current: Optional[int] = Field(default=0)
+    fts_limit_desired: Optional[int] = Field(default=None)
+    sense_provisioned_at: Optional[datetime] = Field(default=None)
+    prometheus_throughput: Optional[float] = Field(default=None)
+    prometheus_bytes: Optional[float] = Field(default=None)
+    health: Optional[str] = Field(default=None)
     
-    src_site_ = Column(String(255), ForeignKey('site.name'))
-    dst_site_ = Column(String(255), ForeignKey('site.name'))
-    src_endpoint_ = Column(Integer(), ForeignKey('endpoint.id'))
-    dst_endpoint_ = Column(Integer(), ForeignKey('endpoint.id'))
+    src_site_: Optional[str] = Field(default=None, foreign_key='site.name')
+    dst_site_: Optional[str] = Field(default=None, foreign_key='site.name')
+    src_endpoint_: Optional[int] = Field(default=None, foreign_key='endpoint.id')
+    dst_endpoint_: Optional[int] = Field(default=None, foreign_key='endpoint.id')
 
-    src_site = relationship('Site', back_populates='site_request_src', foreign_keys=[src_site_])
-    dst_site = relationship('Site', back_populates='site_request_dst', foreign_keys=[dst_site_])
-    src_endpoint = relationship('Endpoint', back_populates='ep_request_src', foreign_keys=[src_endpoint_])
-    dst_endpoint = relationship('Endpoint', back_populates='ep_request_dst', foreign_keys=[dst_endpoint_])
+    src_site: Optional["Site"] = Relationship(back_populates='site_request_src', sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"})
+    dst_site: Optional["Site"] = Relationship(back_populates='site_request_dst', sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"})
+    src_endpoint: Optional["Endpoint"] = Relationship(back_populates='ep_request_src', sa_relationship_kwargs={"foreign_keys": "[Request.src_endpoint_]"})
+    dst_endpoint: Optional["Endpoint"] = Relationship(back_populates='ep_request_dst', sa_relationship_kwargs={"foreign_keys": "[Request.dst_endpoint_]"})
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

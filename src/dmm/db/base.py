@@ -1,24 +1,11 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, PrimaryKeyConstraint
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base, declared_attr
-from sqlalchemy import text, or_
-from datetime import datetime
+from datetime import datetime, timezone
 
-BASE = declarative_base()
+from sqlmodel import SQLModel, Field
 
-class ModelBase:
-    @declared_attr
-    def __tablename__(cls):
-        return cls.__name__.lower()
-    
-    @declared_attr
-    def created_at(cls):
-        return Column(DateTime, default=datetime.utcnow)
-    
-    @declared_attr
-    def updated_at(cls):
-        return Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+class ModelBase(SQLModel):
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
     def __repr__(self):
         attrs = {k: getattr(self, k) for k in vars(self) if not k.startswith('_')}
         return f"<{self.__class__.__name__}({attrs})>"
