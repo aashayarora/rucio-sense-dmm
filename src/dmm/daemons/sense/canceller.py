@@ -28,6 +28,8 @@ class SENSECancellerDaemon(DaemonBase):
                     status = req.sense_circuit_status
                     if re.match(r"(CANCEL) - READY$", status):
                         logging.debug(f"Request {req.sense_uuid} already in ready status, marking as canceled")
+                        req.src_endpoint.mark_inuse(in_use=False, session=session)
+                        req.dst_endpoint.mark_inuse(in_use=False, session=session)
                         req.mark_as(status="CANCELED", session=session)
                         continue
                     if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
