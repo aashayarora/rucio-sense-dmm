@@ -34,7 +34,7 @@ class SENSEStatusHandlerDaemon(DaemonBase):
 
             # update sense_provisioned_at if the status is READY for monit
             if req.sense_provisioned_at is None and re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
-                req.update({"sense_provisioned_at": datetime.now(timezone.utc)})
+                req.update({"sense_provisioned_at": datetime.now()})
 
                 self._affiliate_endpoints(req, workflow_api)
 

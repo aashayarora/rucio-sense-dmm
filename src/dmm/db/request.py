@@ -24,10 +24,14 @@ class Request(ModelBase, table=True):
     src_endpoint_: Optional[int] = Field(default=None, foreign_key='endpoint.id')
     dst_endpoint_: Optional[int] = Field(default=None, foreign_key='endpoint.id')
 
-    src_site: Optional["Site"] = Relationship(back_populates='site_request_src', sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"})
-    dst_site: Optional["Site"] = Relationship(back_populates='site_request_dst', sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"})
-    src_endpoint: Optional["Endpoint"] = Relationship(back_populates='ep_request_src', sa_relationship_kwargs={"foreign_keys": "[Request.src_endpoint_]"})
-    dst_endpoint: Optional["Endpoint"] = Relationship(back_populates='ep_request_dst', sa_relationship_kwargs={"foreign_keys": "[Request.dst_endpoint_]"})
+    src_site: Optional["Site"] = Relationship(back_populates='site_request_src', 
+                sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"})
+    dst_site: Optional["Site"] = Relationship(back_populates='site_request_dst', 
+                sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"})
+    src_endpoint: Optional["Endpoint"] = Relationship(back_populates='ep_request_src', 
+                sa_relationship_kwargs={"foreign_keys": "[Request.src_endpoint_]"})
+    dst_endpoint: Optional["Endpoint"] = Relationship(back_populates='ep_request_dst', 
+                sa_relationship_kwargs={"foreign_keys": "[Request.dst_endpoint_]"})
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

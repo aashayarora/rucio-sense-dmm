@@ -2,7 +2,6 @@ from sqlmodel import Field, Relationship
 from typing import List, Optional
 
 from dmm.db.base import *
-from dmm.db.request import Request
 
 class Endpoint(ModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

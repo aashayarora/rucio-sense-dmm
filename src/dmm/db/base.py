@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field
 
 class ModelBase(SQLModel):
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now())
 
     def __repr__(self):
         attrs = {k: getattr(self, k) for k in vars(self) if not k.startswith('_')}
