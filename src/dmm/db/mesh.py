@@ -1,5 +1,6 @@
 from sqlmodel import Field, Relationship, or_
 from typing import Optional
+import logging
 
 from dmm.db.base import *
 
@@ -19,6 +20,7 @@ class Mesh(ModelBase, table=True):
 
     @classmethod
     def vlan_range(cls, site_1, site_2, session=None):
+        logging.debug(f"MESH QUERY: checking if vlan range defined between {site_1} and {site_2}")
         mesh = session.query(cls).filter(
             or_(cls.site1 == site_1, cls.site1 == site_2),
             or_(cls.site2 == site_1, cls.site2 == site_2)
@@ -31,6 +33,7 @@ class Mesh(ModelBase, table=True):
        
     @classmethod
     def max_bandwidth(cls, site, session=None):
+        logging.debug(f"MESH QUERY: checking max bandwidth for {site.name}")
         meshes = session.query(cls).filter(
             or_(cls.site1 == site, cls.site2 == site)
         ).all()

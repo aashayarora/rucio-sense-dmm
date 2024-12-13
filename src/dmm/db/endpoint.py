@@ -1,13 +1,15 @@
 from sqlmodel import Field, Relationship
 from typing import List, Optional
 
+import logging
+
 from dmm.db.base import *
 
 class Endpoint(ModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     site_name: Optional[str] = Field(default=None, foreign_key='site.name')
-    ip_block: Optional[str] = Field(default=None, unique=True)
-    hostname: Optional[str] = Field(default=None, unique=True)
+    ip_range: Optional[str] = Field(default=None, unique=True)
+    hostname: Optional[str] = Field(default=None)
     in_use: Optional[bool] = Field(default=None)
 
     site: Optional["Site"] = Relationship(back_populates='endpoints')
@@ -23,17 +25,21 @@ class Endpoint(ModelBase, table=True):
         return [ep for ep in session.query(cls).all()]
     
     @classmethod
-    def from_hostname(cls, hostname, session=None):
-        return session.query(cls).filter(cls.hostname == hostname).first()
+    def from_iprange(cls, iprange, session=None):
+        logging.debug(f"ENDPOINT QUERY: ip range {iprange}")
+        return session.query(cls).filter(cls.ip_range == iprange).first()
     
     @classmethod
     def from_site(cls, site_name, session=None):
+        logging.debug(f"ENDPOINT QUERY: site name {site_name}")
         return session.query(cls).filter(cls.site_name == site_name).all()
     
     @classmethod
-    def for_rule(cls, site_name, ip_block, session=None):
-        return session.query(cls).filter(cls.site_name == site_name, cls.ip_block == ip_block).first()
+    def for_rule(cls, site_name, ip_range, session=None):
+        logging.debug(f"ENDPOINT QUERY: site name {site_name} and ip range {ip_range}")
+        return session.query(cls).filter(cls.site_name == site_name, cls.ip_range == ip_range).first()
 
     def mark_inuse(self, in_use, session=None):
+        logging.debug(f"Marking endpoint {self.ip_range} as {'inuse' if in_use else 'free'}")
         self.in_use = in_use
         self.save(session)

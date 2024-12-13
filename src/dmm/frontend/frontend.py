@@ -22,9 +22,13 @@ async def handle_client(rule_id: str, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
     try:
         req = DBRequest.from_id(rule_id, session=session)
-        if req and req.src_endpoint and req.dst_endpoint:
-            result = {"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname}
-            return JSONResponse(content=result)
+        if req:
+            if req.src_endpoint and req.dst_endpoint:
+                result = {"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname}
+                return JSONResponse(content=result)
+            else:
+                time.sleep(15)
+                return HTTPException(status_code=404, detail="Request not yet allocated")
         else:
             raise HTTPException(status_code=404, detail="Request not found")
     except Exception as e:

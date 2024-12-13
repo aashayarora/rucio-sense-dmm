@@ -18,8 +18,11 @@ class RefreshSiteDBDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
         
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, client=None, session=None):
+    def run_once(self, client=None, session=None):
         logging.debug(f"Getting list of sites registered in Rucio")
         sites = [i['rse'] for i in client.list_rses()]
         logging.debug(f"Got list of sites: {sites}, adding to database")
@@ -121,10 +124,10 @@ class RefreshSiteDBDaemon(DaemonBase):
             metadata = json.loads(response["jsonTemplate"])
             logging.debug(f"Got list of endpoints: {metadata} for {site_.sense_uri}")
             endpoint_list = json.loads(metadata["Metadata"].replace("'", "\""))
-            for block, hostname in endpoint_list.items():
-                if Endpoint.from_hostname(hostname=hostname, session=session) is None:
+            for iprange, hostname in endpoint_list.items():
+                if Endpoint.from_iprange(iprange=iprange, session=session) is None:
                     new_endpoint = Endpoint(site=site_,
-                                            ip_block=ipaddress.IPv6Network(block).compressed,
+                                            ip_range=ipaddress.IPv6Network(iprange).compressed,
                                             hostname=hostname,
                                             in_use=False)
                     new_endpoint.save(session=session)

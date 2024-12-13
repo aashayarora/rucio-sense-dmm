@@ -143,11 +143,6 @@
                     <th>Destination Hostname</th>
                     <th>Request Priority</th>
                     <th>Allocated Bandwidth (Gbps)</th>
-                    <th>Current FTS Limits</th>
-                    <th>SENSE Instance UUID</th>
-                    <th>SENSE Circuit Status</th>
-                    <th>Throughput (Gbps)</th>
-                    <th>Health</th>
                     <th>Details</th>
                 </tr>
             </thead>
@@ -157,18 +152,13 @@
                     <td>{{ req.rule_id }}</td>
                     <td>{{ req.transfer_status }}</td>
                     <td>{{ req.src_site.name }}</td>
-                    <td>{{ req.src_endpoint.ip_block }}</td>
+                    <td>{{ req.src_endpoint.ip_range }}</td>
                     <td>{{ req.src_endpoint.hostname }}</td>
                     <td>{{ req.dst_site.name }}</td>
-                    <td>{{ req.dst_endpoint.ip_block }}</td>
+                    <td>{{ req.dst_endpoint.ip_range }}</td>
                     <td>{{ req.dst_endpoint.hostname }}</td>
                     <td>{{ req.priority }}</td>
                     <td>{{ req.bandwidth / 1000 if req.bandwidth is not none else 0 }}</td>
-                    <td>{{ req.fts_limit_current }}</td>
-                    <td>{{ req.sense_uuid }}</td>
-                    <td>{{ req.sense_circuit_status }}</td>
-                    <td>{{ req.prometheus_throughput }}</td>
-                    <td class="{{ 'health-red' if req.health == '0' else 'health-green' }}"></td>                    
                     <td><button onclick="sendRuleID(this)">See More</button></td>
                 </tr>
                 {% endfor %}

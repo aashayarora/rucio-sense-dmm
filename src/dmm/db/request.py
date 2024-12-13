@@ -1,6 +1,8 @@
 from sqlmodel import Field, Relationship
 from typing import Optional
 
+import logging
+
 from dmm.db.base import *
 
 class Request(ModelBase, table=True):
@@ -41,42 +43,52 @@ class Request(ModelBase, table=True):
 
     @classmethod
     def from_status(cls, status=None, session=None):
+        logging.debug(f"REQUEST QUERY: requests from status: {status}")
         return [req for req in session.query(cls).filter(cls.transfer_status.in_(status)).all()]
 
     @classmethod
     def from_id(cls, rule_id, session=None):
+        logging.debug(f"REQUEST QUERY: requests from rule_id: {rule_id}")
         return session.query(cls).filter(cls.rule_id == rule_id).first()
     
     def mark_as(self, status, session=None):
+        logging.debug(f"REQUEST UPDATE: marking request {self.rule_id} as {status}")
         self.transfer_status = status 
         self.save(session)
 
     def update_bandwidth(self, bandwidth, session=None):
+        logging.debug(f"REQUEST UPDATE: updating bandwidth for request {self.rule_id} to {bandwidth}")
         self.bandwidth = bandwidth
         self.save(session)
 
     def update_priority(self, priority, session=None):
+        logging.debug(f"REQUEST UPDATE: updating priority for request {self.rule_id} to {priority}")
         self.priority = priority
         self.modified_priority = priority
         self.save(session)
 
     def update_sense_circuit_status(self, status, session=None):
+        logging.debug(f"REQUEST UPDATE: updating sense circuit status for request {self.rule_id} to {status}")
         self.sense_circuit_status = status
         self.save(session)
     
     def update_fts_limit_current(self, limit, session=None):
+        logging.debug(f"REQUEST UPDATE: updating fts limit current for request {self.rule_id} to {limit}")
         self.fts_limit_current = limit
         self.save(session)
 
     def update_fts_limit_desired(self, limit, session=None):
+        logging.debug(f"REQUEST UPDATE: updating fts limit desired for request {self.rule_id} to {limit}")
         self.fts_limit_desired = limit
         self.save(session)
 
     def update_prometheus_bytes(self, prom_bytes, session=None):
+        logging.debug(f"REQUEST UPDATE: updating prometheus bytes for request {self.rule_id} to {prom_bytes}")
         self.prometheus_bytes = prom_bytes
         self.save(session)
 
     def update_prometheus_throughput(self, throughput, session=None):
+        logging.debug(f"REQUEST UPDATE: updating prometheus throughput for request {self.rule_id} to {throughput}")
         self.prometheus_throughput = throughput
         self.save(session)
 

@@ -131,6 +131,7 @@
                     <th>RSE Name</th>
                     <th>SENSE URI</th>
                     <th>Endpoints</th>
+                    <th>IP Range</th>
                 </tr>
             </thead>
             <tbody>
@@ -143,6 +144,15 @@
                             {% for endpoint in site.endpoints %}
                             <li class="{{ 'red' if endpoint.in_use else '' }}">
                                 {{ endpoint.hostname }}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </td>
+                    <td>
+                        <ul>
+                            {% for endpoint in site.endpoints %}
+                            <li class="{{ 'red' if endpoint.in_use else '' }}">
+                                {{ endpoint.ip_range }}
                             </li>
                             {% endfor %}
                         </ul>

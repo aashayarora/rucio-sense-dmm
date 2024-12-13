@@ -32,8 +32,8 @@ spec:
         image: aaarora/dmm-dev:latest
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "1"
+            memory: "4Gi"
+            cpu: "4"
           limits:
             memory: "4Gi"
             cpu: "4"

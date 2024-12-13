@@ -35,9 +35,9 @@ class SENSEStagerDaemon(DaemonBase):
                             "ask": "edit",
                             "options": [
                                 {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site.name, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_block},
+                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_range},
                                 {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site.name, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_block},
+                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_range},
                                 {"data.connections[0].terminals[0].vlan_tag": vlan_range},
                                 {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                             ]

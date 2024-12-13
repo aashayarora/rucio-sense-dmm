@@ -1,5 +1,6 @@
 from sqlmodel import Field, Relationship
 from typing import List, Optional
+import logging
 
 from dmm.db.base import *
 
@@ -23,6 +24,7 @@ class Site(ModelBase, table=True):
 
     @classmethod
     def from_name(cls, name, attr=None, session=None):
+        logging.debug(f"SITE QUERY: sites from name: {name}")
         query = session.query(cls).filter(cls.name == name).first()
         if attr and query:
             return getattr(query, attr)

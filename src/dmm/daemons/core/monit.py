@@ -27,7 +27,7 @@ class MonitDaemon(DaemonBase):
             if req.sense_provisioned_at is None:
                 continue
 
-            bytes_now = self.get_all_bytes_at_t(current_timestamp, req.src_endpoint.ip_block)
+            bytes_now = self.get_all_bytes_at_t(current_timestamp, req.src_endpoint.ip_range)
 
             if req.prometheus_bytes is None:
                 req.update_prometheus_bytes(bytes_now, session=session)
