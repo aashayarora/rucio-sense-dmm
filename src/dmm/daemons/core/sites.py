@@ -17,16 +17,18 @@ from sense.client.workflow_combined_api import WorkflowCombinedApi
 class RefreshSiteDBDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        self.sites = config_get("sites", "sites", default=None)
         
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, session=None):
-        logging.debug(f"Refreshing site database with sites: {self.sites}")
-        if self.sites is None:
-            raise IndexError("No sites found in DMM config")
-        
+    def run_once(self, client=None, session=None):
+        logging.debug(f"Getting list of sites registered in Rucio")
+        sites = [i['rse'] for i in client.list_rses()]
+        logging.debug(f"Got list of sites: {sites}, adding to database")
+
         site_objs = []
-        for site in self.sites.split(","):
+        for site in sites:
             try:
                 site_ = self._get_or_create_site(site, site_objs, session)
                 site_objs.append(site_)
@@ -77,7 +79,7 @@ class RefreshSiteDBDaemon(DaemonBase):
         for peer_point in site_info["peer_points"]:
             if str(vlan_range_start) in peer_point["peer_vlan_pool"] and str(vlan_range_end) in peer_point["peer_vlan_pool"]:
                 return int(peer_point["port_capacity"])
-        return site_info["peer_points"][0]["port_capacity"]
+        return int(site_info["peer_points"][0]["port_capacity"])
 
     def _get_site_uris(self, site):
         try:
@@ -118,14 +120,16 @@ class RefreshSiteDBDaemon(DaemonBase):
                 "sparql-ext": f"SELECT ?metadata WHERE {{ ?site nml:hasService ?md_svc. ?md_svc mrs:hasNetworkAttribute ?dir_xrootd. ?dir_xrootd mrs:type 'metadata:directory'. ?dir_xrootd mrs:tag '/xrootd'. ?dir_xrootd mrs:value ?metadata.  FILTER regex(str(?site), '{site_.sense_uri}') }} LIMIT 1",
                 "required": "true"
             }
+            # if "FNAL" in site_.name:
+                # manifest_json["sparql-ext"] = f"SELECT ?metadata WHERE {{ ?site nml:hasService ?md_svc. ?md_svc mrs:hasNetworkAttribute ?dir_xrootd. ?dir_xrootd mrs:type 'metadata:directory'. ?dir_xrootd mrs:tag '/xrootd'. ?dir_xrootd mrs:value ?metadata.  FILTER regex(str(?site), '{site_.sense_uri}') }} LIMIT 1"
             response = workflow_api.manifest_create(json.dumps(manifest_json))
             metadata = json.loads(response["jsonTemplate"])
             logging.debug(f"Got list of endpoints: {metadata} for {site_.sense_uri}")
             endpoint_list = json.loads(metadata["Metadata"].replace("'", "\""))
-            for block, hostname in endpoint_list.items():
-                if Endpoint.from_hostname(hostname=hostname, session=session) is None:
+            for iprange, hostname in endpoint_list.items():
+                if Endpoint.from_iprange(iprange=iprange, session=session) is None:
                     new_endpoint = Endpoint(site=site_,
-                                            ip_block=ipaddress.IPv6Network(block).compressed,
+                                            ip_range=ipaddress.IPv6Network(iprange).compressed,
                                             hostname=hostname,
                                             in_use=False)
                     new_endpoint.save(session=session)

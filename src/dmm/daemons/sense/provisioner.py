@@ -21,10 +21,16 @@ class SENSEProvisionerDaemon(DaemonBase):
         
     @databased
     def process(self, session=None):
+        # make sure there are no stale requests before provisioning any new ones
+        reqs_stale = Request.from_status(status=["STALE"], session=session)
+        if reqs_stale != []:
+            return
         reqs_decided = Request.from_status(status=["DECIDED"], session=session)
         if reqs_decided == []:
             return
         for req in reqs_decided:
+            if req.sense_uuid is None:
+                continue
             try:
                 vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()
@@ -45,9 +51,9 @@ class SENSEProvisionerDaemon(DaemonBase):
                             "options": [
                                 {"data.connections[0].bandwidth.capacity": str(int(req.bandwidth))},
                                 {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site.name, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_block},
+                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_range},
                                 {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site.name, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_block},
+                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_range},
                                 {"data.connections[0].terminals[0].vlan_tag": vlan_range},
                                 {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                             ]

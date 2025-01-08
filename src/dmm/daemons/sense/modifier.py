@@ -24,6 +24,8 @@ class SENSEModifierDaemon(DaemonBase):
         if reqs_stale == []:
             return
         for req in reqs_stale:
+            if req.sense_uuid is None:
+                continue
             try:
                 vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()
@@ -39,9 +41,9 @@ class SENSEModifierDaemon(DaemonBase):
                             "options": [
                                 {"data.connections[0].bandwidth.capacity": str(int(req.bandwidth))},
                                 {"data.connections[0].terminals[0].uri": Site.from_name(name=req.src_site.name, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_block},
+                                {"data.connections[0].terminals[0].ipv6_prefix_list": req.src_endpoint.ip_range},
                                 {"data.connections[0].terminals[1].uri": Site.from_name(name=req.dst_site.name, attr="sense_uri", session=session)},
-                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_block},
+                                {"data.connections[0].terminals[1].ipv6_prefix_list": req.dst_endpoint.ip_range},
                                 {"data.connections[0].terminals[0].vlan_tag": vlan_range},
                                 {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                             ]

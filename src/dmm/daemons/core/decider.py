@@ -2,6 +2,7 @@ import logging
 import numpy as np
 from scipy.optimize import linprog
 import networkx as nx
+from math import floor
 
 from dmm.daemons.base import DaemonBase
 
@@ -33,7 +34,7 @@ class DeciderDaemon(DaemonBase):
 
     def _build_network_graph(self, session):
         network_graph = nx.MultiGraph()
-        reqs = Request.from_status(status=["STAGED", "ALLOCATED", "MODIFIED", "DECIDED", "STALE", "PROVISIONED", "FINISHED", "CANCELED"], session=session)
+        reqs = Request.from_status(status=["STAGED", "ALLOCATED", "MODIFIED", "DECIDED", "STALE", "PROVISIONED", "FINISHED"], session=session)
         if reqs == []:
             return network_graph
         for req in reqs:
@@ -102,7 +103,7 @@ class DeciderDaemon(DaemonBase):
             if total_priority > 0:
                 proportion = data['priority'] / total_priority
                 bandwidth = bandwidths[edge_index[(u, v)]] * proportion
-                network_graph[u][v][key]['bandwidth'] = round(bandwidth, -2)
+                network_graph[u][v][key]['bandwidth'] = floor(bandwidth // 1000) * 1000 # round to lowest 1000
             else:
                 network_graph[u][v][key]['bandwidth'] = 0
 

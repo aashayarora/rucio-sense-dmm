@@ -32,8 +32,8 @@ spec:
         image: aaarora/dmm-dev:latest
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "1"
+            memory: "4Gi"
+            cpu: "4"
           limits:
             memory: "4Gi"
             cpu: "4"
@@ -53,10 +53,10 @@ spec:
           mountPath: /etc/grid-security/certificates/
         - name: certs
           mountPath: /opt/certs/key.pem
-          subPath: key.pem
+          subPath: hostcert.key.pem
         - name: certs
           mountPath: /opt/certs/cert.pem
-          subPath: cert.pem
+          subPath: hostcert.pem
       nodeSelector:
         nautilus.io/ipv6: "true"
       volumes:
@@ -73,10 +73,10 @@ spec:
         secret:
           secretName: dmm-certs
           items:
-            - key: cert.pem
-              path: cert.pem
-            - key: key.pem
-              path: key.pem
+            - key: hostcert.pem
+              path: hostcert.pem
+            - key: hostcert.key.pem
+              path: hostcert.key.pem
       - name: ca-volume
         secret:
           defaultMode: 420

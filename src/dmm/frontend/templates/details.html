@@ -1,13 +1,14 @@
+<!-- details.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Movement Manager</title>
+    <title>Data Movement Manager - Rule Details</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
+            background-color: #f4f4f9;
             margin: 0;
             padding: 0;
             display: flex;
@@ -16,13 +17,12 @@
             color: #333;
         }
 
-        h1 {
-            text-align: center;
-            color: white;
+        header, h1 {
             background-color: #0078D4;
+            color: white;
             padding: 20px;
+            text-align: center;
             margin: 0;
-            font-size: 26px;
         }
 
         nav {
@@ -90,10 +90,40 @@
             font-weight: normal;
             color: #000;
         }
+
+        button {
+            background-color: #0078D4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #005a9e;
+        }
+
+        footer {
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            padding: 15px;
+            background-color: #f4f4f9;
+            box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        footer p {
+            margin: 0;
+        }
     </style>
 </head>
 <body>
-    <h1>Rule Details</h1>
+    <header>
+        <h1>Rule Details</h1>
+    </header>
     <nav>
         <a href="/">Home</a>
         <a href="/sites">Sites</a>
@@ -107,10 +137,6 @@
                 <span class="details-value">{{ data.bandwidth }}</span>
             </div>
             <div class="details-row">
-                <span class="details-label">Circuit Status:</span>
-                <span class="details-value">{{ data.sense_circuit_status }}</span>
-            </div>
-            <div class="details-row">
                 <span class="details-label">Transfer Status:</span>
                 <span class="details-value">{{ data.transfer_status }}</span>
             </div>
@@ -119,56 +145,78 @@
                 <span class="details-value">{{ data.prometheus_throughput }}</span>
             </div>
             <div class="details-row">
-                <form id="markFinishedForm" style="display: inline;"></form>
-                    <button type="button" onclick="markAsFinished('{{ data.rule_id }}')" style="background-color: #0078D4; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
-                        Mark as Finished
-                    </button>
-                </form>
-                <form id="updateFtsLimitForm" style="display: inline;">
-                    <button type="button" onclick="updateFtsLimit('{{ data.rule_id }}')" style="background-color: #0078D4; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
-                        Update FTS Limit
-                    </button>
-                </form>
-                <script>
-                    function markAsFinished(ruleId) {
-                        fetch('/mark_finished', {
+                <span class="details-label">SENSE UUID:</span>
+                <span class="details-value">{{ data.sense_uuid }}</span>
+            </div>
+            <div class="details-row">
+                <span class="details-label">SENSE Circuit Status:</span>
+                <span class="details-value">{{ data.sense_circuit_status }}</span>
+            </div>
+            <div class="details-row">
+                <span class="details-label">Current FTS Limits:</span>
+                <span class="details-value">{{ data.fts_limit_current }}</span>
+            </div>
+            <div class="details-row">
+                <button type="button" onclick="markAsFinished('{{ data.rule_id }}')">Mark as Finished</button>
+                <button type="button" onclick="updateFtsLimit('{{ data.rule_id }}')">Update FTS Limit</button>
+                <button type="button" onclick="reInitialize('{{ data.rule_id }}')">Re-Initialize SENSE</button>
+            </div>
+            <script>
+                function markAsFinished(ruleId) {
+                    fetch('/mark_finished', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ rule_id: ruleId })
+                    })
+                    .then(response => response.text())
+                    .then(data => alert(data))
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert("Failed to mark rule as finished.");
+                    });
+                }
+
+                function updateFtsLimit(ruleId) {
+                    const limit = prompt("Enter new FTS limit:");
+                    if (limit !== null) {
+                        fetch('/update_fts_limit', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify({ rule_id: ruleId })
+                            body: JSON.stringify({ rule_id: ruleId, limit: limit })
                         })
                         .then(response => response.text())
-                        .then(data => {
-                            alert(data);
-                        })
+                        .then(data => alert(data))
                         .catch(error => {
                             console.error('Error:', error);
-                            alert("Failed to mark rule as finished.");
+                            alert("Failed to update FTS limit.");
                         });
                     }
-                    function updateFtsLimit(ruleId) {
-                        const limit = prompt("Enter new FTS limit:");
-                        if (limit !== null) {
-                            fetch('/update_fts_limit', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({ rule_id: ruleId, limit: limit })
-                            })
-                            .then(response => response.text())
-                            .then(data => {
-                                alert(data);
-                            })
-                            .catch(error => {
-                                console.error('Error:', error);
-                                alert("Failed to update FTS limit.");
-                            });
-                        }
-                    }
-                </script>
-            </div>
+                }
+
+                function reInitialize(ruleId) {
+                    fetch('/reinitialize', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ rule_id: ruleId })
+                    })
+                    .then(response => response.text())
+                    .then(data => alert(data))
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert("Failed to re-initialize SENSE.");
+                    });
+                }
+            </script>
+        </div>
     </div>
+    <footer>
+        <p>&copy; Apache License, Version 2.0</p>
+    </footer>
 </body>
 </html>

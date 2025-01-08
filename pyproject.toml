@@ -10,12 +10,13 @@ authors = [
 ]
 dependencies = [
     "sense-o-api",
-    "sqlalchemy",
     "psycopg2-binary",
     "networkx",
     "rucio-clients",
-    "flask",
-    "waitress",
+    "fastapi",
+    "jinja2",
+    "sqlmodel",
+    "uvicorn",
     "scipy"
 ]
 description = "Data Movement Manager for Rucio SENSE interoperatio prototype"

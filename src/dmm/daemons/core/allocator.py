@@ -51,13 +51,15 @@ class AllocatorDaemon(DaemonBase):
             free_src_ipv6 = ipaddress.IPv6Network(free_src_ipv6).compressed
             free_dst_ipv6 = ipaddress.IPv6Network(free_dst_ipv6).compressed
 
-            src_endpoint = Endpoint.for_rule(site_name=new_request.src_site.name, ip_block=free_src_ipv6, session=session)
-            dst_endpoint = Endpoint.for_rule(site_name=new_request.dst_site.name, ip_block=free_dst_ipv6, session=session)
+            src_endpoint = Endpoint.for_rule(site_name=new_request.src_site.name, ip_range=free_src_ipv6, session=session)
+            dst_endpoint = Endpoint.for_rule(site_name=new_request.dst_site.name, ip_range=free_dst_ipv6, session=session)
 
-            if not src_endpoint or not dst_endpoint:
-                raise ValueError("Could not find endpoints given by SENSE-O address pool in the database")    
-            
-            logging.debug(f"Got ipv6 blocks {src_endpoint.ip_block} and {dst_endpoint.ip_block} and urls {src_endpoint.hostname} and {dst_endpoint.hostname} for request {new_request.rule_id}")
+            if not src_endpoint:
+                raise ValueError(f"Could not find source endpoint {src_endpoint} given by SENSE-O address pool in the database")    
+            if not dst_endpoint:
+                raise ValueError(f"Could not find dest endpoint {dst_endpoint} given by SENSE-O address pool in the database")
+
+            logging.debug(f"Got ipv6 ranges {src_endpoint.ip_range} and {dst_endpoint.ip_range} and urls {src_endpoint.hostname} and {dst_endpoint.hostname} for request {new_request.rule_id}")
         
             new_request.update({
                 "src_endpoint": src_endpoint,

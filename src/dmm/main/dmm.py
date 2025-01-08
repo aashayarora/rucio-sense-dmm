@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 
 from multiprocessing import Lock
-from waitress import serve
+import uvicorn
 
 from rucio.client import Client
 from dmm.utils.config import config_get_int
@@ -28,7 +28,7 @@ from dmm.daemons.rucio.finisher import RucioFinisherDaemon
 
 from dmm.daemons.fts.modifier import FTSModifierDaemon
 
-from dmm.daemons.sense.status_handler import SENSEStatusHandlerDaemon
+from dmm.daemons.sense.handler import SENSEHandlerDaemon
 from dmm.daemons.sense.stager import SENSEStagerDaemon
 from dmm.daemons.sense.provisioner import SENSEProvisionerDaemon
 from dmm.daemons.sense.modifier import SENSEModifierDaemon
@@ -63,7 +63,7 @@ class DMM:
 
     def start(self):
         logging.info("Starting Daemons")
-        sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency)
+        sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
         
         allocator = AllocatorDaemon(frequency=self.dmm_frequency)
         decider = DeciderDaemon(frequency=self.dmm_frequency)
@@ -75,7 +75,7 @@ class DMM:
         rucio_modifier = RucioModifierDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
         rucio_finisher = RucioFinisherDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
         
-        sense_updater = SENSEStatusHandlerDaemon(frequency=self.sense_frequency)
+        sense_updater = SENSEHandlerDaemon(frequency=self.sense_frequency)
         stager = SENSEStagerDaemon(frequency=self.sense_frequency)
         provision = SENSEProvisionerDaemon(frequency=self.sense_frequency)
         sense_modifier = SENSEModifierDaemon(frequency=self.sense_frequency)
@@ -98,11 +98,10 @@ class DMM:
         deleter.start(self.lock)
 
         try:
-            serve(frontend_app, port=self.port)
+            uvicorn.run(frontend_app, host="0.0.0.0", port=self.port)
         except:
             logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
-            serve(frontend_app, port=31601)
-
+            uvicorn.run(frontend_app, host="0.0.0.0", port=31601)
 def main():
     logging.info("Starting DMM")
     dmm = DMM()

@@ -1,9 +1,10 @@
+<!-- sites.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Movement Manager</title>
+    <title>Data Movement Manager - Sites</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -16,16 +17,11 @@
             color: #333;
         }
 
-        header {
+        header, h1 {
             background-color: #0078D4;
             color: white;
             padding: 20px;
             text-align: center;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        
-        header h1 {
-            font-size: 26px;
             margin: 0;
         }
 
@@ -51,48 +47,26 @@
             flex: 1;
             padding: 20px;
             max-width: 100%;
-            margin: 0 auto;
+            margin: 20px auto;
             background-color: white;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             border-radius: 8px;
-            overflow-x: auto; /* Enable horizontal scrolling */
-        }
-
-        .button-container {
-            text-align: center;
-            margin: 20px 0;
-        }
-
-        .button-container button {
-            background-color: #0078D4;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            cursor: pointer;
-            border-radius: 5px;
-            transition: background-color 0.3s;
-        }
-
-        .button-container button:hover {
-            background-color: #005a9e;
+            overflow-x: auto;
         }
 
         table {
             border-collapse: collapse;
             width: 100%;
             margin: 20px 0;
-            background-color: white;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            table-layout: fixed; /* Ensures all columns fit within the table */
+            table-layout: fixed;
         }
 
         th, td {
             border: 1px solid #ddd;
             padding: 10px;
             text-align: center;
-            word-wrap: break-word; /* Wraps long text */
-            font-size: 12px; /* Reducing font size for better fit */
+            font-size: 12px;
+            word-wrap: break-word;
         }
 
         th {
@@ -108,24 +82,24 @@
             background-color: #e6e6e6;
         }
 
-        td ul {
+        ul {
             padding: 0;
             margin: 0;
-            list-style-type: none; /* Remove bullets */
+            list-style-type: none;
         }
 
-        td ul li {
+        li {
             color: green;
             font-weight: bold;
             margin-bottom: 5px;
             text-align: left;
             overflow: hidden;
-            text-overflow: ellipsis; /* Add ellipsis for long text */
+            text-overflow: ellipsis;
             white-space: nowrap;
         }
 
-        td ul li.red {
-            color: red; /* Color red for items not in use */
+        .red {
+            color: red;
         }
 
         footer {
@@ -157,6 +131,7 @@
                     <th>RSE Name</th>
                     <th>SENSE URI</th>
                     <th>Endpoints</th>
+                    <th>IP Range</th>
                 </tr>
             </thead>
             <tbody>
@@ -169,6 +144,15 @@
                             {% for endpoint in site.endpoints %}
                             <li class="{{ 'red' if endpoint.in_use else '' }}">
                                 {{ endpoint.hostname }}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </td>
+                    <td>
+                        <ul>
+                            {% for endpoint in site.endpoints %}
+                            <li class="{{ 'red' if endpoint.in_use else '' }}">
+                                {{ endpoint.ip_range }}
                             </li>
                             {% endfor %}
                         </ul>
