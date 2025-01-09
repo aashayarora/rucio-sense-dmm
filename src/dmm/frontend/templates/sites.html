@@ -5,116 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Movement Manager - Sites</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f4f9;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-            color: #333;
-        }
-
-        header, h1 {
-            background-color: #0078D4;
-            color: white;
-            padding: 20px;
-            text-align: center;
-            margin: 0;
-        }
-
-        nav {
-            background-color: #005a9e;
-            padding: 10px;
-            text-align: center;
-        }
-
-        nav a {
-            color: white;
-            text-decoration: none;
-            margin: 0 15px;
-            font-size: 16px;
-            transition: color 0.3s;
-        }
-
-        nav a:hover {
-            color: #ffdd57;
-        }
-
-        .container {
-            flex: 1;
-            padding: 20px;
-            max-width: 100%;
-            margin: 20px auto;
-            background-color: white;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-            overflow-x: auto;
-        }
-
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            margin: 20px 0;
-            table-layout: fixed;
-        }
-
-        th, td {
-            border: 1px solid #ddd;
-            padding: 10px;
-            text-align: center;
-            font-size: 12px;
-            word-wrap: break-word;
-        }
-
-        th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-        }
-
-        tbody tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
-
-        tbody tr:hover {
-            background-color: #e6e6e6;
-        }
-
-        ul {
-            padding: 0;
-            margin: 0;
-            list-style-type: none;
-        }
-
-        li {
-            color: green;
-            font-weight: bold;
-            margin-bottom: 5px;
-            text-align: left;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .red {
-            color: red;
-        }
-
-        footer {
-            text-align: center;
-            font-size: 12px;
-            color: #999;
-            padding: 15px;
-            background-color: #f4f4f9;
-            box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
-        }
-
-        footer p {
-            margin: 0;
-        }
-    </style>
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <header>
@@ -124,6 +15,9 @@
         <a href="/">Home</a>
         <a href="/sites">Sites</a>
     </nav>
+    <div style="text-align: center; margin: 20px;">
+        <button type="button" onclick="refreshSites()">Refresh Sites</button>
+    </div>
     <div class="container">
         <table>
             <thead>
@@ -161,6 +55,22 @@
                 {% endfor %}
             </tbody>
         </table>
+        <script>
+            function refreshSites() {
+                fetch('/refresh_sites', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.text())
+                .then(data => alert(data))
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert("Failed to Refresh Sites");
+                });
+            }
+        </script>
     </div>
     <footer>
         <p>&copy; Apache License, Version 2.0</p>

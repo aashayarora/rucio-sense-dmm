@@ -32,7 +32,7 @@ classifiers = [
 dmm = "dmm.main.dmm:main"
 
 [tool.setuptools.package-data]
-dmm = ["frontend/templates/*.html"]
+dmm = ["frontend/templates/*.html", "frontend/static/*"]
 
 [project.urls]
 Homepage = "https://github.com/aashayarora/rucio-sense-dmm"
