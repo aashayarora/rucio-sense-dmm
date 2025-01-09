@@ -5,16 +5,23 @@ import time
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 
 from dmm.db.session import databased
 from dmm.db.request import Request as DBRequest
 from dmm.db.site import Site
 
+from dmm.daemons.core.sites import RefreshSiteDBDaemon
+from rucio.client import Client
+
 current_directory = os.path.dirname(os.path.abspath(__file__))
 templates_folder = os.path.join(current_directory, "templates")
+static_folder = os.path.join(current_directory, "static")
+
 templates = Jinja2Templates(directory=templates_folder)
 
 frontend_app = FastAPI()
+frontend_app.mount("/static", StaticFiles(directory=static_folder), name="static")
 
 @frontend_app.get("/query/{rule_id}")
 @databased
@@ -107,3 +114,13 @@ async def reinitialize(request: Request, session=None):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to reinitialize request")
+
+@frontend_app.post("/refresh_sites")
+async def refresh_sites():
+    try:
+        daemon = RefreshSiteDBDaemon(frequency=1)
+        daemon.run_once(client=Client(), session=None)
+        return "Sites refreshed"
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Failed to refresh sites")
