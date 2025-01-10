@@ -20,10 +20,10 @@ class SENSEStagerDaemon(DaemonBase):
         
     @databased
     def process(self, session=None):
-        reqs_init = Request.from_status(status=["ALLOCATED"], session=session)
-        if reqs_init == []:
+        reqs_decided = Request.from_status(status=["DECIDED"], session=session)
+        if reqs_decided == []:
             return
-        for req in reqs_init:
+        for req in reqs_decided:
             try:
                 vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()
