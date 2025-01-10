@@ -112,8 +112,8 @@ class DeciderDaemon(DaemonBase):
         self._modify_existing_bandwidth(network_graph, session)
 
     def _allocate_new_bandwidth(self, network_graph, session):
-        reqs_staged = Request.from_status(status=["STAGED"], session=session)
-        for req in reqs_staged:
+        reqs_allocated = Request.from_status(status=["ALLOCATED"], session=session)
+        for req in reqs_allocated:
             for _, _, key, data in network_graph.edges(keys=True, data=True):
                 if "rule_id" in data and data["rule_id"] == req.rule_id:
                     allocated_bandwidth = int(data["bandwidth"])

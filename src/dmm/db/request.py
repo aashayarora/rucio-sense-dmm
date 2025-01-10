@@ -9,6 +9,7 @@ class Request(ModelBase, table=True):
     rule_id: str = Field(primary_key=True)
     transfer_status: Optional[str] = Field(default=None)
     priority: Optional[int] = Field(default=None)
+    rule_size: Optional[float] = Field(default=None)
     modified_priority: Optional[int] = Field(default=None)
     max_bandwidth: Optional[float] = Field(default=None)
     bandwidth: Optional[float] = Field(default=None)

@@ -79,6 +79,8 @@ async def mark_finished(request: Request, session=None):
         data = await request.json()
         rule_id = data.get("rule_id")
         req = DBRequest.from_id(rule_id, session=session)
+        if req.transfer_status == "NOT_SENSE":
+            return "This is not a SENSE rule, what are you trying to do?"
         req.mark_as("FINISHED", session=session)
         return "Request marked as finished"
     except Exception as e:
@@ -93,6 +95,8 @@ async def update_fts_limit(request: Request, session=None):
         rule_id = data.get("rule_id")
         limit = data.get("limit")
         req = DBRequest.from_id(rule_id, session=session)
+        if req.transfer_status == "NOT_SENSE":
+            return "This is not a SENSE rule, what are you trying to do?"
         if req.transfer_status not in ["CANCELLED", "FINISHED", "DELETED"]:
             req.update_fts_limit_desired(limit=limit, session=session)
             return "FTS limit updated"
@@ -109,6 +113,8 @@ async def reinitialize(request: Request, session=None):
         data = await request.json()
         rule_id = data.get("rule_id")
         req = DBRequest.from_id(rule_id, session=session)
+        if req.transfer_status == "NOT_SENSE":
+            return "This is not a SENSE rule, what are you trying to do?"
         req.mark_as("ALLOCATED", session=session)
         return "Request reinitialized"
     except Exception as e:
