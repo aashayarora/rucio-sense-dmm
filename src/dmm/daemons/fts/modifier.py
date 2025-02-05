@@ -10,6 +10,7 @@ from dmm.db.session import databased
 from dmm.db.request import Request
 
 from dmm.daemons.base import DaemonBase
+
 class FTSModifierDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)

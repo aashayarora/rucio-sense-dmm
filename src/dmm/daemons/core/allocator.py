@@ -21,12 +21,15 @@ class AllocatorDaemon(DaemonBase):
             return
         
         for new_request in reqs_init:  
-            if self._reuse_finished_request(new_request, session):
+            if self._reuse_finished_request(new_request, session): # check if we can reuse a finished request
                 continue
             
-            self._allocate_new_endpoints(new_request, session)
+            self._allocate_new_endpoints(new_request, session) # if not found, allocate new endpoints
 
-    def _reuse_finished_request(self, new_request, session):
+    def _reuse_finished_request(self, new_request, session) -> bool:
+        """
+        Check if there is a finished request with the same src and dst site. if found: reuse its endpoints and return True
+        """
         reqs_finished = Request.from_status(status=["FINISHED"], session=session)
         for req_fin in reqs_finished:
             if req_fin.src_site == new_request.src_site and req_fin.dst_site == new_request.dst_site:
@@ -40,7 +43,10 @@ class AllocatorDaemon(DaemonBase):
                 return True
         return False
 
-    def _allocate_new_endpoints(self, new_request, session):
+    def _allocate_new_endpoints(self, new_request, session) -> None:
+        """
+        Allocate new endpoints for a new request, get endpoints and ip ranges from SENSE-O using the addressApi
+        """
         logging.debug(f"Request {new_request.rule_id} did not find a finished request with same endpoints, allocating new ipv6 blocks and urls.")
         try:
             if not new_request.src_site or not new_request.dst_site:
@@ -48,9 +54,11 @@ class AllocatorDaemon(DaemonBase):
             
             free_src_ipv6 = self._get_allocation(new_request.src_site.name, new_request.rule_id)
             free_dst_ipv6 = self._get_allocation(new_request.dst_site.name, new_request.rule_id)
+
+            # need to do this ipaddress circus because there is an inconsistency in the formatting of the IP range we get from SENSE-O during sites initialization and the one we get from the address pool.
             free_src_ipv6 = ipaddress.IPv6Network(free_src_ipv6).compressed
             free_dst_ipv6 = ipaddress.IPv6Network(free_dst_ipv6).compressed
-
+            
             src_endpoint = Endpoint.for_rule(site_name=new_request.src_site.name, ip_range=free_src_ipv6, session=session)
             dst_endpoint = Endpoint.for_rule(site_name=new_request.dst_site.name, ip_range=free_dst_ipv6, session=session)
 
@@ -75,13 +83,19 @@ class AllocatorDaemon(DaemonBase):
             self._free_allocation(new_request.dst_site.name, new_request.rule_id)
             logging.error(e)
 
-    def _get_allocation(self, sitename, alloc_name):
+    def _get_allocation(self, sitename, alloc_name) -> str:
+        """
+        Get an allocation from SENSE-O using the addressApi
+        @param sitename: name of the site (used for the address pool)
+        @param alloc_name: alias for the allocation used in SENSE-O, this is just the rule_id
+        """
         addressApi = AddressApi()
         pool_name = f"RUCIO_Site_BGP_Subnet_Pool-{sitename}"
         alloc_type = "IPv6"
         try:
             logging.debug(f"Getting IPv6 allocation for {sitename}")
             response = addressApi.allocate_address(pool_name, alloc_type, alloc_name, netmask="/64", batch="subnet")
+            #TODO: there is a possibility that the address pool does not exist, in this case return an error and mark the request as failed
             logging.debug(f"Got allocation: {response} for {sitename}")
             return response
         except Exception as e:
@@ -89,7 +103,10 @@ class AllocatorDaemon(DaemonBase):
             addressApi.free_address(pool_name, name=alloc_name)
             raise ValueError(f"Getting allocation failed for {sitename} and {alloc_name}")
 
-    def _free_allocation(self, sitename, alloc_name):
+    def _free_allocation(self, sitename, alloc_name) -> bool:
+        """
+        Free an allocation from SENSE-O (in case of failure of allocation)
+        """
         try:
             logging.debug(f"Freeing IPv6 allocation {alloc_name}")
             addressApi = AddressApi()

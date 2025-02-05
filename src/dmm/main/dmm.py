@@ -7,6 +7,7 @@ argparser.add_argument("--log-level", default="debug", help="Set the log level")
 
 args = argparser.parse_args()
 
+# logging needs to be configured before importing other modules
 logging.basicConfig(
     format="(%(threadName)s) [%(asctime)s] %(levelname)s: %(message)s",
     datefmt="%m-%d-%Y %H:%M:%S %p",
@@ -15,7 +16,7 @@ logging.basicConfig(
 )
 
 from multiprocessing import Lock
-import uvicorn
+import uvicorn # web server for the frontend
 
 from rucio.client import Client
 from dmm.utils.config import config_get_int
@@ -42,9 +43,10 @@ from dmm.daemons.core.monit import MonitDaemon
 from dmm.frontend.frontend import frontend_app
 
 class DMM:
-    def __init__(self):
+    def __init__(self) -> None:
         self.port = config_get_int("dmm", "port")
 
+        # frequencies at which daemons run (in seconds)
         self.rucio_frequency = config_get_int("daemons", "rucio", default=60)
         self.fts_frequency = config_get_int("daemons", "fts", default=60)
         self.dmm_frequency = config_get_int("daemons", "dmm", default=60)
@@ -59,9 +61,8 @@ class DMM:
         except Exception as e:
             logging.error(f"Failed to initialize Rucio client: {e}")
             raise "Failed to initialize Rucio client, exiting..."
-
-
-    def start(self):
+    
+    def start(self) -> None:
         logging.info("Starting Daemons")
         sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
         
@@ -98,10 +99,13 @@ class DMM:
         deleter.start(self.lock)
 
         try:
+            # start the frontend and listen on all interfaces
             uvicorn.run(frontend_app, host="0.0.0.0", port=self.port)
         except:
+            # if port is not available, try default port 31601
             logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
             uvicorn.run(frontend_app, host="0.0.0.0", port=31601)
+
 def main():
     logging.info("Starting DMM")
     dmm = DMM()

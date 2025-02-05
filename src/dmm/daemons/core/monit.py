@@ -10,7 +10,6 @@ from dmm.db.session import databased
 
 from dmm.utils.config import config_get
 
-
 class MonitDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)

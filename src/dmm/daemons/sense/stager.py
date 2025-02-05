@@ -41,8 +41,7 @@ class SENSEStagerDaemon(DaemonBase):
                                 {"data.connections[0].terminals[0].vlan_tag": vlan_range},
                                 {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                             ]
-                        },
-                        {"ask": "maximum-bandwidth", "options": [{"name": "Connection 1"}]}
+                        }
                     ],
                     "alias": req.rule_id
                 }
@@ -50,13 +49,8 @@ class SENSEStagerDaemon(DaemonBase):
                 if not self._good_response(response):
                     raise ValueError(f"SENSE req staging failed for {req.rule_id}")
                 logging.debug(f"Staging returned response {response}")
-                for query in response["queries"]:
-                    if query["asked"] == "maximum-bandwidth":
-                        result = query["results"][0]
-                        if "bandwidth" not in result:
-                            raise ValueError(f"SENSE query failed for {req.rule_id}")
-                        sense_uuid, max_bandwidth = response["service_uuid"], float(result["bandwidth"])
-                req.update({"sense_uuid": sense_uuid, "max_bandwidth": max_bandwidth})
+                sense_uuid = response["service_uuid"]
+                req.update({"sense_uuid": sense_uuid})
                 req.mark_as(status="STAGED", session=session)
             except Exception as e:
                 logging.error(f"Failed to stage link for {req.rule_id}, {e}, will try again")
