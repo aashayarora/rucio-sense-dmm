@@ -37,7 +37,7 @@ class DeciderDaemon(DaemonBase):
         optim_result = self._optimize_bandwidth(A, b, c, edges)
 
         if optim_result.success:
-            self._allocate_bandwidth(multi_graph, simple_graph, edges, edge_index, optim_result.x)
+            self._allocate_bandwidth(multi_graph, simple_graph, edges, edge_index, optim_result)
         else:
             logging.error("Optimization failed, no bandwidth allocated.")
 
@@ -81,26 +81,17 @@ class DeciderDaemon(DaemonBase):
         """
         Prepare the matrices for the linear programming optimization.
         """
-        n_nodes = len(nodes)
         n_edges = len(edges)
+        edge_index = {edge[:2]: i for i, edge in enumerate(edges)}
 
-        node_index = {node: i for i, node in enumerate(nodes)} # map nodes to indices
-        edge_index = {edge[:2]: i for i, edge in enumerate(edges)} # map edges to indices
-
-        A = np.zeros((n_nodes, n_edges)) # weighted adjacency matrix
-        c = np.zeros(n_edges) # cost vector 
-
-        for (u, v, data) in edges:
-            i = node_index[u]
-            j = node_index[v]
+        c = np.zeros(n_edges)
+        for i, (u, v, data) in enumerate(edges):
             priority = data['priority']
-            edge_idx = edge_index[(u, v)]
+            c[i] = -priority
+        
+        A = nx.incidence_matrix(simple_graph, nodelist=nodes, edgelist=edges).toarray()
+        b = np.array([simple_graph.nodes[node]['port_capacity'] for node in nodes])
 
-            A[i, edge_idx] = priority
-            A[j, edge_idx] = priority
-            c[edge_idx] = -priority # (negative priorities because we want to maximize based on priorities (LPO performs minimization))
-
-        b = np.array([simple_graph.nodes[node]['port_capacity'] for node in nodes]) # port capacity for each node
         return A, c, b, edge_index
 
     def _optimize_bandwidth(self, A, b, c, edges) -> object:
@@ -119,9 +110,9 @@ class DeciderDaemon(DaemonBase):
             else:
                 optim_result = curr_optim_result
                 lower_bound += 5
-        return optim_result
+        return optim_result.x
 
-    def _allocate_bandwidth(self, multi_graph, simple_graph, edges, edge_index, x) -> None:
+    def _allocate_bandwidth(self, multi_graph, simple_graph, edges, edge_index, bandwidths) -> None:
         """
         Set the bandwidths in the graph based on the optimization result.
         @param multi_graph: the network multi_graph
@@ -130,7 +121,6 @@ class DeciderDaemon(DaemonBase):
         @param edge_index: the edge index mapping
         @param x: the optimization result
         """
-        bandwidths = x * np.array([data['priority'] for u, v, data in edges])
         for u, v, key, data in multi_graph.edges(keys=True, data=True):
             total_priority = simple_graph[u][v]['priority']
             if total_priority > 0:

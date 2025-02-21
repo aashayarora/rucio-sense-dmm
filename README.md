@@ -3,7 +3,7 @@
 Data Movement Manager (DMM) for the Rucio-SENSE interoperation prototype.
 DMM is the interface between Rucio (/FTS) and SENSE, making SDN operated HEP data-flows possible
 
-The application is organized into several components that run as daemons on separate threads and evaluate requests based on their status in DMM, e.g. the `SENSE Stager Daemon` only operates on requests which are in the `DECIDED` state etc.
+The application is organized into several components that run as daemons on separate threads and evaluate requests based on their status in DMM, e.g. the `SENSE PROVISIONER` only operates on requests which are in the `DECIDED` state etc.
 
 ## Project Structure
 
