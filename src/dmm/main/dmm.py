@@ -1,11 +1,16 @@
 import logging
 import sys
+import os
 import argparse
 
 argparser = argparse.ArgumentParser()
-argparser.add_argument("--log-level", default="debug", help="Set the log level")
 
+argparser.add_argument("--log-level", default="debug", help="Set the log level")
+argparser.add_argument("--config", help="Path to the configuration file")
 args = argparser.parse_args()
+
+if args.config:
+    os.environ["DMM_CONFIG"] = args.config
 
 # logging needs to be configured before importing other modules
 logging.basicConfig(

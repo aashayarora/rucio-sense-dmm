@@ -10,14 +10,23 @@ _ENGINE = None
 def get_engine():
     global _ENGINE
     if not _ENGINE:
-        username = config_get("db", "username", default="dmm")
-        password = config_get("db", "password", default="dmm")
-        host = config_get("db", "db_host", default="localhost")
-        port = config_get("db", "db_port", default="5432")
-        db_name = config_get("db", "db_name", default="dmm")
-        _ENGINE = create_engine(
+        db_type = config_get("db", "db_type", default="postgresql")
+        if db_type == "postgresql":
+            username = config_get("db", "username", default="dmm")
+            password = config_get("db", "password", default="dmm")
+            host = config_get("db", "db_host", default="localhost")
+            port = config_get("db", "db_port", default="5432")
+            db_name = config_get("db", "db_name", default="dmm")
+            _ENGINE = create_engine(
             f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{db_name}"
-        )
+            )
+        elif db_type == "sqlite":
+            db_file = config_get("db", "db_file", default="dmm.db")
+            _ENGINE = create_engine(
+            f"sqlite:///{db_file}"
+            )
+        else:
+            raise ValueError(f"Unknown database type: {db_type}")
     assert _ENGINE
     return _ENGINE
 
