@@ -3,7 +3,7 @@ from inspect import iscoroutinefunction
 
 from sqlmodel import create_engine, Session
 
-from dmm.utils.config import config_get
+from dmm.core.config import config_get
 
 _ENGINE = None
 

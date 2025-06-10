@@ -1,6 +1,6 @@
 from dmm.daemons.base import DaemonBase
 
-from dmm.db.request import Request
+from dmm.models.request import Request
 from dmm.db.session import databased
 
 import logging

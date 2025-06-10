@@ -1,8 +1,8 @@
 import logging
 
 from dmm.daemons.base import DaemonBase
-from dmm.db.request import Request
-from dmm.db.site import Site
+from dmm.models.request import Request
+from dmm.models.site import Site
 from dmm.db.session import databased
 
 class RucioInitDaemon(DaemonBase):

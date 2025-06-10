@@ -5,10 +5,10 @@ import logging
 from dmm.daemons.base import DaemonBase
 from datetime import datetime
 
-from dmm.db.request import Request
+from dmm.models.request import Request
 from dmm.db.session import databased
 
-from dmm.utils.config import config_get
+from dmm.core.config import config_get
 
 class MonitDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):

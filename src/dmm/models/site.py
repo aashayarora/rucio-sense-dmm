@@ -2,7 +2,7 @@ from sqlmodel import Field, Relationship
 from typing import List, Optional
 import logging
 
-from dmm.db.base import *
+from dmm.models.base import *
 
 class Site(ModelBase, table=True):
     name: str = Field(primary_key=True)

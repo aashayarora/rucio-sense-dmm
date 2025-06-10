@@ -3,8 +3,8 @@ import ipaddress
 
 from dmm.daemons.base import DaemonBase
 
-from dmm.db.request import Request
-from dmm.db.endpoint import Endpoint
+from dmm.models.request import Request
+from dmm.models.endpoint import Endpoint
 
 from dmm.db.session import databased
 
@@ -45,43 +45,61 @@ class AllocatorDaemon(DaemonBase):
 
     def _allocate_new_endpoints(self, new_request, session) -> None:
         """
-        Allocate new endpoints for a new request, get endpoints and ip ranges from SENSE-O using the addressApi
+        Allocate new endpoints for a new request, get endpoints and ip ranges from SENSE-O
         """
-        logging.debug(f"Request {new_request.rule_id} did not find a finished request with same endpoints, allocating new ipv6 blocks and urls.")
+        logging.info(f"Allocating endpoints for request {new_request.rule_id}")
+        
+        # Validate request has required fields
+        if not new_request.src_site or not new_request.dst_site:
+            new_request.mark_as("FAILED", session=session)
+            logging.error(f"Request {new_request.rule_id} is missing source or destination site")
+            return
+        
+        src_allocation = None
+        dst_allocation = None
+        
         try:
-            if not new_request.src_site or not new_request.dst_site:
-                raise ValueError("Could not find sites")
+            # Get allocations
+            src_allocation = self._get_allocation(new_request.src_site.name, new_request.rule_id)
+            dst_allocation = self._get_allocation(new_request.dst_site.name, new_request.rule_id)
             
-            free_src_ipv6 = self._get_allocation(new_request.src_site.name, new_request.rule_id)
-            free_dst_ipv6 = self._get_allocation(new_request.dst_site.name, new_request.rule_id)
-
-            # need to do this ipaddress circus because there is an inconsistency in the formatting of the IP range we get from SENSE-O during sites initialization and the one we get from the address pool.
-            free_src_ipv6 = ipaddress.IPv6Network(free_src_ipv6).compressed
-            free_dst_ipv6 = ipaddress.IPv6Network(free_dst_ipv6).compressed
+            # Format IP addresses consistently
+            free_src_ipv6 = ipaddress.IPv6Network(src_allocation).compressed
+            free_dst_ipv6 = ipaddress.IPv6Network(dst_allocation).compressed
             
+            # Find matching endpoints
             src_endpoint = Endpoint.for_rule(site_name=new_request.src_site.name, ip_range=free_src_ipv6, session=session)
             dst_endpoint = Endpoint.for_rule(site_name=new_request.dst_site.name, ip_range=free_dst_ipv6, session=session)
-
+            
+            # Validate endpoints
             if not src_endpoint:
-                raise ValueError(f"Could not find source endpoint {src_endpoint} given by SENSE-O address pool in the database")    
+                raise ValueError(f"Could not find source endpoint with IP range {free_src_ipv6}")
             if not dst_endpoint:
-                raise ValueError(f"Could not find dest endpoint {dst_endpoint} given by SENSE-O address pool in the database")
-
-            logging.debug(f"Got ipv6 ranges {src_endpoint.ip_range} and {dst_endpoint.ip_range} and urls {src_endpoint.hostname} and {dst_endpoint.hostname} for request {new_request.rule_id}")
-        
+                raise ValueError(f"Could not find destination endpoint with IP range {free_dst_ipv6}")
+                
+            # Update request with allocated endpoints
             new_request.update({
                 "src_endpoint": src_endpoint,
                 "dst_endpoint": dst_endpoint,
                 "transfer_status": "ALLOCATED"
             })
-
+            
+            # Mark endpoints as in use
             src_endpoint.mark_inuse(in_use=True, session=session)
             dst_endpoint.mark_inuse(in_use=True, session=session)
-
+            
+            logging.info(f"Successfully allocated endpoints for request {new_request.rule_id}")
+            
         except Exception as e:
-            self._free_allocation(new_request.src_site.name, new_request.rule_id)
-            self._free_allocation(new_request.dst_site.name, new_request.rule_id)
-            logging.error(e)
+            # Clean up any allocations we made
+            if src_allocation:
+                self._free_allocation(new_request.src_site.name, new_request.rule_id)
+            if dst_allocation:
+                self._free_allocation(new_request.dst_site.name, new_request.rule_id)
+                
+            # Mark request as failed
+            new_request.mark_as("FAILED", session=session)
+            logging.error(f"Failed to allocate endpoints for request {new_request.rule_id}: {str(e)}")
 
     def _get_allocation(self, sitename, alloc_name) -> str:
         """

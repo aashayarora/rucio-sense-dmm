@@ -19,7 +19,8 @@ docker run -it --rm \
 --network host \
 -v $HOME/private/dmm.cfg:/opt/dmm/dmm.cfg \
 -v $HOME/private/rucio.cfg:/opt/rucio/etc/rucio.cfg \
--v $HOME/private/certs/rucio-sense/:/opt/certs/ \
+-v $HOME/private/certs/rucio-sense/hostcert.pem:/opt/certs/cert.pem \
+-v $HOME/private/certs/rucio-sense/hostcert.key.pem:/opt/certs/key.pem \
 -v $HOME/.sense-o-auth.yaml:/root/.sense-o-auth.yaml \
 -v /etc/grid-security/certificates/:/etc/grid-security/certificates \
 --name dmm \

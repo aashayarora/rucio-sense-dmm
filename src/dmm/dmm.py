@@ -24,7 +24,7 @@ from multiprocessing import Lock
 import uvicorn # web server for the frontend
 
 from rucio.client import Client
-from dmm.utils.config import config_get_int
+from dmm.core.config import config_get_int
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 
@@ -45,7 +45,7 @@ from dmm.daemons.core.allocator import AllocatorDaemon
 from dmm.daemons.core.decider import DeciderDaemon
 from dmm.daemons.core.monit import MonitDaemon
 
-from dmm.frontend.frontend import frontend_app
+from dmm.api.frontend import api
 
 class DMM:
     def __init__(self) -> None:
@@ -65,7 +65,7 @@ class DMM:
             self.rucio_client = Client()
         except Exception as e:
             logging.error(f"Failed to initialize Rucio client: {e}")
-            raise "Failed to initialize Rucio client, exiting..."
+            raise ConnectionError("Failed to initialize Rucio client, exiting...")
     
     def start(self) -> None:
         logging.info("Starting Daemons")
@@ -105,11 +105,11 @@ class DMM:
 
         try:
             # start the frontend and listen on all interfaces
-            uvicorn.run(frontend_app, host="0.0.0.0", port=self.port)
+            uvicorn.run(api, host="0.0.0.0", port=self.port)
         except:
             # if port is not available, try default port 31601
             logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
-            uvicorn.run(frontend_app, host="0.0.0.0", port=31601)
+            uvicorn.run(api, host="0.0.0.0", port=31601)
 
 def main():
     logging.info("Starting DMM")

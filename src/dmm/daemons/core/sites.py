@@ -4,12 +4,12 @@ import ipaddress
 
 from dmm.daemons.base import DaemonBase
 
-from dmm.db.site import Site
-from dmm.db.mesh import Mesh
-from dmm.db.endpoint import Endpoint
+from dmm.models.site import Site
+from dmm.models.mesh import Mesh
+from dmm.models.endpoint import Endpoint
 from dmm.db.session import databased
 
-from dmm.utils.config import config_get
+from dmm.core.config import config_get
 
 from sense.client.discover_api import DiscoverApi
 from sense.client.workflow_combined_api import WorkflowCombinedApi

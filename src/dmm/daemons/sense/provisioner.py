@@ -5,11 +5,11 @@ import re
 from dmm.daemons.base import DaemonBase
 from dmm.db.session import databased
 
-from dmm.db.request import Request
-from dmm.db.site import Site
-from dmm.db.mesh import Mesh
+from dmm.models.request import Request
+from dmm.models.site import Site
+from dmm.models.mesh import Mesh
 
-from dmm.utils.config import config_get
+from dmm.core.config import config_get
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 

@@ -4,11 +4,10 @@ import json
 import requests
 import urllib
 
-from dmm.utils.config import config_get
-
+from dmm.models.request import Request
 from dmm.db.session import databased
-from dmm.db.request import Request
 
+from dmm.core.config import config_get
 from dmm.daemons.base import DaemonBase
 
 class FTSModifierDaemon(DaemonBase):
