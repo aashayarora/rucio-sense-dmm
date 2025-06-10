@@ -2,6 +2,7 @@
 port=80
 
 [db]
+db_type=postgres
 username=dmm
 password=dmm
 db_host=localhost

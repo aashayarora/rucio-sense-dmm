@@ -8,8 +8,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
 from dmm.db.session import databased
-from dmm.db.request import Request as DBRequest
-from dmm.db.site import Site
+from dmm.models.request import Request as DBRequest
+from dmm.models.site import Site
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 from rucio.client import Client
@@ -20,10 +20,10 @@ static_folder = os.path.join(current_directory, "static")
 
 templates = Jinja2Templates(directory=templates_folder)
 
-frontend_app = FastAPI()
-frontend_app.mount("/static", StaticFiles(directory=static_folder), name="static")
+api = FastAPI()
+api.mount("/static", StaticFiles(directory=static_folder), name="static")
 
-@frontend_app.get("/query/{rule_id}")
+@api.get("/query/{rule_id}")
 @databased
 async def handle_client(rule_id: str, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
@@ -42,7 +42,7 @@ async def handle_client(rule_id: str, session=None):
         logging.error(f"Error processing client request: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@frontend_app.get("/")
+@api.get("/")
 @databased
 async def get_dmm_status(request: Request, session=None):
     try:
@@ -52,7 +52,7 @@ async def get_dmm_status(request: Request, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@frontend_app.get("/sites")
+@api.get("/sites")
 @databased
 async def get_sites(request: Request, session=None):
     try:
@@ -62,7 +62,7 @@ async def get_sites(request: Request, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@frontend_app.get("/details/{rule_id}")
+@api.get("/details/{rule_id}")
 @databased
 async def open_rule_details(request: Request, rule_id: str, session=None):
     try:
@@ -72,7 +72,7 @@ async def open_rule_details(request: Request, rule_id: str, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@frontend_app.post("/mark_finished")
+@api.post("/mark_finished")
 @databased
 async def mark_finished(request: Request, session=None):
     try:
@@ -87,7 +87,7 @@ async def mark_finished(request: Request, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to mark request as finished")
 
-@frontend_app.post("/update_fts_limit")
+@api.post("/update_fts_limit")
 @databased
 async def update_fts_limit(request: Request, session=None):
     try:
@@ -106,7 +106,7 @@ async def update_fts_limit(request: Request, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to update FTS limit")
 
-@frontend_app.post("/reinitialize")
+@api.post("/reinitialize")
 @databased
 async def reinitialize(request: Request, session=None):
     try:
@@ -121,7 +121,7 @@ async def reinitialize(request: Request, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to reinitialize request")
 
-@frontend_app.post("/refresh_sites")
+@api.post("/refresh_sites")
 async def refresh_sites():
     try:
         daemon = RefreshSiteDBDaemon(frequency=1)
@@ -130,3 +130,7 @@ async def refresh_sites():
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to refresh sites")
+    
+@api.get("/health")
+async def health_check():
+    return {"status": "healthy"}

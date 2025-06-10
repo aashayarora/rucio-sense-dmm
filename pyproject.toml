@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sense-dmm"
-version = "0.3.0"
+name = "dmm"
+version = "0.0.1"
 authors = [
   { name="Aashay Arora", email="aaarora@ucsd.edu" },
 ]
@@ -29,10 +29,10 @@ classifiers = [
 ]
 
 [project.scripts]
-dmm = "dmm.main.dmm:main"
+dmm = "dmm.dmm:main"
 
 [tool.setuptools.package-data]
-dmm = ["frontend/templates/*.html", "frontend/static/*"]
+dmm = ["api/templates/*.html", "api/static/*"]
 
 [project.urls]
 Homepage = "https://github.com/aashayarora/rucio-sense-dmm"

@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dmm
-  namespace: ucsd-rucio
 spec:
   replicas: 1
   selector:
@@ -86,7 +85,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: dmm
-  namespace: ucsd-rucio
 spec:
   selector:
     app: dmm
@@ -103,7 +101,7 @@ metadata:
 spec:
   ingressClassName: haproxy
   rules:
-  - host: dmm.nrp-nautilus.io
+  - host: dmm-dev.nrp-nautilus.io
     http:
       paths:
       - path: /
@@ -115,4 +113,4 @@ spec:
               number: 8080
   tls:
   - hosts:
-    - dmm.nrp-nautilus.io
+    - dmm-dev.nrp-nautilus.io

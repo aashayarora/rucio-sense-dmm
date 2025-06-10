@@ -5,7 +5,7 @@ import re
 from dmm.daemons.base import DaemonBase
 
 from dmm.db.session import databased
-from dmm.db.request import Request
+from dmm.models.request import Request
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 

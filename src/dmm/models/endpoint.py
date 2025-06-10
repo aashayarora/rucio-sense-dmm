@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import logging
 
-from dmm.db.base import *
+from dmm.models.base import *
 
 class Endpoint(ModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

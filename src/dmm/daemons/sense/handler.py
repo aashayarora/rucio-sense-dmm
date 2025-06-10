@@ -4,9 +4,9 @@ import json
 import ipaddress
 import re
 
-from dmm.utils.config import config_get_int
+from dmm.core.config import config_get_int
 from dmm.daemons.base import DaemonBase
-from dmm.db.request import Request
+from dmm.models.request import Request
 from dmm.db.session import databased
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi

@@ -5,8 +5,13 @@ import logging
 __CONFIG = None
 
 class Config:
-    def __init__(self):
+    def __init__(self) -> None:
+        """
+        Initialize the configuration object.
+        """
         self.parser = ConfigParser.ConfigParser(delimiters=('='))
+        
+        # Check if the configuration file path is set in the environment variable, if not, use the default configuration file path
         if "DMM_CONFIG" in os.environ:
             logging.debug("reading config defined in env")
             self.configfile = os.environ["DMM_CONFIG"]
@@ -22,13 +27,19 @@ class Config:
         if not self.parser.read(self.configfile) == [self.configfile]:
             raise RuntimeError("could not load DMM configuration file.")
 
-def get_config():
+def get_config() -> ConfigParser.ConfigParser:
+    """
+    Get the configuration object.
+    """
     global __CONFIG
     if __CONFIG is None:
         __CONFIG = Config()
     return __CONFIG.parser
 
-def config_get(section, option, default=None, extract_function=ConfigParser.ConfigParser.get):
+def config_get(section, option, default=None, extract_function=ConfigParser.ConfigParser.get) -> str:
+    """
+    Get a string from the configuration file.
+    """
     global __CONFIG
     logging.debug(f"Getting config option {option} from section {section}")
     try:
@@ -40,7 +51,10 @@ def config_get(section, option, default=None, extract_function=ConfigParser.Conf
             logging.error(f"No option '{option}' in section '{section}'")
             raise
 
-def config_get_bool(section, option, default=None):
+def config_get_bool(section, option, default=None) -> bool:
+    """
+    Get a boolean from the configuration file.
+    """
     try:
         return bool(config_get(section, option, extract_function=ConfigParser.ConfigParser.getboolean))
     except:
@@ -50,7 +64,10 @@ def config_get_bool(section, option, default=None):
             logging.error(f"Cannot convert option '{option}' in section '{section}' to boolean")
             raise
 
-def config_get_int(section, option, default=None):
+def config_get_int(section, option, default=None) -> int:
+    """
+    Get an integer from the configuration file.
+    """
     try:
         return int(config_get(section, option, extract_function=ConfigParser.ConfigParser.getint))
     except:

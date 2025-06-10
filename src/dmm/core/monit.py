@@ -3,7 +3,7 @@ import requests
 import re
 import logging
 
-from dmm.utils.config import config_get
+from dmm.core.config import config_get
 
 # Helper functions
 

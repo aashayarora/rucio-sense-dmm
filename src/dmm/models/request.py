@@ -3,7 +3,7 @@ from typing import Optional
 
 import logging
 
-from dmm.db.base import *
+from dmm.models.base import *
 
 class Request(ModelBase, table=True):
     rule_id: str = Field(primary_key=True)
@@ -11,7 +11,7 @@ class Request(ModelBase, table=True):
     priority: Optional[int] = Field(default=None)
     rule_size: Optional[float] = Field(default=None)
     modified_priority: Optional[int] = Field(default=None)
-    max_bandwidth: Optional[float] = Field(default=None)
+    available_bandwidth: Optional[float] = Field(default=None)
     bandwidth: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None)
@@ -55,6 +55,16 @@ class Request(ModelBase, table=True):
     def mark_as(self, status, session=None):
         logging.debug(f"REQUEST UPDATE: marking request {self.rule_id} as {status}")
         self.transfer_status = status 
+        self.save(session)
+
+    def update_available_bandwidth(self, bandwidth, session=None):
+        logging.debug(f"REQUEST UPDATE: updating available bandwidth for request {self.rule_id} to {bandwidth}")
+        self.available_bandwidth = bandwidth
+        self.save(session)
+
+    def update_sense_uuid(self, sense_uuid, session=None):
+        logging.debug(f"REQUEST UPDATE: updating sense UUID for request {self.rule_id} to {sense_uuid}")
+        self.sense_uuid = sense_uuid
         self.save(session)
 
     def update_bandwidth(self, bandwidth, session=None):

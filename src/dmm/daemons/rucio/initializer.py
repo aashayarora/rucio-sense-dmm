@@ -1,8 +1,8 @@
 import logging
 
 from dmm.daemons.base import DaemonBase
-from dmm.db.request import Request
-from dmm.db.site import Site
+from dmm.models.request import Request
+from dmm.models.site import Site
 from dmm.db.session import databased
 
 class RucioInitDaemon(DaemonBase):
@@ -10,7 +10,10 @@ class RucioInitDaemon(DaemonBase):
         super().__init__(frequency, **kwargs)
 
     @databased
-    def process(self, client=None, session=None):
+    def process(self, client=None, session=None) -> None:
+        """
+        Process Rucio rules and create requests in the database.
+        """
         rules = client.list_replication_rules()
         for rule in rules:
             if self._is_rule_in_db(rule, session):
@@ -30,17 +33,26 @@ class RucioInitDaemon(DaemonBase):
                 logging.error(f"Failed to create request for rule {rule['id']}: {e}")
                 continue
 
-    def _is_rule_in_db(self, rule, session):
+    def _is_rule_in_db(self, rule, session) -> bool:
+        """
+        Check if the rule already exists in the database.
+        """
         return Request.from_id(rule["id"], session=session) is not None
 
-    def _get_rule_size(self, rule, client):
+    def _get_rule_size(self, rule, client) -> int:
+        """
+        Get the total size of the files in the rule (in bytes).
+        """
         try:
             return sum([i.get("bytes") for i in client.list_files(scope=rule["scope"], name=rule["name"])])
         except Exception as e:
             logging.error(f"Failed to get rule size for rule {rule['id']}: {e}")
             return None
 
-    def _create_request_from_rule(self, rule, client, session):
+    def _create_request_from_rule(self, rule, client, session) -> Request:
+        """
+        Create a new request from the given rule.
+        """
         src_site_name = rule.get("source_replica_expression")
         dst_site_name = rule.get("rse_expression")
         src_site = Site.from_name(src_site_name, session=session)
@@ -50,10 +62,10 @@ class RucioInitDaemon(DaemonBase):
             raise ValueError(f"Source or destination site not found for rule {rule['id']}.")
 
         priority = rule.get("priority")
-        fts_limit_desired = 20
+        fts_limit_desired = 20 # Default value for fts limits when the rule is added (before SENSE circuit is provisioned)
 
-        meta = rule.get("meta", {})
-        if not meta or "sense" not in meta:
+        activity = rule.get("activity", None) # activity for SENSE rules contains SENSE
+        if not activity or "sense" not in activity.lower():
             logging.debug(f"Rule {rule['id']} is not a SENSE rule; setting status to 'NOT_SENSE'.")
             transfer_status = "NOT_SENSE"
         else:

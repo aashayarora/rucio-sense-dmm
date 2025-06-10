@@ -2,7 +2,7 @@ from sqlmodel import Field, Relationship, or_
 from typing import Optional
 import logging
 
-from dmm.db.base import *
+from dmm.models.base import *
 
 class Mesh(ModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -10,7 +10,7 @@ class Mesh(ModelBase, table=True):
     site_2: Optional[str] = Field(default=None, foreign_key='site.name')
     vlan_range_start: Optional[int] = Field(default=None)
     vlan_range_end: Optional[int] = Field(default=None)
-    maximum_bandwidth: Optional[int] = Field(default=None)
+    link_capacity: Optional[int] = Field(default=None)
 
     site1: Optional["Site"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Mesh.site_1]"})
     site2: Optional["Site"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Mesh.site_2]"})
@@ -23,20 +23,20 @@ class Mesh(ModelBase, table=True):
         logging.debug(f"MESH QUERY: checking if vlan range defined between {site_1} and {site_2}")
         mesh = session.query(cls).filter(
             or_(cls.site1 == site_1, cls.site1 == site_2),
-            or_(cls.site2 == site_1, cls.site2 == site_2)
+            or_(cls.site1 == site_2, cls.site2 == site_1)
         ).first()
         if not mesh:
             return None
         if mesh.vlan_range_start == -1 or mesh.vlan_range_end == -1:
             return "any"
         return f"{mesh.vlan_range_start}-{mesh.vlan_range_end}"
-       
+    
     @classmethod
     def max_bandwidth(cls, site, session=None):
-        logging.debug(f"MESH QUERY: checking max bandwidth for {site.name}")
-        meshes = session.query(cls).filter(
+        logging.debug(f"MESH QUERY: checking if max bandwidth defined for {site}")
+        mesh = session.query(cls).filter(
             or_(cls.site1 == site, cls.site2 == site)
-        ).all()
-        if not meshes:
+        ).first()
+        if not mesh:
             return None
-        return max(mesh.maximum_bandwidth for mesh in meshes)
+        return mesh.link_capacity
