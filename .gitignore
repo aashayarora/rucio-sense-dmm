@@ -6,5 +6,5 @@ dist/
 src/sense_dmm.egg-info
 build/
 *.ipynb
-!decision.ipynb
+!sim/*
 tests/
