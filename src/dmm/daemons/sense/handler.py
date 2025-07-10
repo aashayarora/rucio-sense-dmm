@@ -16,8 +16,11 @@ class SENSEHandlerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
         
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, session=None):
+    def run_once(self, session=None):
         reqs = Request.from_status(status=["STAGED", "PROVISIONED", "CANCELED", "STALE", "DECIDED", "FINISHED"], session=session)
         if not reqs:
             return

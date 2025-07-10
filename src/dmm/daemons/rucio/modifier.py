@@ -8,8 +8,11 @@ class RucioModifierDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
 
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, client=None, session=None):
+    def run_once(self, client=None, session=None):
         reqs = Request.from_status(status=["ALLOCATED", "STAGED", "DECIDED", "PROVISIONED"], session=session)
         if not reqs:
             return

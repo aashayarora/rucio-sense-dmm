@@ -14,8 +14,11 @@ class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
         
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+    
     @databased
-    def process(self, session=None):
+    def run_once(self, session=None):
         multi_graph = self._build_multi_graph(session)
         
         if not multi_graph.nodes:

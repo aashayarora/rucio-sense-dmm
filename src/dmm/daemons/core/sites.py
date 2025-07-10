@@ -19,8 +19,6 @@ class RefreshSiteDBDaemon(DaemonBase):
         super().__init__(frequency, **kwargs)
     
     def process(self, **kwargs):
-        # process only calls run_once, this is just so run_once can also be called from the frontend, in case the operator wants to force a refresh
-        # perhaps it will be useful to make all daemons share this structure
         self.run_once(**kwargs)
 
     @databased
@@ -141,8 +139,8 @@ class RefreshSiteDBDaemon(DaemonBase):
             } # manifest json to query SENSE for the endpoints for a given uri
 
             ## HACK for FNAL testing
-            # if "FNAL" in site_.name:
-                # manifest_json["sparql-ext"] = f"SELECT ?metadata WHERE {{ ?site nml:hasService ?md_svc. ?md_svc mrs:hasNetworkAttribute ?dir_xrootd. ?dir_xrootd mrs:type 'metadata:directory'. ?dir_xrootd mrs:tag '/xrootd'. ?dir_xrootd mrs:value ?metadata.  FILTER regex(str(?site), '{site_.sense_uri}') }} LIMIT 1"
+            if "FNAL" in site_.name:
+                manifest_json["sparql-ext"] = f"SELECT ?metadata WHERE {{ ?site nml:hasService ?md_svc. ?md_svc mrs:hasNetworkAttribute ?dir_xrootd. ?dir_xrootd mrs:type 'metadata:directory'. ?dir_xrootd mrs:tag '/xrootd6'. ?dir_xrootd mrs:value ?metadata.  FILTER regex(str(?site), '{site_.sense_uri}') }} LIMIT 1"
             
             response = workflow_api.manifest_create(json.dumps(manifest_json))
             metadata = json.loads(response["jsonTemplate"])

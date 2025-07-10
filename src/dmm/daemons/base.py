@@ -12,6 +12,9 @@ class DaemonBase:
     def process(self):
         raise NotImplementedError("Subclasses must implement this method")
     
+    def run_once(self, **kwargs):
+        raise NotImplementedError("Subclasses must implement this method")
+
     def run_daemon(self, process, lock, **kwargs):
         while True:
             with lock:

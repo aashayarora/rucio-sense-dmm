@@ -17,8 +17,11 @@ class MonitDaemon(DaemonBase):
         self.prometheus_pass = config_get("prometheus", "password")
         self.prometheus_host = config_get("prometheus", "host")
 
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, session=None):
+    def run_once(self, session=None):
         reqs = Request.from_status(["PROVISIONED"], session=session)
         current_timestamp = round(datetime.timestamp(datetime.now()))
 

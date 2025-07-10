@@ -26,6 +26,4 @@ class Site(ModelBase, table=True):
     def from_name(cls, name, attr=None, session=None):
         logging.debug(f"SITE QUERY: sites from name: {name}")
         query = session.query(cls).filter(cls.name == name).first()
-        if attr and query:
-            return getattr(query, attr)
         return query

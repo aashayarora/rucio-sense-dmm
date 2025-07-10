@@ -9,8 +9,11 @@ class RucioInitDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
 
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, client=None, session=None) -> None:
+    def run_once(self, client=None, session=None) -> None:
         """
         Process Rucio rules and create requests in the database.
         """
@@ -20,8 +23,11 @@ class RucioInitDaemon(DaemonBase):
                 logging.debug(f"Rule {rule['id']} already exists in the database.")
                 continue
             
-            if rule.get("state") in ["OK", "STUCK"]:
+            if rule.get("state") == "OK":
                 logging.debug(f"Rule {rule['id']} is already finished; skipping.")
+                continue
+            elif rule.get("state") == "STUCK":
+                logging.debug(f"Rule {rule['id']} is stuck; skipping.")
                 continue
 
             logging.debug(f"Processing rule {rule['id']}.")

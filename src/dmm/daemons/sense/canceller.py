@@ -12,9 +12,12 @@ from sense.client.workflow_combined_api import WorkflowCombinedApi
 class SENSECancellerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
-        
+    
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, session=None):
+    def run_once(self, session=None):
         reqs_finished = Request.from_status(status=["FINISHED"], session=session)
         if reqs_finished == []:
             return

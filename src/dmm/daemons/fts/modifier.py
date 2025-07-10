@@ -21,8 +21,11 @@ class FTSModifierDaemon(DaemonBase):
             "Accept": "application/json"
         }
 
+    def process(self, **kwargs):
+        self.run_once(**kwargs)
+
     @databased
-    def process(self, session=None):
+    def run_once(self, session=None):
         self._process_requests(session, ["ALLOCATED", "DECIDED", "PROVISIONED"], self._modify_request)
         self._process_requests(session, ["DELETED"], self._delete_request)
 
