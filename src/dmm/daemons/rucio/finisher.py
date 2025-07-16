@@ -25,8 +25,8 @@ class RucioFinisherDaemon(DaemonBase):
         status = client.get_replication_rule(req.rule_id)['state']
         if status == "OK":
             logging.debug(f"Request {req.rule_id} finished with status {status}")
-            req.mark_as(status="FINISHED", session=session)  # Mark request as finished
+            req.update_transfer_status(status="FINISHED", session=session)  # Mark request as finished
             req.update_fts_limit_current(limit=0, session=session)  # Remove FTS limits
         elif status == "STUCK":
             logging.debug(f"Request {req.rule_id} is stuck, marking as FINISHED in DMM so circuit can be taken down")
-            req.mark_as(status="FINISHED", session=session)
+            req.update_transfer_status(status="FINISHED", session=session)

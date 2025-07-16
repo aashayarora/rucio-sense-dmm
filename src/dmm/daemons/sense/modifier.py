@@ -55,7 +55,7 @@ class SENSEModifierDaemon(DaemonBase):
                     "alias": req.rule_id
                 }
                 response = workflow_api.instance_modify(json.dumps(intent), sync="true")
-                req.mark_as(status="PROVISIONED", session=session)
+                req.update_transfer_status(status="PROVISIONED", session=session)
             except Exception as e:
                 logging.error(f"Failed to modify link for {req.rule_id}, {e}, will try again")
             

@@ -147,9 +147,10 @@ class RefreshSiteDBDaemon(DaemonBase):
             logging.debug(f"Got list of endpoints: {metadata} for {site_.sense_uri}")
             endpoint_list = json.loads(metadata["Metadata"].replace("'", "\""))
             for iprange, hostname in endpoint_list.items():
+                iprange = ipaddress.IPv6Network(iprange).compressed
                 if Endpoint.from_iprange(iprange=iprange, session=session) is None:
                     new_endpoint = Endpoint(site=site_,
-                                            ip_range=ipaddress.IPv6Network(iprange).compressed,
+                                            ip_range=iprange,
                                             hostname=hostname,
                                             in_use=False)
                     new_endpoint.save(session=session)

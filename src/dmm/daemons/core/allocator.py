@@ -42,7 +42,7 @@ class AllocatorDaemon(DaemonBase):
                     "dst_endpoint": req_fin.dst_endpoint,
                     "transfer_status": "ALLOCATED"
                 })
-                req_fin.mark_as(status="DELETED", session=session)
+                req_fin.update_transfer_status(status="DELETED", session=session)
                 return True
         return False
 
@@ -54,7 +54,7 @@ class AllocatorDaemon(DaemonBase):
         
         # Validate request has required fields
         if not new_request.src_site or not new_request.dst_site:
-            new_request.mark_as("FAILED", session=session)
+            new_request.update_transfer_status("FAILED", session=session)
             logging.error(f"Request {new_request.rule_id} is missing source or destination site")
             return
         
@@ -101,7 +101,7 @@ class AllocatorDaemon(DaemonBase):
                 self._free_allocation(new_request.dst_site.name, new_request.rule_id)
                 
             # Mark request as failed
-            new_request.mark_as("FAILED", session=session)
+            new_request.update_transfer_status("FAILED", session=session)
             logging.error(f"Failed to allocate endpoints for request {new_request.rule_id}: {str(e)}")
 
     def _get_allocation(self, sitename, alloc_name) -> str:
@@ -122,7 +122,7 @@ class AllocatorDaemon(DaemonBase):
         except Exception as e:
             logging.error(f"get_allocation: {str(e)}")
             addressApi.free_address(pool_name, name=alloc_name)
-            raise ValueError(f"Getting allocation failed for {sitename} and {alloc_name}")
+            raise e
 
     def _free_allocation(self, sitename, alloc_name) -> bool:
         """

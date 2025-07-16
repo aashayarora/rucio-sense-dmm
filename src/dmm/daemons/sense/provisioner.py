@@ -41,7 +41,7 @@ class SENSEProvisionerDaemon(DaemonBase):
                 status = req.sense_circuit_status
                 if re.match(r"(CREATE) - READY$", status):
                     logging.debug(f"Request {req.sense_uuid} already in ready status, marking as provisioned")
-                    req.mark_as(status="PROVISIONED", session=session)
+                    req.update_transfer_status(status="PROVISIONED", session=session)
                     continue
                 if not re.match(r"(CREATE) - COMPILED$", status):
                     logging.debug(f"Request {req.sense_uuid} not in compiled status, will try to provision again")
@@ -68,7 +68,7 @@ class SENSEProvisionerDaemon(DaemonBase):
                 if not self._good_response(response):
                     raise ValueError(f"SENSE query failed for {req.rule_id}")
                 workflow_api.instance_operate("provision", sync="true")
-                req.mark_as(status="PROVISIONED", session=session)
+                req.update_transfer_status(status="PROVISIONED", session=session)
             except Exception as e:
                 logging.error(f"Failed to provision link for {req.rule_id}, {e}, will try again")
     

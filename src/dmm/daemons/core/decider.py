@@ -141,7 +141,7 @@ class DeciderDaemon(DaemonBase):
                     allocated_bandwidth = int(data["bandwidth"])
             req.update_bandwidth(allocated_bandwidth, session=session)
             logging.info(f"Allocated bandwidth for request {req.rule_id}: {allocated_bandwidth}")
-            req.mark_as(status="DECIDED", session=session)
+            req.update_transfer_status(status="DECIDED", session=session)
 
     def _modify_existing_bandwidth(self, multi_graph, session) -> None:
         """
@@ -155,7 +155,7 @@ class DeciderDaemon(DaemonBase):
             if allocated_bandwidth != req.bandwidth:
                 req.update_bandwidth(allocated_bandwidth, session=session)
                 logging.info(f"Modified bandwidth for request {req.rule_id}: {allocated_bandwidth}")
-                req.mark_as(status="STALE", session=session)
+                req.update_transfer_status(status="STALE", session=session)
 
     @staticmethod
     def _good_response(response):

@@ -81,7 +81,7 @@ async def mark_finished(request: Request, session=None):
         req = DBRequest.from_id(rule_id, session=session)
         if req.transfer_status == "NOT_SENSE":
             return "This is not a SENSE rule, what are you trying to do?"
-        req.mark_as("FINISHED", session=session)
+        req.update_transfer_status("FINISHED", session=session)
         return "Request marked as finished"
     except Exception as e:
         logging.error(e)
@@ -115,7 +115,7 @@ async def reinitialize(request: Request, session=None):
         req = DBRequest.from_id(rule_id, session=session)
         if req.transfer_status == "NOT_SENSE":
             return "This is not a SENSE rule, what are you trying to do?"
-        req.mark_as("ALLOCATED", session=session)
+        req.update_transfer_status("ALLOCATED", session=session)
         return "Request reinitialized"
     except Exception as e:
         logging.error(e)

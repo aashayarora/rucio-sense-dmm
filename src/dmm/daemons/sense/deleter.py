@@ -30,6 +30,6 @@ class SENSEDeleterDaemon(DaemonBase):
                     logging.debug(f"Request not in ready status, will try to delete again")
                     raise AssertionError(f"Request {req.sense_uuid} not in compiled status, will try to delete again")
                 response = workflow_api.instance_delete(si_uuid=req.sense_uuid)
-                req.mark_as(status="DELETED", session=session)
+                req.update_transfer_status(status="DELETED", session=session)
             except Exception as e:
                 logging.error(f"Failed to delete link for {req.rule_id}, {e}, will try again")

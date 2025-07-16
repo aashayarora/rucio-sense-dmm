@@ -52,7 +52,7 @@ class Request(ModelBase, table=True):
         logging.debug(f"REQUEST QUERY: requests from rule_id: {rule_id}")
         return session.query(cls).filter(cls.rule_id == rule_id).first()
     
-    def mark_as(self, status, session=None):
+    def update_transfer_status(self, status, session=None):
         logging.debug(f"REQUEST UPDATE: marking request {self.rule_id} as {status}")
         self.transfer_status = status 
         self.save(session)
