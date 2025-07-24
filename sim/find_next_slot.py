@@ -254,6 +254,7 @@ def schedule_rules_with_slots(rules, bandwidth, reservations):
         List of (rule_index, start_time, duration, allocated_bandwidth) tuples
     """
     # Convert reservations to unavailable slots format
+    rules = sorted(rules, key=lambda x: (x[1], x[0]))
     unavailable_slots = set()
     max_time = 0
     for start_time, end_time, res_bw in reservations:
