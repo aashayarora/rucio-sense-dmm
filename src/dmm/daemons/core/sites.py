@@ -32,7 +32,7 @@ class RefreshSiteDBDaemon(DaemonBase):
             try:
                 site_ = self._get_or_create_site(site, site_objs, session)
                 site_objs.append(site_)
-                self._add_endpoints_for_site(site_, session)
+                self._add_endpoints_for_site(site_, client, session)
             except Exception as e:
                 logging.error(f"Error occurred in refresh_site_db for site {site}: {str(e)}")
 
@@ -125,7 +125,7 @@ class RefreshSiteDBDaemon(DaemonBase):
             logging.error(f"Error occurred while getting site info for {root_uri}: {str(e)}")
             raise
 
-    def _add_endpoints_for_site(self, site_, session) -> None:
+    def _add_endpoints_for_site(self, site_, client, session) -> None:
         """
         Get the endpoints for a given site
         """
@@ -146,10 +146,21 @@ class RefreshSiteDBDaemon(DaemonBase):
             metadata = json.loads(response["jsonTemplate"])
             logging.debug(f"Got list of endpoints: {metadata} for {site_.sense_uri}")
             endpoint_list = json.loads(metadata["Metadata"].replace("'", "\""))
+
+            logging.info(f"Getting protocol for the registered endpoints for {site_.name}")
+            rse = client.get_rse(site_.name)
+            if not rse:
+                raise ValueError(f"RSE {site_.name} not found in Rucio")
+            
+            protocol = rse.get('protocols', [{}])[0].get('scheme', None)
+            if not protocol:
+                raise ValueError(f"No protocol found for RSE {site_.name}")
+
             for iprange, hostname in endpoint_list.items():
                 iprange = ipaddress.IPv6Network(iprange).compressed
                 if Endpoint.from_iprange(iprange=iprange, session=session) is None:
                     new_endpoint = Endpoint(site=site_,
+                                            protocol=protocol,
                                             ip_range=iprange,
                                             hostname=hostname,
                                             in_use=False)
