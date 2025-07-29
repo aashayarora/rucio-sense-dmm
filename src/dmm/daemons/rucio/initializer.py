@@ -6,6 +6,9 @@ from dmm.models.site import Site
 from dmm.db.session import databased
 
 class RucioInitDaemon(DaemonBase):
+    """
+    Daemon to initialize Rucio rules and create requests in the database.
+    """
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
 

@@ -11,8 +11,10 @@ class Site(ModelBase, table=True):
     
     endpoints: List["Endpoint"] = Relationship(back_populates='site')
     
-    site_request_src: List["Request"] = Relationship(back_populates='src_site', sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"}) 
-    site_request_dst: List["Request"] = Relationship(back_populates='dst_site', sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"}) 
+    site_request_src: List["Request"] = Relationship(back_populates='src_site', 
+                                                     sa_relationship_kwargs={"foreign_keys": "[Request.src_site_]"}) 
+    site_request_dst: List["Request"] = Relationship(back_populates='dst_site', 
+                                                     sa_relationship_kwargs={"foreign_keys": "[Request.dst_site_]"}) 
 
     def __init__(self, **kwargs):
         super(Site, self).__init__(**kwargs)
