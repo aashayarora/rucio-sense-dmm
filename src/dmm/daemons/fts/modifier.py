@@ -128,6 +128,6 @@ class FTSModifierDaemon(DaemonBase):
             return None
 
     def _get_endpoints(self, req):
-        src_url_no_port = "davs://" + req.src_endpoint.hostname.split(":")[0]
-        dst_url_no_port = "davs://" + req.dst_endpoint.hostname.split(":")[0]
+        src_url_no_port = req.src_endpoint.protocol + "://" + req.src_endpoint.hostname.split(":")[0]
+        dst_url_no_port = req.dst_endpoint.protocol + "://" + req.dst_endpoint.hostname.split(":")[0]
         return src_url_no_port, dst_url_no_port

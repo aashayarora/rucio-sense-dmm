@@ -9,6 +9,7 @@ class Endpoint(ModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     site_name: Optional[str] = Field(default=None, foreign_key='site.name')
     ip_range: Optional[str] = Field(default=None, unique=True)
+    protocol: Optional[str] = Field(default=None)
     hostname: Optional[str] = Field(default=None)
     in_use: Optional[bool] = Field(default=None)
 
