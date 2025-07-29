@@ -5,6 +5,8 @@ from dmm.models.request import Request
 from dmm.models.site import Site
 from dmm.db.session import databased
 
+from dmm.core.config import config_get_int
+
 class RucioInitDaemon(DaemonBase):
     """
     Daemon to initialize Rucio rules and create requests in the database.
@@ -71,7 +73,7 @@ class RucioInitDaemon(DaemonBase):
             raise ValueError(f"Source or destination site not found for rule {rule['id']}.")
 
         priority = rule.get("priority")
-        fts_limit_desired = 20 # Default value for fts limits when the rule is added (before SENSE circuit is provisioned)
+        fts_limit_desired = config_get_int("fts", "default_num_streams", 20)
 
         activity = rule.get("activity", None) # activity for SENSE rules contains SENSE
         if not activity or "sense" not in activity.lower():
