@@ -35,6 +35,12 @@ class SENSECancellerDaemon(DaemonBase):
                         req.dst_endpoint.mark_inuse(in_use=False, session=session)
                         req.update_transfer_status(status="CANCELED", session=session)
                         continue
+                    if re.match(r"(CREATE) - COMPILED$", status):
+                        logging.debug(f"Request {req.sense_uuid} in compiled status, safe to delete")
+                        req.src_endpoint.mark_inuse(in_use=False, session=session)
+                        req.dst_endpoint.mark_inuse(in_use=False, session=session)
+                        req.update_transfer_status(status="CANCELED", session=session)
+                        continue
                     if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
                         raise ValueError(f"Cannot cancel an instance in status '{status}', will try to cancel again")
                     response = workflow_api.instance_operate("cancel", si_uuid=req.sense_uuid, sync="true", force=str("READY" not in status).lower())
