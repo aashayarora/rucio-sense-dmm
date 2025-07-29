@@ -23,6 +23,7 @@ cert=/opt/certs/cert.pem
 key=/opt/certs/key.pem
 monit_host=https://monit-grafana.cern.ch
 monit_auth_token=
+default_num_streams=20
 
 [fts-streams]
 T2_US_SDSC-T2_US_Caltech=400
