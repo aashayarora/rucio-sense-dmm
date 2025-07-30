@@ -131,6 +131,9 @@ def find_best_fit_groups(r_remaining, current_slot_area):
 def evaluate_blank2_area(best_over_sum, current_slot_area, current_slot_rect, next_slot_rect):
     x1, x2, y1, y2 = current_slot_rect
     width = x2 - x1
+    # deal with request is too small but with large bandwidth
+    if width <= 0:
+        return float('inf')
     overflow_h = (best_over_sum - current_slot_area) / width
     if not next_slot_rect:
         return inf
@@ -149,6 +152,76 @@ def apply_overflow_penalty_to_next_slots(slot_rects, slot_area_list, i, delta_h)
         else:
             slot_rects[j] = (x1, x2, y1, new_y2)
             slot_area_list[j] = (x2 - x1) * (new_y2 - y1)
+
+def allocate_requests_fill_bandwidth(slot_rect, requests):
+    allocation = []
+    wasted = []
+
+    x1, x2, y1, y2 = slot_rect
+
+    max_used_bandwidth = get_current_max_bandwidth(int(x1), int(x2))
+
+    effective_y1 = max(y1, max_used_bandwidth)
+    effective_height = y2 - effective_y1
+
+    # When we use best_over set situation
+    if effective_height <= 0 or not requests:
+        if effective_height <= 0:
+            wasted.append((x1, x2, y1, y2))
+        return allocation, wasted
+
+    total_size = sum(size for size, _ in requests)
+
+    if total_size == 0:
+        return allocation, wasted
+
+    total_width = total_size / effective_height
+    calculated_x2 = x1 + total_width
+
+    conflict_detected = False
+    for t in range(int(x1), min(int(calculated_x2) + 1, int(x2))):
+        if t in current_bandwidth_usage and current_bandwidth_usage[t] > effective_y1:
+            conflict_detected = True
+            break
+
+    if conflict_detected:
+        total_width = x2 - x1
+        calculated_x2 = x2
+        # recalculate the height
+        required_height = total_size / total_width
+        if effective_y1 + required_height > y2:
+            return allocation, [(x1, x2, y1, y2)]
+        effective_height = required_height
+
+    y_cursor = effective_y1
+    for size, rid in requests:
+        if effective_height > 0:
+            h = size / total_width
+            y_top = y_cursor + h
+
+            if y_top > y2:
+                y_top = y2
+                h = y_top - y_cursor
+
+            if h > 0:
+                allocation.append((x1, calculated_x2, y_cursor, y_top, rid))
+                update_bandwidth_usage(int(x1), int(calculated_x2), y_cursor, y_top)
+                #print(f"[Debug] Allocated r{rid}: ({x1}, {calculated_x2}, {y_cursor:.2f}, {y_top:.2f})")
+                y_cursor = y_top
+
+    # Calculate wasted area
+    if y_cursor < y2:
+        wasted.append((x1, calculated_x2, y_cursor, y2))
+        #print(f"[Debug] Wasted area: ({x1}, {calculated_x2}, {y_cursor:.2f}, {y2})")
+
+    return allocation, wasted
+
+
+def get_current_max_bandwidth_in_range(x1, x2):
+    max_used = 0
+    for t in range(int(x1), int(x2)):
+        max_used = max(max_used, current_bandwidth_usage.get(t, 0))
+    return max_used
 
 def find_r_slot_with_allocation(
     r_list: List[Tuple[int, int]],
@@ -179,14 +252,20 @@ def find_r_slot_with_allocation(
     compare_mode = True
 
     while r_remaining and i < len(slot_area_list):
+
+        if i >= len(slot_area_list) or i >= len(slot_rects):
+            break
         current_slot_area = slot_area_list[i]
         current_slot_rect = slot_rects[i]
+
+        x1, x2, y1, y2 = current_slot_rect
 
         if compare_mode:
             # check if all remaining requests fit
             if can_fit_all_remaining_requests(r_remaining, current_slot_area):
                 result.append(f"All remaining requests {r_remaining} fitted in the {ordinal(slot_index)} area")
-                alloc, waste = allocate_requests_in_slot(current_slot_rect, r_remaining)
+
+                alloc, waste = allocate_requests_fill_bandwidth(current_slot_rect, r_remaining)
                 allocation.extend(alloc)
                 wasted.extend(waste)
                 return result, allocation, wasted, total_available_area, total_r_area
@@ -195,7 +274,7 @@ def find_r_slot_with_allocation(
             slot_index += 1
             compare_mode = False
             continue
-        #find best fit for current slot
+
         best_under, best_under_sum, best_over, best_over_sum = find_best_fit_groups(r_remaining, current_slot_area)
 
         #Calculate waste
@@ -292,7 +371,7 @@ def schedule_rules_with_slots(rules, bandwidth, reservations):
     
     # Sort by original rule index to match expected output format
     results.sort(key=lambda x: x[0])
-    
+
     return results
 
 if __name__ == "__main__":
