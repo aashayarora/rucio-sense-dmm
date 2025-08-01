@@ -59,9 +59,9 @@ class RefreshSiteDBDaemon(DaemonBase):
             for site_obj in site_objs:
                 if site_obj == site_:
                     continue
-                vlan_range_start, vlan_range_end = self._get_vlan_range(site_obj, site_) # vlan ranges for site pairs can be different and need to be configured
-                link_capacity = self._get_link_capacity(site_info, vlan_range_start, vlan_range_end) # get the link capacity from SENSE
-                mesh = Mesh(site1=site_obj, site2=site_, vlan_range_start=vlan_range_start, vlan_range_end=vlan_range_end, link_capacity=link_capacity)
+                vlan_range = self._get_vlan_range(site_obj, site_) # vlan ranges for site pairs can be different and need to be configured
+                link_capacity = self._get_link_capacity(site_info, vlan_range) # get the link capacity from SENSE
+                mesh = Mesh(site1=site_obj, site2=site_, vlan_range=vlan_range, link_capacity=link_capacity)
                 mesh.save(session=session)
 
             logging.debug(f"Site {site} added to database")
@@ -75,19 +75,23 @@ class RefreshSiteDBDaemon(DaemonBase):
         Get the vlan range for a given site pair, if not found, default to any
         """
         vlan_range = config_get("vlan-ranges", f"{site_obj.name}-{site_.name}", default="any") # try to get A-B
-        if vlan_range == "any":
+        if (vlan_range == "any"):
             vlan_range = config_get("vlan-ranges", f"{site_.name}-{site_obj.name}", default="any") # try to get B-A
-        if vlan_range == "any":
-            logging.debug(f"No vlan range found for {site_obj.name} and {site_.name}, will default to any") # not found, keep it "any"
-            return -1, -1
         logging.debug(f"Using vlan range {vlan_range} for {site_obj.name} and {site_.name}")
-        return vlan_range.split("-")[0], vlan_range.split("-")[1]
+        return vlan_range
 
-    def _get_link_capacity(self, site_info, vlan_range_start, vlan_range_end):
-        for peer_point in site_info["peer_points"]:
-            if str(vlan_range_start) in peer_point["peer_vlan_pool"] and str(vlan_range_end) in peer_point["peer_vlan_pool"]:
-                return int(peer_point["port_capacity"]) # return the port capacity for the vlan range chosen, if not found, return the first one
-        return int(site_info["peer_points"][0]["port_capacity"])
+    def _get_link_capacity(self, site_info, vlan_range):
+        if ("-" in vlan_range):
+            vlan_range_start, vlan_range_end = map(int, vlan_range.split("-"))
+            logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
+        elif ("," in vlan_range):
+            vlan_range_start, vlan_range_end = min(map(int, vlan_range.split(","))), max(map(int, vlan_range.split(",")))
+            logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
+        # for peer_point in site_info["peer_points"]:
+            # if str(vlan_range_start) in peer_point["peer_vlan_pool"] and str(vlan_range_end) in peer_point["peer_vlan_pool"]:
+                # return int(peer_point["port_capacity"]) # return the port capacity for the vlan range chosen, if not found, return the first one
+        # return int(site_info["peer_points"][0]["port_capacity"])
+        return 100000.
 
     def _get_site_uris(self, site) -> tuple:
         """

@@ -42,7 +42,7 @@ class SENSEProvisionerDaemon(DaemonBase):
                 if not re.match(r"(CREATE) - COMPILED$", status):
                     logging.debug(f"Request {req.sense_uuid} not in compiled status, will try to provision again")
                     continue
-                vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
+                vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 response = self._provision_request(req, vlan_range, session=session)
                 req.update_transfer_status(status="PROVISIONED", session=session)
             except Exception as e:
