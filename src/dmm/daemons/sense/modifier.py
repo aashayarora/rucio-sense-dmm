@@ -30,7 +30,7 @@ class SENSEModifierDaemon(DaemonBase):
             if req.sense_uuid is None:
                 continue
             try:
-                vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
+                vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 workflow_api = WorkflowCombinedApi()
                 workflow_api.si_uuid = req.sense_uuid
                 status = req.sense_circuit_status

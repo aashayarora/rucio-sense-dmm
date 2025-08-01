@@ -28,7 +28,7 @@ class SENSEStagerDaemon(DaemonBase):
             return
         for req in reqs_allocated:
             try:
-                vlan_range = Mesh.vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
+                vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 if vlan_range is None:
                     logging.error(f"No VLAN range found for {req.rule_id}, skipping staging")
                     continue

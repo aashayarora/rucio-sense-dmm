@@ -8,8 +8,7 @@ class Mesh(ModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     site_1: Optional[str] = Field(default=None, foreign_key='site.name')
     site_2: Optional[str] = Field(default=None, foreign_key='site.name')
-    vlan_range_start: Optional[int] = Field(default=None)
-    vlan_range_end: Optional[int] = Field(default=None)
+    vlan_range: Optional[str] = Field(default=None)
     link_capacity: Optional[int] = Field(default=None)
 
     site1: Optional["Site"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Mesh.site_1]"})
@@ -19,7 +18,7 @@ class Mesh(ModelBase, table=True):
         super().__init__(**kwargs)
 
     @classmethod
-    def vlan_range(cls, site_1, site_2, session=None):
+    def get_vlan_range(cls, site_1, site_2, session=None):
         site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
         site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
 
@@ -30,9 +29,7 @@ class Mesh(ModelBase, table=True):
         ).first()
         if not mesh:
             return None
-        if mesh.vlan_range_start == -1 or mesh.vlan_range_end == -1:
-            return "any"
-        return f"{mesh.vlan_range_start}-{mesh.vlan_range_end}"
+        return mesh.vlan_range
 
     @classmethod
     def max_bandwidth(cls, site, session=None):
