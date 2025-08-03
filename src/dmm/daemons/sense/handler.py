@@ -25,11 +25,11 @@ class SENSEHandlerDaemon(DaemonBase):
         if not reqs:
             return
         
-        workflow_api = WorkflowCombinedApi()
-        
         for req in reqs:
             if req.sense_uuid is None:
                 continue
+
+            workflow_api = WorkflowCombinedApi()
 
             status = workflow_api.instance_get_status(si_uuid=req.sense_uuid) or "UNKNOWN"
             req.update_sense_circuit_status(status=status, session=session)
@@ -58,7 +58,7 @@ class SENSEHandlerDaemon(DaemonBase):
             "required": "true"
         }
 
-        uri_response = workflow_api.manifest_create(json.dumps(manifest_json))
+        uri_response = workflow_api.manifest_create(json.dumps(manifest_json), si_uuid=req.sense_uuid)
         if not self._good_response(uri_response):
             logging.error(f"Failed to affiliate endpoints with SENSE instance {req.sense_uuid}") 
 
