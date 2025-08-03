@@ -13,6 +13,7 @@ class Request(ModelBase, table=True):
     modified_priority: Optional[int] = Field(default=None)
     available_bandwidth: Optional[float] = Field(default=None)
     bandwidth: Optional[float] = Field(default=None)
+    previous_bandwidth: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None)
     fts_limit_current: Optional[int] = Field(default=0)
@@ -70,6 +71,11 @@ class Request(ModelBase, table=True):
     def update_bandwidth(self, bandwidth, session=None):
         logging.debug(f"REQUEST UPDATE: updating bandwidth for request {self.rule_id} to {bandwidth}")
         self.bandwidth = bandwidth
+        self.save(session)
+
+    def update_previous_bandwidth(self, previous_bandwidth, session=None):
+        logging.debug(f"REQUEST UPDATE: updating previous bandwidth for request {self.rule_id} to {previous_bandwidth}")
+        self.previous_bandwidth = previous_bandwidth
         self.save(session)
 
     def update_priority(self, priority, session=None):
