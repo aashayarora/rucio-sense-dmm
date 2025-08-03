@@ -106,9 +106,9 @@ async def update_fts_limit(request: Request, session=None):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to update FTS limit")
 
-@api.post("/reinitialize")
+@api.post("/reinitialize_sense")
 @databased
-async def reinitialize(request: Request, session=None):
+async def reinitialize_sense(request: Request, session=None):
     try:
         data = await request.json()
         rule_id = data.get("rule_id")
@@ -120,6 +120,22 @@ async def reinitialize(request: Request, session=None):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to reinitialize request")
+
+@api.post("/reinitialize_request")
+@databased
+async def reinitialize_request(request: Request, session=None):
+    try:
+        data = await request.json()
+        rule_id = data.get("rule_id")
+        req = DBRequest.from_id(rule_id, session=session)
+        if req.transfer_status == "NOT_SENSE":
+            return "This is not a SENSE rule, what are you trying to do?"
+        req.update_transfer_status("INIT", session=session)
+        return "Request reinitialized"
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Failed to reinitialize request")
+
 
 @api.post("/refresh_sites")
 async def refresh_sites():
