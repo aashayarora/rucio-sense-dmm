@@ -34,8 +34,8 @@ class SENSEHandlerDaemon(DaemonBase):
             status = workflow_api.instance_get_status(si_uuid=req.sense_uuid) or "UNKNOWN"
             req.update_sense_circuit_status(status=status, session=session)
 
-            # update sense_provisioned_at if the status is READY for monit
-            if req.sense_provisioned_at is None and re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
+            # update sense_provisioned_at if the status is COMPILED for monit
+            if req.sense_provisioned_at is None and re.match(r"(CREATE) - (COMPILED|COMMITTED|COMMITTING|READY)$", status):
                 req.update({"sense_provisioned_at": datetime.now()})
 
                 self._affiliate_endpoints(req, workflow_api)

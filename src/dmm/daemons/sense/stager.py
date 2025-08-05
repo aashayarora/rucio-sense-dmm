@@ -75,6 +75,7 @@ class SENSEStagerDaemon(DaemonBase):
             }
             response = workflow_api.instance_create(json.dumps(intent))
             if not self._good_response(response):
+                workflow_api.instance_delete(si_uuid=response["service_uuid"])
                 raise ValueError(f"SENSE req staging failed for {req.rule_id}")
             return response
         except Exception as e:
