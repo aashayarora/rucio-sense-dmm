@@ -34,15 +34,15 @@ class SENSEModifierDaemon(DaemonBase):
         for req in reqs_stale:
             # Check if there are any other modifications in progress
             all_reqs = Request.from_status(status=["STALE", "PROVISIONED"], session=session)
-            for req in all_reqs:
-                if re.match(r"(MODIFY) - (COMMITTING|COMMITTED)", req.sense_circuit_status):
+            for req_ in all_reqs:
+                if re.match(r"(MODIFY) - (COMMITTING|COMMITTED)", req_.sense_circuit_status):
                     raise AssertionError("Another modification is in progress, skipping this run")
             if req.sense_uuid is None:
                 continue
             try:
                 status = req.sense_circuit_status
                 if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
-                    raise ValueError(f"Cannot modify an instance in status '{status}', will try to cancel again")
+                    raise ValueError(f"Cannot modify an instance in status '{status}', will try to modify again")
                 vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 response = self._modify_request(req, vlan_range, session=session)
                 
