@@ -16,6 +16,7 @@ class Request(ModelBase, table=True):
     previous_bandwidth: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None)
+    sense_affiliated: Optional[bool] = Field(default=False)
     fts_limit_current: Optional[int] = Field(default=0)
     fts_limit_desired: Optional[int] = Field(default=None)
     sense_provisioned_at: Optional[datetime] = Field(default=None)

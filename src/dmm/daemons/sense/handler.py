@@ -34,12 +34,16 @@ class SENSEHandlerDaemon(DaemonBase):
             status = workflow_api.instance_get_status(si_uuid=req.sense_uuid) or "UNKNOWN"
             req.update_sense_circuit_status(status=status, session=session)
 
-            # update sense_provisioned_at if the status is COMPILED for monit
-            if req.sense_provisioned_at is None and re.match(r"(CREATE) - (COMPILED|COMMITTED|COMMITTING|READY)$", status):
-                req.update({"sense_provisioned_at": datetime.now()})
-
+            if not req.sense_affiliated and re.match(r"(CREATE) - (COMPILED|COMMITTED|COMMITTING|READY)$", status):
+                logging.debug(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
                 self._affiliate_endpoints(req, workflow_api)
+                req.update({"sense_affiliated": True}, session=session)
 
+            # update sense_provisioned_at if the status is COMPILED for monit
+            if not req.sense_provisioned_at and re.match(r"(CREATE) - READY$", status):
+                logging.debug(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
+                req.update({"sense_provisioned_at": datetime.now()})
+            
                 fts_limit = config_get_int("fts-streams", f"{req.src_site.name}-{req.dst_site.name}", 200)
                 req.update_fts_limit_desired(limit=fts_limit, session=session)
 

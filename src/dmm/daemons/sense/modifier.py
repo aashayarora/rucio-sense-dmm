@@ -28,7 +28,7 @@ class SENSEModifierDaemon(DaemonBase):
             return
         
         # Sort requests by previous bandwidth to prioritize modifications which reduce bandwidth
-        # This ensures that we handle requests that are reducing bandwidth first
+        # This ensures that make bandwidth available for other requests
         reqs_stale = sorted(reqs_stale, key=lambda x: x.bandwidth - x.previous_bandwidth)
 
         for req in reqs_stale:
@@ -36,14 +36,13 @@ class SENSEModifierDaemon(DaemonBase):
             all_reqs = Request.from_status(status=["STALE", "PROVISIONED"], session=session)
             for req in all_reqs:
                 if re.match(r"(MODIFY) - (COMMITTING|COMMITTED)", req.sense_circuit_status):
-                    logging.debug("Another modification is in progress, skipping this run")
-                    return
+                    raise AssertionError("Another modification is in progress, skipping this run")
             if req.sense_uuid is None:
                 continue
             try:
                 status = req.sense_circuit_status
-                if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status) or not re.match(r"(MODIFY) - FAILED$", status):
-                    raise ValueError(f"Cannot cancel an instance in status '{status}', will try to cancel again")
+                if not re.match(r"(CREATE|MODIFY|REINSTATE) - READY$", status):
+                    raise ValueError(f"Cannot modify an instance in status '{status}', will try to cancel again")
                 vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 response = self._modify_request(req, vlan_range, session=session)
                 
