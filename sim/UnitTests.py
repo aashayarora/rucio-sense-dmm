@@ -226,7 +226,6 @@ class TestWithData(unittest.TestCase):
             self.assertEqual(actual[3], expected[3])  # r_id
 
     def test_small_requests_simplified(self):
-        """测试小请求场景 - 简化版"""
         unavailable_slots = {(10, 15, 30)}
         total_slots = {(0, 20, 60)}
         request_r = [(50, 1), (40, 2), (30, 3)]
