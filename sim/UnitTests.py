@@ -180,71 +180,215 @@ class TestOverflowHandling(unittest.TestCase):
         result = evaluate_blank2_area(300, 250, (0, 10, 0, 25), None)
         self.assertEqual(result, float('inf'))
 
-    def test_apply_overflow_penalty_to_next_slots(self):
-        """Test applying overflow penalty to subsequent slots"""
-        slot_rects = [(0, 10, 0, 100), (10, 20, 0, 100), (20, 30, 0, 100)]
-        slot_area_list = [1000, 1000, 1000]
-        delta_h = 25
+# Here are the test for the data sets, ALL of the out of range tests should FAIL (hasn't finish the code yet)
 
-        apply_overflow_penalty_to_next_slots(slot_rects, slot_area_list, 0, delta_h)
+def convert_to_simplified(allocations):
+    simplified = []
+    for x1, x2, y1, y2, rid in allocations:
+        height = y2 - y1
+        simplified.append((x1, x2, height, rid))
+    return simplified
 
-        self.assertTrue(len(slot_rects) >= 1)
+def run_functions(unavailable_slots, total_slots, request_r):
+    slot_rects = get_next_slot(unavailable_slots, total_slots)
+    slot_areas = compute_slot_areas(slot_rects)
+    request_areas = r_sorted_by_area(request_r)
+
+    result_texts, allocations, waste_rects, total_available_area, total_r_area = find_r_slot_with_allocation(
+        request_areas, slot_areas, slot_rects, unavailable_slots, request_r
+    )
+    return result_texts, allocations, waste_rects, total_available_area, total_r_area
+
+class TestWithData(unittest.TestCase):
+    def test_no_reservations_simplified(self):
+        unavailable_slots = set()
+        total_slots = {(0, 10, 60)}
+        request_r = [(100, 1), (150, 2)]
+
+        result_texts, allocations, waste_rects, total_available_area, total_r_area = run_functions(
+            unavailable_slots, total_slots, request_r
+        )
+        # (x1, x2, height, r_id)
+        expected_allocations = [
+            (0, 5, 20, 1),
+            (0, 3.75, 40, 2),
+        ]
+
+        actual_simplified = convert_to_simplified(allocations)
+        actual_sorted = sorted(actual_simplified, key=lambda x: x[3])
+        expected_sorted = sorted(expected_allocations, key=lambda x: x[3])
+        self.assertEqual(len(actual_sorted), len(expected_sorted))
+
+        for actual, expected in zip(actual_sorted, expected_sorted):
+            self.assertAlmostEqual(actual[0], expected[0], places=2)  # x1
+            self.assertAlmostEqual(actual[1], expected[1], places=2)  # x2
+            self.assertAlmostEqual(actual[2], expected[2], places=2)  # height
+            self.assertEqual(actual[3], expected[3])  # r_id
+
+    def test_small_requests_simplified(self):
+        """测试小请求场景 - 简化版"""
+        unavailable_slots = {(10, 15, 30)}
+        total_slots = {(0, 20, 60)}
+        request_r = [(50, 1), (40, 2), (30, 3)]
+
+        result_texts, allocations, waste_rects, total_available_area, total_r_area = run_functions(
+            unavailable_slots, total_slots, request_r
+        )
+        # (x1, x2, height, r_id)
+        # allocation: r1:(0,5,10,1) r2:(0,2,20,2) r3:(0,1,30,3)
+        expected_allocations = [
+            (0, 5, 10, 1),
+            (0, 2, 20, 2),
+            (0, 1, 30, 3),
+        ]
+
+        actual_simplified = convert_to_simplified(allocations)
+
+        # sort by r_id
+        actual_sorted = sorted(actual_simplified, key=lambda x: x[3])
+        expected_sorted = sorted(expected_allocations, key=lambda x: x[3])
+
+        self.assertEqual(total_r_area, 120)  # 50+40+30
+        self.assertEqual(len(actual_sorted), len(expected_sorted))
+
+        for actual, expected in zip(actual_sorted, expected_sorted):
+            self.assertAlmostEqual(actual[0], expected[0], places=2)  # x1
+            self.assertAlmostEqual(actual[1], expected[1], places=2)  # x2
+            self.assertAlmostEqual(actual[2], expected[2], places=2)  # height
+            self.assertEqual(actual[3], expected[3])  # r_id
+
+    """
+        Overflow need to test: 
+        # Will fail at this moment
+        1. Considering in best fit (less than or equal to)
+        2. When there are requests have the same size, fit in the higher priority one
+    """
+    def test_requests_overflow_with_best_fit_1(self): # Will fail at this moment
+        unavailable_slots = {(5, 10, 20)}
+        total_slots = {(0, 15, 40)}
+        request_r = [(100, 1), (120, 2), (50, 3), (70, 5), (50, 2), (90, 1)]  # Requests (size, priority)
+
+        result_texts, allocations, waste_rects, total_available_area, total_r_area = run_functions(
+            unavailable_slots, total_slots, request_r
+        )
+
+        # Check area calculation
+        self.assertEqual(total_r_area, 650)  # 200+300+150
+        self.assertLess(total_available_area, total_r_area, "OVERFLOW")
+
+        expected_allocations = [
+            (0, 5, 20, 1),
+            (0, 15, 8, 2),
+            (0, 15, 3.33, 3),
+            (0, 15, 4.06, 4),
+            (0, 15, 3.33, 5)
+        ]
+        actual_simplified = convert_to_simplified(allocations)
+        actual_sorted = sorted(actual_simplified, key=lambda x: x[3])
+        expected_sorted = sorted(expected_allocations, key=lambda x: x[3])
+
+        self.assertEqual(len(actual_sorted), 2)
+        for actual, expected in zip(actual_sorted, expected_sorted):
+            self.assertAlmostEqual(actual[0], expected[0], places=2)  # x1
+            self.assertAlmostEqual(actual[1], expected[1], places=2)  # x2
+            self.assertAlmostEqual(actual[2], expected[2], places=2)  # height
+            self.assertEqual(actual[3], expected[3])
+
+        # Check if the code print out "R6 is out of range"
+        r6_rejected = any("R6" in text and "out of range" in text.lower()
+                          for text in result_texts)
+        self.assertTrue(r6_rejected, "R6 should be reported as out of range")
+
+    def test_requests_overflow_requests_same_size(self): # Will fail at this moment
+        unavailable_slots = {(5, 10, 20)}
+        total_slots = {(0, 15, 40)}
+        request_r = [(200, 1), (120, 2), (200, 3)]  # Requests (size, priority)
+
+        result_texts, allocations, waste_rects, total_available_area, total_r_area = run_functions(
+            unavailable_slots, total_slots, request_r
+        )
+
+        # Check area calculation
+        self.assertEqual(total_r_area, 650)  # 200+300+150
+        self.assertLess(total_available_area, total_r_area, "OVERFLOW")
+        # Check R2 successfully fitted in (x1, x2, height, r_id)(0, 5, 24, 2)
+        # Check R3 successfully fitted in (0, 15, 13.3, 3)
+        expected_allocations = [
+            (0, 5, 24, 2),
+            (0, 15, 13.33, 3)
+        ]
+        actual_simplified = convert_to_simplified(allocations)
+        actual_sorted = sorted(actual_simplified, key=lambda x: x[3])
+        expected_sorted = sorted(expected_allocations, key=lambda x: x[3])
+
+        self.assertEqual(len(actual_sorted), 2)
+        for actual, expected in zip(actual_sorted, expected_sorted):
+            self.assertAlmostEqual(actual[0], expected[0], places=2)  # x1
+            self.assertAlmostEqual(actual[1], expected[1], places=2)  # x2
+            self.assertAlmostEqual(actual[2], expected[2], places=2)  # height
+            self.assertEqual(actual[3], expected[3])
+
+        # Check if the code print out "R1 is out of range"
+        r1_rejected = any("R1" in text and "out of range" in text.lower()
+                          for text in result_texts)
+        self.assertTrue(r1_rejected, "R1 should be reported as out of range")
+
+    def test_requests_overflow_multiple_requests_same_size(self): # Will fail at this moment
+        unavailable_slots = {(5, 10, 20)}
+        total_slots = {(0, 15, 40)}
+        request_r = [(200, 1), (120, 2), (200, 3), (200, 9)]  # Requests (size, priority)
+
+        result_texts, allocations, waste_rects, total_available_area, total_r_area = run_functions(
+            unavailable_slots, total_slots, request_r
+        )
+
+        # Check area calculation
+        self.assertEqual(total_r_area, 650)  # 200+300+150
+        self.assertLess(total_available_area, total_r_area, "OVERFLOW")
+        # Check R2 successfully fitted in (x1, x2, height, r_id)(0, 5, 24, 2)
+        # Check R3 successfully fitted in (0, 15, 13.3, 3)
+        expected_allocations = [
+            (0, 5, 24, 2),
+            (0, 15, 13.33, 4)
+        ]
+        actual_simplified = convert_to_simplified(allocations)
+        actual_sorted = sorted(actual_simplified, key=lambda x: x[3])
+        expected_sorted = sorted(expected_allocations, key=lambda x: x[3])
+
+        self.assertEqual(len(actual_sorted), 2)
+        for actual, expected in zip(actual_sorted, expected_sorted):
+            self.assertAlmostEqual(actual[0], expected[0], places=2)  # x1
+            self.assertAlmostEqual(actual[1], expected[1], places=2)  # x2
+            self.assertAlmostEqual(actual[2], expected[2], places=2)  # height
+            self.assertEqual(actual[3], expected[3])
+
+        # Check if the code print out "R1 is out of range"
+        r1_rejected = any("R1" in text and "out of range" in text.lower()
+                          for text in result_texts)
+        self.assertTrue(r1_rejected, "R1 should be reported as out of range")
+        r3_rejected = any("R3" in text and "out of range" in text.lower()
+                          for text in result_texts)
+        self.assertTrue(r3_rejected, f"R3 should be reported as out of range. Result texts: {result_texts}")
 
 
-class TestFirstAreaFits(unittest.TestCase):
-    """Testing of all requests fit in first area (perfectly fit/ fit in)"""
+    # Todo: finish the following tests
+    # With exact area of available slots
 
-    def setUp(self):
-        global current_bandwidth_usage
-        from find_least_waste import current_bandwidth_usage
-        current_bandwidth_usage.clear()
-        self.test_unavailable = {(10, 13, 50), (15, 30, 75)}
-        self.test_total = {(0, 30, 120)}
-        # available = {(0, 10, 0, 120), (0, 10, 0, 50), (0, 15, 50, 120), (0, 15, 50, 25), (0, 30, 75, 120)}
+    # Fits in Slot 1
 
-    def test_requests_can_fit_in_slot1(self):
-        """Test case 1: requests can fit in slot 1"""
-        requests = [(200, 1), (150, 2)]
+    # sum of requests area just over slot 1
 
-        slots = get_next_slot(self.test_unavailable, self.test_total)
-        slot_areas = compute_slot_areas(slots)
-        request_areas = r_sorted_by_area(requests)
+    # sum of requests area over slot 1
 
-        result_texts, allocations, waste_rects, total_available, total_required = find_r_slot_with_allocation(
-            request_areas, slot_areas, slots)
+    # best_under for slot 2
 
-        self.assertGreater(len(allocations), 0)
-        self.assertLessEqual(total_required, total_available)
+    # best_over for slot 2
 
-        first_slot_allocations = [alloc for alloc in allocations if alloc[0] == slots[0][0]]
-        self.assertGreater(len(first_slot_allocations), 0)
+    # other requests fits in slot 3
 
-        print(f"Test 1 - Can fit in slot 1:")
-        print(f"  Total required: {total_required}, Total available: {total_available}")
-        print(f"  Allocations: {len(allocations)}")
-        for alloc in allocations:
-            print(f"    R{alloc[4]}: time [{alloc[0]:.1f}, {alloc[1]:.1f}], bandwidth [{alloc[2]:.1f}, {alloc[3]:.1f}]")
+    # rest of the requests can fit in last slot
 
-    def test_requests_perfectly_fit_in_slot1(self):
-        """Test case 2: requests perfectly fit in slot 1"""
-        slots = get_next_slot(self.test_unavailable, self.test_total)
-        slot_areas = compute_slot_areas(slots)
-
-        if len(slot_areas) > 0:
-            first_slot_area = slot_areas[0]
-            requests = [(first_slot_area // 2, 1), (first_slot_area - first_slot_area // 2, 2)]
-            request_areas = r_sorted_by_area(requests)
-
-            result_texts, allocations, waste_rects, total_available, total_required = find_r_slot_with_allocation(
-                request_areas, slot_areas, slots)
-
-            total_allocated_area = sum(area for area, _ in request_areas)
-            self.assertEqual(total_allocated_area, first_slot_area)
-
-            print(f"Test 2 - Perfect fit in slot 1:")
-            print(f"  First slot area: {first_slot_area}")
-            print(f"  Total request area: {total_allocated_area}")
-            print(f"  Perfect fit: {total_allocated_area == first_slot_area}")
+    # rest of the requests cannot fit in last slot
 
 
 
@@ -261,7 +405,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run bandwidth allocation tests')
     parser.add_argument('--class', dest='test_class', help='Run specific test class')
     parser.add_argument('--method', dest='test_method', help='Run specific test method')
-
+    unittest.main(verbosity=2, stream=sys.stdout, buffer=False)
     args = parser.parse_args()
 
     if args.test_method:
