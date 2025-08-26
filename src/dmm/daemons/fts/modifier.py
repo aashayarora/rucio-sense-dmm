@@ -46,7 +46,8 @@ class FTSModifierDaemon(DaemonBase):
     def _delete_request(self, req, session):
         if req.fts_limit_current != 0:
             logging.debug(f"Deleting FTS limits for request {req.rule_id}")
-            self._delete_config(req)
+            self._delete_link_config(req)
+            self._delete_se_config(req)
             req.update_fts_limit_current(limit=0, session=session)
 
     def _modify_link_config(self, req, max_active, min_active):
@@ -57,7 +58,7 @@ class FTSModifierDaemon(DaemonBase):
         data = self._prepare_se_data(req, max_inbound, max_outbound)
         return self._send_request("/config/se", data)
 
-    def _delete_config(self, req):
+    def _delete_link_config(self, req):
         src_url_no_port, dst_url_no_port = self._get_endpoints(req)
         try:
             response_link = requests.delete(
@@ -66,7 +67,23 @@ class FTSModifierDaemon(DaemonBase):
             )
             return response_link.status_code in [200, 201, 204]
         except:
-            logging.exception("Error while deleting FTS configs")
+            logging.exception("Error while deleting FTS link configs")
+            return None
+        
+    def _delete_se_config(self, req):
+        src_url_no_port, dst_url_no_port = self._get_endpoints(req)
+        try:
+            response_src = requests.delete(
+                self.fts_host + "/config/se/" + urllib.parse.quote(src_url_no_port, safe=""),
+                headers=self.headers, cert=self.cert, verify=False
+            )
+            response_dst = requests.delete(
+                self.fts_host + "/config/se/" + urllib.parse.quote(dst_url_no_port, safe=""),
+                headers=self.headers, cert=self.cert, verify=False
+            )
+            return (response_src.status_code in [200, 201, 204]) and (response_dst.status_code in [200, 201, 204])
+        except:
+            logging.exception("Error while deleting FTS SE configs")
             return None
 
     def _prepare_link_data(self, req, max_active, min_active):
