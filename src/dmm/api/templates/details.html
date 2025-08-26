@@ -46,7 +46,8 @@
             <div class="details-row">
                 <button type="button" onclick="markAsFinished('{{ data.rule_id }}')">Mark as Finished</button>
                 <button type="button" onclick="updateFtsLimit('{{ data.rule_id }}')">Update FTS Limit</button>
-                <button type="button" onclick="reInitialize('{{ data.rule_id }}')">Re-Initialize SENSE</button>
+                <button type="button" onclick="reInitializeSense('{{ data.rule_id }}')">Re-Initialize SENSE</button>
+                <button type="button" onclick="reInitializeRequest('{{ data.rule_id }}')">Re-Initialize Request</button>
             </div>
             <script>
                 function markAsFinished(ruleId) {
@@ -84,8 +85,8 @@
                     }
                 }
 
-                function reInitialize(ruleId) {
-                    fetch('/reinitialize', {
+                function reInitializeSense(ruleId) {
+                    fetch('/reinitialize_sense', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -97,6 +98,22 @@
                     .catch(error => {
                         console.error('Error:', error);
                         alert("Failed to re-initialize SENSE.");
+                    });
+                }
+
+                function reInitializeRequest(ruleId) {
+                    fetch('/reinitialize_request', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ rule_id: ruleId })
+                    })
+                    .then(response => response.text())
+                    .then(data => alert(data))
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert("Failed to re-initialize request.");
                     });
                 }
             </script>

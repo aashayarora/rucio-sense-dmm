@@ -25,11 +25,11 @@ class SENSEHandlerDaemon(DaemonBase):
         if not reqs:
             return
         
-        workflow_api = WorkflowCombinedApi()
-        
         for req in reqs:
             if req.sense_uuid is None:
                 continue
+
+            workflow_api = WorkflowCombinedApi()
 
             status = workflow_api.instance_get_status(si_uuid=req.sense_uuid) or "UNKNOWN"
             req.update_sense_circuit_status(status=status, session=session)
