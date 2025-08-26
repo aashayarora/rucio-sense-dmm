@@ -16,6 +16,9 @@ class DaemonBase:
         raise NotImplementedError("Subclasses must implement this method")
 
     def run_daemon(self, process, lock, **kwargs):
+        if self.frequency < 0:
+            logging.info(f"{self.__class__.__name__} frequency is set to negative, not starting the daemon.")
+            return
         while True:
             with lock:
                 logging.debug(f"{self.__class__.__name__} acquired lock")

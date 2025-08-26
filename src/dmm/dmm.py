@@ -52,13 +52,13 @@ class DMM:
         self.port = config_get_int("dmm", "port")
 
         # frequencies at which daemons run (in seconds)
-        self.rucio_frequency = config_get_int("daemons", "rucio", default=60)
+        self.rucio_frequency = config_get_int("daemons", "rucio", default=60, constraint="nonneg")
+        self.dmm_frequency = config_get_int("daemons", "dmm", default=60, constraint="nonneg")
+        self.sense_frequency = config_get_int("daemons", "sense", default=60, constraint="nonneg")
+        self.monit_frequency = config_get_int("daemons", "monit", default=60, constraint="nonneg")
+        self.sites_frequency = config_get_int("daemons", "db", default=7200, constraint="nonneg")
         self.fts_frequency = config_get_int("daemons", "fts", default=60)
-        self.dmm_frequency = config_get_int("daemons", "dmm", default=60)
-        self.sense_frequency = config_get_int("daemons", "sense", default=60)
-        self.monit_frequency = config_get_int("daemons", "monit", default=60)
-        self.sites_frequency = config_get_int("daemons", "db", default=7200)
-        
+
         self.lock = Lock()
         
         try:
