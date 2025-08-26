@@ -56,29 +56,17 @@ class SENSEHandlerDaemon(DaemonBase):
 
     def _affiliate_endpoints(self, req, workflow_api):
         # Affiliate endpoints with this instance
-        manifest_json = {
-            "AnyNewVlanXC": "?subnet?",
-            "sparql": "SELECT ?subnet WHERE { ?svc mrs:providesSubnet ?subnet } LIMIT 1",
-            "required": "true"
-        }
-
-        uri_response = workflow_api.manifest_create(json.dumps(manifest_json))
-        if not self._good_response(uri_response):
-            logging.error(f"Failed to affiliate endpoints with SENSE instance {req.sense_uuid}") 
-
-        addapi_uri = json.loads(uri_response["jsonTemplate"])["AnyNewVlanXC"]
-
         address_api = AddressApi()
 
         src_pool_name = f'RUCIO_Site_BGP_Subnet_Pool-{req.src_site.name}'
         exploded_source_ip = self.format_ipv6(ipaddress.IPv6Network(req.src_endpoint.ip_range))
         logging.debug(f"Affiliating source endpoint {exploded_source_ip} with SENSE instance {req.sense_uuid} in address pool {src_pool_name}")
-        address_api.affiliate_address(pool=src_pool_name, uri=addapi_uri, address=exploded_source_ip)
+        address_api.affiliate_address(pool=src_pool_name, uri=req.source_affiliation_uri, address=exploded_source_ip)
 
         dst_pool_name = f'RUCIO_Site_BGP_Subnet_Pool-{req.dst_site.name}'
         exploded_dest_ip = self.format_ipv6(ipaddress.IPv6Network(req.dst_endpoint.ip_range))
         logging.debug(f"Affiliating destination endpoint {exploded_dest_ip} with SENSE instance {req.sense_uuid} in address pool {dst_pool_name}")
-        address_api.affiliate_address(pool=dst_pool_name, uri=addapi_uri, address=exploded_dest_ip)
+        address_api.affiliate_address(pool=dst_pool_name, uri=req.destination_affiliation_uri, address=exploded_dest_ip)
     
     @staticmethod
     def _good_response(response):

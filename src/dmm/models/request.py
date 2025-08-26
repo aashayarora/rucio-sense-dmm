@@ -15,6 +15,8 @@ class Request(ModelBase, table=True):
     bandwidth: Optional[float] = Field(default=None)
     previous_bandwidth: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
+    source_affiliation_uri: Optional[str] = Field(default=None)
+    destination_affiliation_uri: Optional[str] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None)
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_limit_current: Optional[int] = Field(default=0)
@@ -67,6 +69,16 @@ class Request(ModelBase, table=True):
     def update_sense_uuid(self, sense_uuid, session=None):
         logging.debug(f"REQUEST UPDATE: updating sense UUID for request {self.rule_id} to {sense_uuid}")
         self.sense_uuid = sense_uuid
+        self.save(session)
+
+    def update_source_affiliation_uri(self, uri, session=None):
+        logging.debug(f"REQUEST UPDATE: updating source affiliation URI for request {self.rule_id} to {uri}")
+        self.source_affiliation_uri = uri
+        self.save(session)
+    
+    def update_destination_affiliation_uri(self, uri, session=None):
+        logging.debug(f"REQUEST UPDATE: updating destination affiliation URI for request {self.rule_id} to {uri}")
+        self.destination_affiliation_uri = uri
         self.save(session)
 
     def update_bandwidth(self, bandwidth, session=None):
