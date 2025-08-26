@@ -27,8 +27,7 @@ class SENSEDeleterDaemon(DaemonBase):
                 workflow_api = WorkflowCombinedApi()
                 status = req.sense_circuit_status
                 if not re.match(r"(CANCEL) - READY$", status):
-                    logging.debug(f"Request not in ready status, will try to delete again")
-                    raise AssertionError(f"Request {req.sense_uuid} not in compiled status, will try to delete again")
+                    raise AssertionError(f"Request {req.sense_uuid} not in cancel - ready status, will try to delete again")
                 response = workflow_api.instance_delete(si_uuid=req.sense_uuid)
                 req.update_transfer_status(status="DELETED", session=session)
             except Exception as e:

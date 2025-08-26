@@ -36,7 +36,10 @@ class SENSEStagerDaemon(DaemonBase):
                 logging.debug(f"Staging returned response {response}")
                 sense_uuid = response["service_uuid"]
                 req.update_sense_uuid(sense_uuid, session=session)
-                available_bandwidth = int(response.get("queries")[1].get("results")[0].get("bandwidth")) / 1000 ** 2
+                # available_bandwidth = int(response.get("queries")[1].get("results")[0].get("bandwidth")) / 1000 ** 2
+                available_bandwidth = 100000
+                req.update_source_affiliation_uri(response.get("queries")[2].get("results")[0].get("ipv6_subnet_uri"), session=session)
+                req.update_destination_affiliation_uri(response.get("queries")[2].get("results")[1].get("ipv6_subnet_uri"), session=session)
                 req.update_available_bandwidth(available_bandwidth, session=session)
                 req.update_transfer_status(status="STAGED", session=session)
             except Exception as e:
@@ -69,12 +72,21 @@ class SENSEStagerDaemon(DaemonBase):
                             "end-before": "+24h"
                         }
                     ]
+                    },
+                    {
+                    "ask": "extract-result-values",
+                    "options": [
+                        {
+                            "sparql": "SELECT DISTINCT ?ipv6_subnet_uri ?ipv6_subnet WHERE {?route mrs:routeFrom ?ipv6_subnet_uri. ?ipv6_subnet_uri mrs:type 'ipv6-prefix-list'. ?ipv6_subnet_uri mrs:value ?ipv6_subnet}"
+                        }
+                    ]
                     }
                 ],
                 "alias": req.rule_id
             }
             response = workflow_api.instance_create(json.dumps(intent))
             if not self._good_response(response):
+                workflow_api.instance_delete(si_uuid=response["service_uuid"])
                 raise ValueError(f"SENSE req staging failed for {req.rule_id}")
             return response
         except Exception as e:

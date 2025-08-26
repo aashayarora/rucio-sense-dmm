@@ -13,8 +13,12 @@ class Request(ModelBase, table=True):
     modified_priority: Optional[int] = Field(default=None)
     available_bandwidth: Optional[float] = Field(default=None)
     bandwidth: Optional[float] = Field(default=None)
+    previous_bandwidth: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
+    source_affiliation_uri: Optional[str] = Field(default=None)
+    destination_affiliation_uri: Optional[str] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None)
+    sense_affiliated: Optional[bool] = Field(default=False)
     fts_limit_current: Optional[int] = Field(default=0)
     fts_limit_desired: Optional[int] = Field(default=None)
     sense_provisioned_at: Optional[datetime] = Field(default=None)
@@ -67,9 +71,24 @@ class Request(ModelBase, table=True):
         self.sense_uuid = sense_uuid
         self.save(session)
 
+    def update_source_affiliation_uri(self, uri, session=None):
+        logging.debug(f"REQUEST UPDATE: updating source affiliation URI for request {self.rule_id} to {uri}")
+        self.source_affiliation_uri = uri
+        self.save(session)
+    
+    def update_destination_affiliation_uri(self, uri, session=None):
+        logging.debug(f"REQUEST UPDATE: updating destination affiliation URI for request {self.rule_id} to {uri}")
+        self.destination_affiliation_uri = uri
+        self.save(session)
+
     def update_bandwidth(self, bandwidth, session=None):
         logging.debug(f"REQUEST UPDATE: updating bandwidth for request {self.rule_id} to {bandwidth}")
         self.bandwidth = bandwidth
+        self.save(session)
+
+    def update_previous_bandwidth(self, previous_bandwidth, session=None):
+        logging.debug(f"REQUEST UPDATE: updating previous bandwidth for request {self.rule_id} to {previous_bandwidth}")
+        self.previous_bandwidth = previous_bandwidth
         self.save(session)
 
     def update_priority(self, priority, session=None):

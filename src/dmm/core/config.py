@@ -64,12 +64,16 @@ def config_get_bool(section, option, default=None) -> bool:
             logging.error(f"Cannot convert option '{option}' in section '{section}' to boolean")
             raise
 
-def config_get_int(section, option, default=None) -> int:
+def config_get_int(section, option, default=None, constraint=None) -> int:
     """
     Get an integer from the configuration file.
     """
     try:
-        return int(config_get(section, option, extract_function=ConfigParser.ConfigParser.getint))
+        value = int(config_get(section, option, extract_function=ConfigParser.ConfigParser.getint))
+        if constraint:
+            if constraint == "pos" and value <= 0:
+                raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint '{constraint}'")
+        return value
     except:
         if default is not None:
             return default

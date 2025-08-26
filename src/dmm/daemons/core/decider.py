@@ -153,6 +153,7 @@ class DeciderDaemon(DaemonBase):
                 if "rule_id" in data and data["rule_id"] == req.rule_id:
                     allocated_bandwidth = int(data["bandwidth"])
             if allocated_bandwidth != req.bandwidth:
+                req.update_previous_bandwidth(req.bandwidth, session=session)
                 req.update_bandwidth(allocated_bandwidth, session=session)
                 logging.info(f"Modified bandwidth for request {req.rule_id}: {allocated_bandwidth}")
                 req.update_transfer_status(status="STALE", session=session)
