@@ -74,10 +74,14 @@ class RefreshSiteDBDaemon(DaemonBase):
         """
         Get the vlan range for a given site pair, if not found, default to any
         """
-        vlan_range = config_get("vlan-ranges", f"{site_obj.name}-{site_.name}", default="any") # try to get A-B
-        if (vlan_range == "any"):
-            vlan_range = config_get("vlan-ranges", f"{site_.name}-{site_obj.name}", default="any") # try to get B-A
-        logging.debug(f"Using vlan range {vlan_range} for {site_obj.name} and {site_.name}")
+        try:
+            vlan_range = config_get("vlan-ranges", f"{site_obj.name}-{site_.name}", default="any") # try to get A-B
+            if (vlan_range == "any"):
+                vlan_range = config_get("vlan-ranges", f"{site_.name}-{site_obj.name}", default="any") # try to get B-A
+            logging.debug(f"Using vlan range {vlan_range} for {site_obj.name} and {site_.name}")
+        except Exception as e:
+            logging.error(f"Error occurred while getting vlan range for {site_obj.name} and {site_.name}: {str(e)}")
+            vlan_range = "any"
         return vlan_range
 
     def _get_link_capacity(self, site_info, vlan_range):
