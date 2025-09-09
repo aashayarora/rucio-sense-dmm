@@ -1,26 +1,9 @@
-import logging
 import sys
 import os
 import argparse
+import logging
 
-argparser = argparse.ArgumentParser()
-
-argparser.add_argument("--log-level", default="debug", help="Set the log level")
-argparser.add_argument("--config", help="Path to the configuration file")
-args = argparser.parse_args()
-
-if args.config:
-    os.environ["DMM_CONFIG"] = args.config
-
-# logging needs to be configured before importing other modules
-logging.basicConfig(
-    format="(%(threadName)s) [%(asctime)s] %(levelname)s: %(message)s",
-    datefmt="%m-%d-%Y %H:%M:%S %p",
-    level=getattr(logging, args.log_level.upper()),
-    handlers=[logging.FileHandler(filename="dmm.log"), logging.StreamHandler(sys.stdout)]
-)
-
-from multiprocessing import Lock
+import multiprocessing
 import uvicorn # web server for the frontend
 
 from rucio.client import Client
@@ -59,14 +42,22 @@ class DMM:
         self.sites_frequency = config_get_int("daemons", "db", default=7200, constraint="nonneg")
         self.fts_frequency = config_get_int("daemons", "fts", default=60)
 
-        self.lock = Lock()
-        
+        self.lock = multiprocessing.Lock()
+
         try:
             self.rucio_client = Client()
         except Exception as e:
             logging.error(f"Failed to initialize Rucio client: {e}")
             raise ConnectionError("Failed to initialize Rucio client, exiting...")
     
+    @staticmethod
+    def run_server(port):
+        try:
+            uvicorn.run(api, host="0.0.0.0", port=port)
+        except:
+            logging.error(f"Failed to start frontend on {port}, trying default port 31601")
+            uvicorn.run(api, host="0.0.0.0", port=31601)
+
     def start(self) -> None:
         logging.info("Starting Daemons")
         sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
@@ -103,15 +94,22 @@ class DMM:
         canceller.start(self.lock)
         deleter.start(self.lock)
 
-        try:
-            # start the frontend and listen on all interfaces
-            uvicorn.run(api, host="0.0.0.0", port=self.port)
-        except:
-            # if port is not available, try default port 31601
-            logging.error(f"Failed to start frontend on {self.port}, trying default port 31601")
-            uvicorn.run(api, host="0.0.0.0", port=31601)
+        frontend_process = multiprocessing.Process(target=self.run_server, args=(self.port,))
+        frontend_process.start()
 
 def main():
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--config", help="Path to the configuration file")
+
+    args = argparser.parse_args()
+
+    if args.config:
+        os.environ["DMM_CONFIG"] = args.config
+
     logging.info("Starting DMM")
     dmm = DMM()
     dmm.start()
+        
+
+if __name__ == "__main__":
+    main()

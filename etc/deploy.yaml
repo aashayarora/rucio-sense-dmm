@@ -28,7 +28,7 @@ spec:
         - name: POSTGRES_PASSWORD
           value: "dmm"
       - name: dmm
-        image: aaarora/dmm-dev:latest
+        image: aaarora/dmm:latest
         resources:
           requests:
             memory: "4Gi"

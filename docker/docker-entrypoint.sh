@@ -7,4 +7,4 @@ echo "Waiting for DB to be ready"
 /wait-for-it.sh -h $db_host -p $db_port
 echo "Done..."
 
-dmm --log-level debug
+dmm
