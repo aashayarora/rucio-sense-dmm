@@ -1,6 +1,7 @@
 import logging
 import os
-import time
+import asyncio
+import re
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from dmm.db.session import databased
 from dmm.models.request import Request as DBRequest
 from dmm.models.site import Site
+from dmm.core.config import config_get_int
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 from rucio.client import Client
@@ -27,20 +29,33 @@ api.mount("/static", StaticFiles(directory=static_folder), name="static")
 @databased
 async def handle_client(rule_id: str, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
-    try:
-        req = DBRequest.from_id(rule_id, session=session)
-        if req:
-            if req.src_endpoint and req.dst_endpoint:
-                result = {"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname}
-                return JSONResponse(content=result)
+    max_retries = config_get_int("rucio", "max_retries", default=2)
+
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            req = DBRequest.from_id(rule_id, session=session)
+            if req:
+                if req.src_endpoint and req.dst_endpoint:
+                    result = {"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname}
+                    return JSONResponse(content=result)
+                else:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logging.info(f"Request {rule_id} not yet allocated, retrying in 15 seconds (attempt {retry_count}/{max_retries})")
+                        await asyncio.sleep(15)
+                    else:
+                        raise HTTPException(status_code=404, detail="Request not yet allocated after retries")
             else:
-                time.sleep(15)
-                return HTTPException(status_code=404, detail="Request not yet allocated")
-        else:
-            raise HTTPException(status_code=404, detail="Request not found")
-    except Exception as e:
-        logging.error(f"Error processing client request: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+                raise HTTPException(status_code=404, detail="Request not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logging.error(f"Error processing client request: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+    
+    raise HTTPException(status_code=404, detail="Request not yet allocated")
 
 @api.get("/")
 @databased

@@ -44,11 +44,17 @@ def config_get(section, option, default=None, extract_function=ConfigParser.Conf
     logging.debug(f"Getting config option {option} from section {section}")
     try:
         return extract_function(get_config(), section, option)
+    except ConfigParser.NoSectionError:
+        if default is not None:
+            return default
+        else:
+            logging.error(f"No section '{section}' found, and no default provided")
+            raise
     except ConfigParser.NoOptionError:
         if default is not None:
             return default
         else:
-            logging.error(f"No option '{option}' in section '{section}'")
+            logging.error(f"No option '{option}' found in section '{section}', and no default provided")
             raise
 
 def config_get_bool(section, option, default=None) -> bool:
@@ -56,27 +62,45 @@ def config_get_bool(section, option, default=None) -> bool:
     Get a boolean from the configuration file.
     """
     try:
-        return bool(config_get(section, option, extract_function=ConfigParser.ConfigParser.getboolean))
-    except:
+        return config_get(section, option, extract_function=ConfigParser.ConfigParser.getboolean)
+    except ConfigParser.NoSectionError:
         if default is not None:
             return default
         else:
-            logging.error(f"Cannot convert option '{option}' in section '{section}' to boolean")
+            logging.error(f"No section '{section}' found, and no default provided")
             raise
+    except ConfigParser.NoOptionError:
+        if default is not None:
+            return default
+        else:
+            logging.error(f"No '{option}' in section '{section}', and no default provided")
+            raise
+    except ValueError as ve:
+        logging.error(str(ve))
+        raise
 
 def config_get_int(section, option, default=None, constraint=None) -> int:
     """
     Get an integer from the configuration file.
     """
     try:
-        value = int(config_get(section, option, extract_function=ConfigParser.ConfigParser.getint))
+        value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getint)
         if constraint:
             if constraint == "pos" and value <= 0:
                 raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint '{constraint}'")
         return value
-    except:
+    except ConfigParser.NoSectionError:
         if default is not None:
             return default
         else:
-            logging.error(f"Cannot convert option '{option}' in section '{section}' to integer")
+            logging.error(f"No section '{section}' found, and no default provided")
             raise
+    except ConfigParser.NoOptionError:
+        if default is not None:
+            return default
+        else:
+            logging.error(f"No '{option}' in section '{section}', and no default provided")
+            raise
+    except ValueError as ve:
+        logging.error(str(ve))
+        raise
