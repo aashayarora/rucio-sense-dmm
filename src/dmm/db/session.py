@@ -18,15 +18,16 @@ def get_engine():
             port = config_get("db", "db_port", default="5432")
             db_name = config_get("db", "db_name", default="dmm")
             _ENGINE = create_engine(
-            f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{db_name}"
+                f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{db_name}",
+                pool_size=1000, max_overflow=0
             )
         elif db_type == "sqlite":
             db_file = config_get("db", "db_file", default="dmm.db")
             _ENGINE = create_engine(
-            f"sqlite:///{db_file}"
+                f"sqlite:///{db_file}"
             )
         else:
-            raise ValueError(f"Unknown database type: {db_type}")
+            raise ValueError(f"Unknown database type: {db_type}, supported types are 'postgresql' and 'sqlite'")
     assert _ENGINE
     return _ENGINE
 
