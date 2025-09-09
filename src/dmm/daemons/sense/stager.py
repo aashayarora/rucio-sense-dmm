@@ -36,8 +36,8 @@ class SENSEStagerDaemon(DaemonBase):
                 logging.debug(f"Staging returned response {response}")
                 sense_uuid = response["service_uuid"]
                 req.update_sense_uuid(sense_uuid, session=session)
-                # available_bandwidth = int(response.get("queries")[1].get("results")[0].get("bandwidth")) / 1000 ** 2
-                available_bandwidth = 100000
+                available_bandwidth = int(response.get("queries")[1].get("results")[0].get("bandwidth")) / 1000 ** 2
+                # available_bandwidth = 100000
                 req.update_source_affiliation_uri(response.get("queries")[2].get("results")[0].get("ipv6_subnet_uri"), session=session)
                 req.update_destination_affiliation_uri(response.get("queries")[2].get("results")[1].get("ipv6_subnet_uri"), session=session)
                 req.update_available_bandwidth(available_bandwidth, session=session)

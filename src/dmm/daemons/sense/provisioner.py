@@ -34,6 +34,10 @@ class SENSEProvisionerDaemon(DaemonBase):
         for req in reqs_decided:
             if req.sense_uuid is None:
                 continue
+            all_reqs = Request.from_status(status=["DECIDED", "PROVISIONED"], session=session)
+            for req_ in all_reqs:
+                if re.match(r"(CREATE|MODIFY) - (COMMITTING|COMMITTED)", req_.sense_circuit_status):
+                    raise AssertionError("Another provisioning is in progress, skipping this run")
             try:
                 status = req.sense_circuit_status
                 if re.match(r"(CREATE) - READY$", status):

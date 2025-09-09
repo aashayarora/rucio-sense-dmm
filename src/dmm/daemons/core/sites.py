@@ -74,14 +74,10 @@ class RefreshSiteDBDaemon(DaemonBase):
         """
         Get the vlan range for a given site pair, if not found, default to any
         """
-        try:
-            vlan_range = config_get("vlan-ranges", f"{site_obj.name}-{site_.name}", default="any") # try to get A-B
-            if (vlan_range == "any"):
-                vlan_range = config_get("vlan-ranges", f"{site_.name}-{site_obj.name}", default="any") # try to get B-A
-            logging.debug(f"Using vlan range {vlan_range} for {site_obj.name} and {site_.name}")
-        except Exception as e:
-            logging.error(f"Error occurred while getting vlan range for {site_obj.name} and {site_.name}: {str(e)}")
-            vlan_range = "any"
+        vlan_range = config_get("vlan-ranges", f"{site_obj.name}-{site_.name}", default="any") # try to get A-B
+        if (vlan_range == "any"):
+            vlan_range = config_get("vlan-ranges", f"{site_.name}-{site_obj.name}", default="any") # try to get B-A
+        logging.debug(f"Using vlan range {vlan_range} for {site_obj.name} and {site_.name}")
         return vlan_range
 
     def _get_link_capacity(self, site_info, vlan_range):
@@ -91,11 +87,14 @@ class RefreshSiteDBDaemon(DaemonBase):
         elif ("," in vlan_range):
             vlan_range_start, vlan_range_end = min(map(int, vlan_range.split(","))), max(map(int, vlan_range.split(",")))
             logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
-        # for peer_point in site_info["peer_points"]:
-            # if str(vlan_range_start) in peer_point["peer_vlan_pool"] and str(vlan_range_end) in peer_point["peer_vlan_pool"]:
-                # return int(peer_point["port_capacity"]) # return the port capacity for the vlan range chosen, if not found, return the first one
-        # return int(site_info["peer_points"][0]["port_capacity"])
-        return 100000.
+        if vlan_range == "any":
+            return int(site_info["peer_points"][0]["port_capacity"])
+        else:
+            for peer_point in site_info["peer_points"]:
+                if str(vlan_range_start) in peer_point["peer_vlan_pool"] and str(vlan_range_end) in peer_point["peer_vlan_pool"]:
+                    return int(peer_point["port_capacity"]) # return the port capacity for the vlan range chosen, if not found, return the first one
+            return int(site_info["peer_points"][0]["port_capacity"])
+        # return 100000.
 
     def _get_site_uris(self, site) -> tuple:
         """
