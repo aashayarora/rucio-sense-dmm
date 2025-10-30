@@ -911,9 +911,6 @@ def allocate_rule_in_merged_slot(
     borrowable_rects = merged_info.get('borrowable_rects', [])
     all_rects = component_rects + borrowable_rects
 
-    #print(f"\n=== Allocating {len(rule)} rules in Irregular Polygon ===")
-    #print(f"All available rects: {all_rects}")
-    #print(f"Unavailable slots: {unavailable_slots}")
 
     # Find the time and bandwidth boundaries
     min_time = min(rect[0] for rect in all_rects)
@@ -1433,7 +1430,6 @@ def run_find_least_waste(unavailable_slots, main_slot, request_r):
     result_texts, allocations, waste_rects, total_available_area, total_r_area = find_r_slot_with_allocation(
         request_areas, slot_areas, slot_rects, unavailable_slots, request_r, time, bandwidth
     )
-    #print("Final allocation details:")
     for x1, x2, y1, y2, rid in allocations:
         size, priority = request_r[rid-1]
         print(f"  R{rid}: time [{x1:.1f}, {x2:.1f}], bandwidth [{y1:.2f}, {y2:.2f}]")
@@ -1591,12 +1587,6 @@ def run_find_least_waste_v2(unavailable_slots, main_slot, request_r, max_iterati
             allocated_size = sum(request_r[rid-1][0] for _, _, _, _, rid in allocations)
             total_requested = sum(size for size, _ in request_r)
 
-            #print(f"  Total rules: {len(request_r)}")
-            #print(f"  Allocated: {len(allocations)} rules")
-            #print(f"  Dropped: {len(dropped_indices)} rules")
-            #print(f"  Iterations: {iteration}")
-            #print(f"  Allocated size: {allocated_size}/{total_requested} ({allocated_size/total_requested*100:.1f}%)")
-
             visualize_integrated_schedule(request_r, unavailable_slots, total_slots,
                                          allocations, waste_rects)
 
@@ -1627,7 +1617,7 @@ def run_find_least_waste_v2(unavailable_slots, main_slot, request_r, max_iterati
     return allocations, dropped_indices, iteration
 
 
-def smart_allocation(unavailable_slots, main_slot, request_r):
+def final_allocation(unavailable_slots, main_slot, request_r):
     """
     Try run_find_least_waste first, if there is conflict, then do v2
     """
