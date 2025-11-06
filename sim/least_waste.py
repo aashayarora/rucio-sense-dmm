@@ -30,27 +30,31 @@ def get_next_slot(unavailable: Slots1D, total: Slots1D) -> List[Rect2D]:
     """
     if not total: return []
     total_region = next(iter(total))
+    # t_x1, t_x2: the range of the total time
+    # t_h: the range of the total bandwidth
     t_x1, t_x2, t_h = total_region
 
-    available_regions = [(t_x1, t_x2, 0, t_h)]
+    #available_regions = [(t_x1, t_x2, 0, t_h)]
 
+    #sort the reservation part based on x1. To avoid the reservation data is un-sorted
     unavailable_sorted = sorted(unavailable, key=lambda u: (u[0], u[2]))
 
     result_regions = []; current_y = 0
-
+    # Same with total slot range, u_x1, u_x2: range of the current reservation time
+    # u_h : range of the current reservation height/bandwidth
     for u_x1, u_x2, u_h in unavailable_sorted:
         # If the current unavailable slot is lower than previous slot, skip
         if u_h <= current_y:
             continue
-
+        # Get the outer_slot
         if u_x1 > t_x1:
             result_regions.append((t_x1, u_x1, current_y, t_h))
-
+        # Get the inner_slot
         if u_h > current_y:
             result_regions.append((t_x1, u_x1, current_y, u_h))
 
         current_y = u_h
-
+    # Get the last slot
     if current_y < t_h:
         result_regions.append((t_x1, t_x2, current_y, t_h))
 
