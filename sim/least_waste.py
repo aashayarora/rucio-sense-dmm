@@ -1,16 +1,11 @@
 import numpy as np
-from typing import Iterable, Set, Tuple, List
-from itertools import combinations
-from math import inf
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+from typing import Iterable, Set, Tuple, List; from itertools import combinations; from math import inf
+import matplotlib.pyplot as plt; import matplotlib.patches as patches
 
 # Type definitions
 Rect1D = Tuple[int, int, int]  # (start_time, end_time, bandwidth)
 Rect2D = Tuple[int, int, int, int]  # (x1, x2, y1, y2)
-Slots1D = Iterable[Rect1D]
-Slots2D = Set[Rect2D]
-
+Slots1D = Iterable[Rect1D]; Slots2D = Set[Rect2D]
 # Tracking Bandwidth Usage
 current_bandwidth_usage = {}  # {time_point: current_max_bandwidth_used}
 
@@ -21,12 +16,10 @@ def get_current_max_bandwidth(x1, x2):
         max_used = max(max_used, current_bandwidth_usage.get(t, 0))
     return max_used
 
-
 def update_bandwidth_usage(x1, x2, y1, y2):
     """Update the bandwidth usage for the time range [x1, x2]"""
     for t in range(x1, x2):
         current_bandwidth_usage[t] = max(current_bandwidth_usage.get(t, 0), y2)
-
 
 def get_next_slot(unavailable: Slots1D, total: Slots1D) -> List[Rect2D]:
     """
@@ -35,8 +28,7 @@ def get_next_slot(unavailable: Slots1D, total: Slots1D) -> List[Rect2D]:
     # Example: Slot 2 is included by Slot 1, Slot 4 in included by Slot 3 ...
     #
     """
-    if not total:
-        return []
+    if not total: return []
     total_region = next(iter(total))
     t_x1, t_x2, t_h = total_region
 
@@ -44,8 +36,7 @@ def get_next_slot(unavailable: Slots1D, total: Slots1D) -> List[Rect2D]:
 
     unavailable_sorted = sorted(unavailable, key=lambda u: (u[0], u[2]))
 
-    result_regions = []
-    current_y = 0
+    result_regions = []; current_y = 0
 
     for u_x1, u_x2, u_h in unavailable_sorted:
         # If the current unavailable slot is lower than previous slot, skip
@@ -71,11 +62,9 @@ def get_next_slot(unavailable: Slots1D, total: Slots1D) -> List[Rect2D]:
     # Sort by (y1, x1, -y2, x2) as specified
     return sorted(valid_regions, key=lambda r: (r[2], r[0], -r[3], r[1]))
 
-
 def compute_slot_areas(slots: List[Rect2D]) -> List[int]:
     """Compute area of each slot for available list"""
     return [(x2 - x1) * (y2 - y1) for x1, x2, y1, y2 in slots]
-
 
 def r_sorted_by_area(rules: List[Tuple[int, int]], reverse: bool = False) -> List[Tuple[int, int]]:
     """
@@ -87,11 +76,9 @@ def r_sorted_by_area(rules: List[Tuple[int, int]], reverse: bool = False) -> Lis
     r_with_index = [(size, idx + 1) for idx, (size, _) in enumerate(rules)]
     return sorted(r_with_index, key=lambda x: x[0], reverse=reverse)
 
-
 def ordinal(n: int) -> str:
     """Return ordinal string, e.g., 1->1st, 2->2nd"""
     return f"{n}{'st' if n == 1 else 'nd' if n == 2 else 'rd' if n == 3 else 'th'}"
-
 
 def can_fit_all_remaining_rule(r_remaining, current_slot_area):
     """
@@ -103,7 +90,6 @@ def can_fit_all_remaining_rule(r_remaining, current_slot_area):
     #print(f"Can fit all: {r_sum <= current_slot_area}")
     return r_sum <= current_slot_area
 
-
 def allocate_rule_in_slot(slot_rect, rule):
     """
     Fixed allocation function that correctly handles bandwidth stacking
@@ -111,8 +97,7 @@ def allocate_rule_in_slot(slot_rect, rule):
     slot_rect: the coordinate of the slot (x1, x2, y1, y2)
     rule: rule list/ best fit rule list
     """
-    allocation = []
-    wasted = []
+    allocation, wasted = [], []
     x1, x2, y1, y2 = slot_rect
     width = x2 - x1
 
@@ -134,7 +119,6 @@ def allocate_rule_in_slot(slot_rect, rule):
 
     return allocation, wasted
 
-
 def allocate_rule_in_slot_best_under(slot_rect, rule, rule_r):
     """
     Situation: When we are having best_under rule set
@@ -142,11 +126,9 @@ def allocate_rule_in_slot_best_under(slot_rect, rule, rule_r):
     Based on height, calculate width
     Need to fill out this slot's bandwidth
     """
-    allocation = []
-    wasted = []
+    allocation, wasted = [], []
     x1, x2, y1, y2 = slot_rect
     slot_width = x2 - x1
-
 
     # If there is no rule can be fitted, marked as wasted
     if not rule:
@@ -156,9 +138,7 @@ def allocate_rule_in_slot_best_under(slot_rect, rule, rule_r):
     current_max_used = get_current_max_bandwidth(int(x1), int(x2))
 
     # get initial y and the max_height
-    y_cursor = max(y1, current_max_used)
-    available_height = y2 - y_cursor
-
+    y_cursor = max(y1, current_max_used); available_height = y2 - y_cursor
     # Calculate the sum of priority: make the bandwidth fit based on priority ratio if capable
     total_priority = sum(rule_r[rid - 1][1] for area, rid in rule)
 
@@ -179,14 +159,9 @@ def allocate_rule_in_slot_best_under(slot_rect, rule, rule_r):
         # Situation: while applying priority, the calculated width might larger than the slot width
         # Then use the actual_width to calculate the better height
         if actual_width > slot_width:
-            actual_width = slot_width
-            allocated_height = r_area / actual_width
-
-        x_end = x1 + actual_width
-        y_end = y_cursor + allocated_height
-
-        allocation.append((x1, x_end, y_cursor, y_end, rid))
-        update_bandwidth_usage(int(x1), int(x_end), y_cursor, y_end)
+            actual_width = slot_width; allocated_height = r_area / actual_width
+        x_end = x1 + actual_width; y_end = y_cursor + allocated_height
+        allocation.append((x1, x_end, y_cursor, y_end, rid)); update_bandwidth_usage(int(x1), int(x_end), y_cursor, y_end)
 
         y_cursor = y_end
 
@@ -199,7 +174,6 @@ def allocate_rule_in_slot_best_under(slot_rect, rule, rule_r):
         wasted.append((x1, x1 + max_width_used, y_cursor, y2))
 
     return allocation, wasted
-
 
 def find_best_over_and_best_under(r_remaining, current_slot_area):
     """
@@ -228,7 +202,6 @@ def find_best_over_and_best_under(r_remaining, current_slot_area):
             break
     return best_under, best_under_sum, best_over, best_over_sum
 
-
 def evaluate_blank2_area(best_over_sum, current_slot_area, current_slot_rect, next_slot_rect):
     """
     Determine the waste while using the second condition: Best over
@@ -243,7 +216,6 @@ def evaluate_blank2_area(best_over_sum, current_slot_area, current_slot_rect, ne
     # get the width of waste area
     next_x1, next_x2, _, _ = next_slot_rect
     return overflow_h * abs(next_x2 - x2)
-
 
 def apply_overflow_to_next_slots(slot_rects, slot_area_list, i, delta_h):
     """
@@ -260,12 +232,10 @@ def apply_overflow_to_next_slots(slot_rects, slot_area_list, i, delta_h):
         new_y2 = y2 - delta_h
         # print(f"new_y2:{new_y2}")
         if new_y2 <= y1:
-            slot_rects.pop(j)
-            slot_area_list.pop(j)
+            slot_rects.pop(j); slot_area_list.pop(j)
         else:
             slot_rects[j] = (x1, x2, y1, new_y2)
             slot_area_list[j] = (x2 - x1) * (new_y2 - y1)
-
 
 def calculate_priority_bandwidth_ratio(original_prio, priority):
     """
@@ -273,9 +243,7 @@ def calculate_priority_bandwidth_ratio(original_prio, priority):
     """
     # check if the rule list have the same priority, if yes, with same width
     unique_priorities = sorted(set(priority), reverse=True)
-    if len(unique_priorities) == 1:
-        return 1.0
-
+    if len(unique_priorities) == 1: return 1.0
     return float(original_prio)
 
 def has_bandwidth_conflict(x1, x2, y1, y2, unavailable_slots):
@@ -286,8 +254,7 @@ def has_bandwidth_conflict(x1, x2, y1, y2, unavailable_slots):
     """
     for ux1, ux2, uh in unavailable_slots:
         if not (x2 <= ux1 or x1 >= ux2):
-            if not (y1 >= uh or y2 <= 0):
-                return True
+            if not (y1 >= uh or y2 <= 0): return True
     return False
 
 def conflict_detected_outer_slot(slot_rect, rule, rule_r: List[Tuple[int, int]]):
@@ -303,8 +270,7 @@ def conflict_detected_outer_slot(slot_rect, rule, rule_r: List[Tuple[int, int]])
     rule: list of rules [(area, rid), ...]
     rule_r: original rule list [(size/area, priority), ...]
     """
-    allocation = []
-    wasted = []
+    allocation, wasted = [], []
     x1, x2, y1, y2 = slot_rect
     slot_width = x2 - x1
 
@@ -313,10 +279,7 @@ def conflict_detected_outer_slot(slot_rect, rule, rule_r: List[Tuple[int, int]])
         return allocation, wasted
 
     # Get current max bandwidth usage
-    current_max_used = get_current_max_bandwidth(int(x1), int(x2))
-    effective_y1 = max(y1, current_max_used)
-    available_height = y2 - effective_y1
-
+    current_max_used = get_current_max_bandwidth(int(x1), int(x2)); effective_y1 = max(y1, current_max_used); available_height = y2 - effective_y1
     if available_height <= 0:
         wasted.append(slot_rect)
         return allocation, wasted
@@ -329,16 +292,13 @@ def conflict_detected_outer_slot(slot_rect, rule, rule_r: List[Tuple[int, int]])
     remaining_unused_bandwidth = y2 - max_y_used
 
     # If no unused bandwidth, return initial allocation
-    if remaining_unused_bandwidth <= 0:
-        return initial_alloc, []
-
+    if remaining_unused_bandwidth <= 0: return initial_alloc, []
     # Based on priority, separate the remaining_unused_bandwidth
     priority_sum = sum(rule_r[rid - 1][1] for area, rid in rule)
 
     if priority_sum == 0:
         # If all priorities are 0, distribute evenly
-        priority_sum = len(rule)
-        priorities = [1.0] * len(rule)
+        priority_sum = len(rule); priorities = [1.0] * len(rule)
     else:
         priorities = [rule_r[rid - 1][1] for area, rid in rule]
 
@@ -349,9 +309,7 @@ def conflict_detected_outer_slot(slot_rect, rule, rule_r: List[Tuple[int, int]])
         initial_height = area / slot_width
 
         # Calculate additional height based on priority ratio
-        priority_ratio = priorities[i] / priority_sum
-        additional_height = remaining_unused_bandwidth * priority_ratio
-
+        priority_ratio = priorities[i] / priority_sum; additional_height = remaining_unused_bandwidth * priority_ratio
         # Update height
         height_updated = initial_height + additional_height
 
@@ -363,11 +321,8 @@ def conflict_detected_outer_slot(slot_rect, rule, rule_r: List[Tuple[int, int]])
             width_updated = slot_width
             height_updated = area / width_updated if width_updated > 0 else 0
 
-        x_end = x1 + width_updated
-        y_end = y_cursor + height_updated
-
-        allocation.append((x1, x_end, y_cursor, y_end, rid))
-        update_bandwidth_usage(int(x1), int(x_end), y_cursor, y_end)
+        x_end = x1 + width_updated; y_end = y_cursor + height_updated
+        allocation.append((x1, x_end, y_cursor, y_end, rid)); update_bandwidth_usage(int(x1), int(x_end), y_cursor, y_end)
 
         print(f"Rule R{rid}: initial_h={initial_height:.2f}, additional_h={additional_height:.2f}, "
               f"final_h={height_updated:.2f}, bandwidth=[{y_cursor:.2f}, {y_end:.2f}]")
@@ -392,15 +347,11 @@ def allocate_rule_fill_bandwidth(slot_rect, rule, rule_r: List[Tuple[int, int]],
     （Completed: need to be updated, this is temp way to deal with conflict situation）
 
     """
-    allocation = []
-    wasted = []
+    allocation, wasted = [], []
     x1, x2, y1, y2 = slot_rect
 
     # Get current max bandwidth usage
-    max_used_bandwidth = get_current_max_bandwidth(int(x1), int(x2))
-    effective_y1 = max(y1, max_used_bandwidth)
-    effective_height = y2 - effective_y1
-
+    max_used_bandwidth = get_current_max_bandwidth(int(x1), int(x2)); effective_y1 = max(y1, max_used_bandwidth); effective_height = y2 - effective_y1
     # If this slot has no available height left, or there are no rule to allocate at all, return
     if effective_height <= 0 or not rule:
         if effective_height <= 0:
@@ -422,11 +373,8 @@ def allocate_rule_fill_bandwidth(slot_rect, rule, rule_r: List[Tuple[int, int]],
             # If the calculated width exceeds the slot width, recalculate the height.
             height = area / width if width > 0 else 0
 
-        x_end = x1 + width
-        y_end = effective_y1 + height
-
-        allocation.append((x1, x_end, effective_y1, y_end, rid))
-        update_bandwidth_usage(int(x1), int(x_end), effective_y1, y_end)
+        x_end = x1 + width; y_end = effective_y1 + height
+        allocation.append((x1, x_end, effective_y1, y_end, rid)); update_bandwidth_usage(int(x1), int(x_end), effective_y1, y_end)
 
         # If this happens, need to re-allocate the height (need to fill out bandwidth)
         if y_end < y2:
@@ -440,13 +388,11 @@ def allocate_rule_fill_bandwidth(slot_rect, rule, rule_r: List[Tuple[int, int]],
         # get the all priorities and calculate ratios
         #print("uses priority to allocated")
         all_priorities = [rule_r[rid - 1][1] for area, rid in rule]
-        rule_data = []
-        total_priority_sum = 0
+        rule_data = []; total_priority_sum = 0
 
         # Calculate the ratio, and updated the data
         for area, rid in rule:
-            original_priority = rule_r[rid - 1][1]
-            priority_ratio = calculate_priority_bandwidth_ratio(original_priority, all_priorities)
+            original_priority = rule_r[rid - 1][1]; priority_ratio = calculate_priority_bandwidth_ratio(original_priority, all_priorities)
             total_priority_sum += priority_ratio
 
             rule_data.append({
@@ -457,9 +403,7 @@ def allocate_rule_fill_bandwidth(slot_rect, rule, rule_r: List[Tuple[int, int]],
             })
 
         # calculate height and width for each rule based on priority ratio
-        slot_width = x2 - x1
-        has_conflict = False
-
+        slot_width = x2 - x1; has_conflict = False
         for req_data in rule_data:
             height_ratio = req_data['ratio'] / total_priority_sum
             #print(f"priority ratio = {height_ratio}")
@@ -475,11 +419,7 @@ def allocate_rule_fill_bandwidth(slot_rect, rule, rule_r: List[Tuple[int, int]],
         # checking for out-of-bounds conditions or conflicts with unavailable areas.
         y_cursor_check = effective_y1
         for req_data in rule_data:
-            width = req_data['width']
-            height = req_data['height']
-            x_end = x1 + width
-            y_end = y_cursor_check + height
-
+            width = req_data['width']; height = req_data['height']; x_end = x1 + width; y_end = y_cursor_check + height
             if (unavailable_slots and has_bandwidth_conflict(x1, x_end, y_cursor_check, y_end, unavailable_slots) or
                     y_end > y2 or
                     width > slot_width):
@@ -494,21 +434,14 @@ def allocate_rule_fill_bandwidth(slot_rect, rule, rule_r: List[Tuple[int, int]],
         # if there is no conflict of total slot / unavailable slot, then use priority to determine height
         y_cursor = effective_y1
         for req_data in rule_data:
-            width = req_data['width']
-            height = req_data['height']
-
+            width = req_data['width']; height = req_data['height']
             # width should <= slot width
             if width > slot_width:
                 width = slot_width
                 height = req_data['area'] / width if width > 0 else 0
 
-            x_end = x1 + width
-            y_end = y_cursor + height
-
-            allocation.append((x1, x_end, y_cursor, y_end, req_data['rid']))
-            update_bandwidth_usage(int(x1), int(x_end), y_cursor, y_end)
-
-            print(f"Allocated rule R{req_data['rid']}: bandwidth [{y_cursor:.2f}, {y_end:.2f}]")
+            x_end = x1 + width; y_end = y_cursor + height
+            allocation.append((x1, x_end, y_cursor, y_end, req_data['rid'])); update_bandwidth_usage(int(x1), int(x_end), y_cursor, y_end); print(f"Allocated rule R{req_data['rid']}: bandwidth [{y_cursor:.2f}, {y_end:.2f}]")
             y_cursor = y_end
 
     else:
@@ -523,8 +456,7 @@ def out_of_range (remaining_r, original_r_list, current_slot_area, total_availab
     original_r_list: original r list (input data) (size/area, priority)
     """
     # Deal with out_of_range situation
-    if not remaining_r:
-        return [], [], []
+    if not remaining_r: return [], [], []
     # If there is no rule allocated, then use total_available_area instead of the last slot area
 
     if len(remaining_r) == len(original_r_list) and total_available_area is not None:
@@ -548,25 +480,18 @@ def out_of_range (remaining_r, original_r_list, current_slot_area, total_availab
             same_size_candidates[area].append((area, rid))
 
     # If yes: Compare priority
-    final_best_group = []
-    used_rule = set()
+    final_best_group = []; used_rule = set()
     for size in best_group_sizes:
         if size in same_size_candidates:
             # Find the higher priority
-            candidates = same_size_candidates[size]
-            best_candidate = None
-            highest_priority = -1
-
+            candidates = same_size_candidates[size]; best_candidate = None; highest_priority = -1
             for area, rid in candidates:
                 if (area, rid) not in used_rule:
                     priority = original_r_list[rid - 1][1]
                     if priority > highest_priority:
-                        highest_priority = priority
-                        best_candidate = (area, rid)
-
+                        highest_priority = priority; best_candidate = (area, rid)
             if best_candidate:
-                final_best_group.append(best_candidate)
-                used_rule.add(best_candidate)
+                final_best_group.append(best_candidate); used_rule.add(best_candidate)
 
     # If no: Place the best group into this slot_area and specify which remaining rule were not included.
     allocated_set = set(final_best_group)
@@ -574,7 +499,6 @@ def out_of_range (remaining_r, original_r_list, current_slot_area, total_availab
                            if (area, rid) not in allocated_set]
 
     return final_best_group, out_of_range_rule
-
 
 def best_fit_allocation(r_remaining: List[Tuple[int, int]],
                                current_slot_area: float,
@@ -594,8 +518,7 @@ def best_fit_allocation(r_remaining: List[Tuple[int, int]],
         wasted: List of wasted regions
         r_remaining: Updated remaining rule
     """
-    result = []
-    allocation = []
+    result, allocation = [], []
     wasted = []
 
     # Find best fit groups
@@ -615,8 +538,7 @@ def best_fit_allocation(r_remaining: List[Tuple[int, int]],
         )
 
     # Choose best option
-    best_fit_group = None
-    use_overflow = False
+    best_fit_group = None; use_overflow = False
 
     # Situation 1: using best_under set
     # double check for the best_under is less than or equal to current slot
@@ -627,18 +549,15 @@ def best_fit_allocation(r_remaining: List[Tuple[int, int]],
         alloc, waste = allocate_rule_in_slot_best_under(
             current_slot_rect, best_fit_group, rule_r
         )
-        allocation.extend(alloc)
-        wasted.extend(waste)
+        allocation.extend(alloc); wasted.extend(waste)
 
     # Situation 2: using best over set
     elif best_over and blank_2 < current_slot_area:
-        best_fit_group = best_over
-        use_overflow = True
+        best_fit_group = best_over; use_overflow = True
         result.append(f"rule {list(best_fit_group)} fitted in the {ordinal(slot_index)} area")
         # This situation won't consider any priority ratio, just apply the normal allocate rule
         alloc, waste = allocate_rule_in_slot(current_slot_rect, best_fit_group)
-        allocation.extend(alloc)
-        wasted.extend(waste)
+        allocation.extend(alloc); wasted.extend(waste)
 
     else:
         # No fit found, skip this slot
@@ -657,7 +576,6 @@ def best_fit_allocation(r_remaining: List[Tuple[int, int]],
 
     return True, result, allocation, wasted, r_remaining
 
-
 def minimum_rule_check(r_remaining: List[Tuple[int, int]],
                               current_slot_area: float,
                               current_slot_rect: Rect2D,
@@ -674,15 +592,12 @@ def minimum_rule_check(r_remaining: List[Tuple[int, int]],
         wasted: List of wasted regions
         r_remaining: Updated remaining rule
     """
-    result = []
-    allocation = []
+    result, allocation = [], []
     wasted = []
 
     min_rule_size = min(area for area, _ in r_remaining)
 
-    if min_rule_size <= current_slot_area:
-        return False, result, allocation, wasted, r_remaining
-
+    if min_rule_size <= current_slot_area: return False, result, allocation, wasted, r_remaining
     # Calculate maximum height extension allowed
     # Get the next slot coordinate
     # We don't need to get the next inner slot, cuz the difference of inner slot and the outer slot is only in bandwidth, the x-coordinate is the same
@@ -694,10 +609,7 @@ def minimum_rule_check(r_remaining: List[Tuple[int, int]],
     max_height_extend = current_slot_area / next_slot_width
 
     # get the extended height
-    current_slot_width = current_slot_rect[1] - current_slot_rect[0]
-    current_slot_height = current_slot_rect[3] - current_slot_rect[2]
-    min_rule_height_extend = (min_rule_size / current_slot_width) - current_slot_height
-
+    current_slot_width = current_slot_rect[1] - current_slot_rect[0]; current_slot_height = current_slot_rect[3] - current_slot_rect[2]; min_rule_height_extend = (min_rule_size / current_slot_width) - current_slot_height
     # If extension needed exceeds maximum allowed, skip this slot
     if min_rule_height_extend > max_height_extend:
         result.append(f"No rule fit in the {ordinal(slot_index)} area")
@@ -706,12 +618,9 @@ def minimum_rule_check(r_remaining: List[Tuple[int, int]],
     # Place smallest rule in current slot
     min_rule = min(r_remaining, key=lambda x: x[0])
     alloc, waste = allocate_rule_in_slot(current_slot_rect, [min_rule])
-    allocation.extend(alloc)
-    wasted.extend(waste)
-    r_remaining.remove(min_rule)
+    allocation.extend(alloc); wasted.extend(waste); r_remaining.remove(min_rule)
 
     return True, result, allocation, wasted, r_remaining
-
 
 def last_slot(r_remaining: List[Tuple[int, int]],
               current_slot_area: float,
@@ -727,13 +636,11 @@ def last_slot(r_remaining: List[Tuple[int, int]],
     """
     Handle allocation logic for the last slot
     """
-    result = []
-    allocation_result = []
+    result, allocation_result = [], []
     wasted = []
 
     # === 计算有效的 slot 面积（考虑合并）===
-    effective_slot_area = current_slot_area
-    effective_slot_rect = current_slot_rect
+    effective_slot_area = current_slot_area; effective_slot_rect = current_slot_rect
 
     # 检查是否可以与前面的空 inner slot 合并
     if current_slot_index > 0:
@@ -743,9 +650,7 @@ def last_slot(r_remaining: List[Tuple[int, int]],
                 # 前一个 inner 为空，计算合并后的面积
                 #print(f"Last slot: Previous inner slot {prev_inner_index} is empty")
 
-                prev_inner_area = slot_area_list[prev_inner_index]
-                effective_slot_area = current_slot_area + prev_inner_area
-
+                prev_inner_area = slot_area_list[prev_inner_index]; effective_slot_area = current_slot_area + prev_inner_area
                 # 可以继续检查更多的空 inner slots
                 check_index = prev_inner_index - 2
                 while check_index >= 0 and check_index % 2 == 1:
@@ -762,7 +667,7 @@ def last_slot(r_remaining: List[Tuple[int, int]],
     if can_fit_all_remaining_rule(r_remaining, effective_slot_area):
         result.append(f"All remaining rule {r_remaining} fitted in the {ordinal(slot_index)} area")
 
-        # 如果需要合并，使用 progressive_inner_outer_merge
+        # if need to be merged progressive_inner_outer_merge
         if effective_slot_area > current_slot_area:
             success, merge_info, slots_consumed, alloc = progressive_inner_outer_merge(
                 current_slot_index, slot_rects, slot_area_list, allocation,
@@ -772,16 +677,14 @@ def last_slot(r_remaining: List[Tuple[int, int]],
                 allocation_result.extend(alloc)
                 return result, allocation_result, wasted
 
-        # 否则正常分配
+        # otherwise, allocated it normally
         alloc, waste = allocate_rule_fill_bandwidth(
             current_slot_rect, r_remaining, rule_r, unavailable_slots
         )
-        allocation_result.extend(alloc)
-        wasted.extend(waste)
+        allocation_result.extend(alloc); wasted.extend(waste)
         return result, allocation_result, wasted
 
     # Cannot fit all: find best group and mark rest as out of range
-    # === 传递 effective_slot_area（可能是合并后的面积）===
     best_group, out_of_range_reqs = out_of_range(
         r_remaining, rule_r, effective_slot_area, total_available_area
     )
@@ -790,28 +693,21 @@ def last_slot(r_remaining: List[Tuple[int, int]],
         alloc, waste = allocate_rule_in_slot_best_under(
             current_slot_rect, best_group, rule_r
         )
-        allocation_result.extend(alloc)
-        wasted.extend(waste)
+        allocation_result.extend(alloc); wasted.extend(waste)
 
     return result, allocation_result, wasted
-
 
 def check_slot_is_empty(slot_index, slot_rects, allocation):
     """
     Check if the slot is empty after allocation
     """
-    if slot_index >= len(slot_rects):
-        return False
-
+    if slot_index >= len(slot_rects): return False
     slot = slot_rects[slot_index]
     slot_x1, slot_x2, slot_y1, slot_y2 = slot
 
     for x1, x2, y1, y2, rid in allocation:
-        if not (x2 <= slot_x1 or x1 >= slot_x2 or y2 <= slot_y1 or y1 >= slot_y2):
-            return False
-
+        if not (x2 <= slot_x1 or x1 >= slot_x2 or y2 <= slot_y1 or y1 >= slot_y2): return False
     return True
-
 
 def merge_two_slots(slot1, slot2):
     """
@@ -841,7 +737,6 @@ def merge_two_slots(slot1, slot2):
     area = (x2_r1 - x1_r1) * (y2_r1 - y1_r1) + (x2_r2 - x1_r2) * (y2_r2 - y1_r2)
 
     return vertices, area
-
 
 def merge_new_slot(new_merged_slot, slot):
     """
@@ -879,7 +774,6 @@ def merge_new_slot(new_merged_slot, slot):
 
     return new_vertices, new_area
 
-
 def allocate_rule_in_merged_slot(
         merged_info: dict,
         rule: List[Tuple[int, int]],
@@ -898,52 +792,35 @@ def allocate_rule_in_merged_slot(
         allocation: List of allocations
         wasted: List of wasted regions
     """
-    allocation = []
-    wasted = []
+    allocation, wasted = [], []
 
-    if not rule:
-        return allocation, wasted
-
+    if not rule: return allocation, wasted
     component_rects = merged_info.get('component_rects', [])
-    if not component_rects:
-        return allocation, wasted
-
-    borrowable_rects = merged_info.get('borrowable_rects', [])
-    all_rects = component_rects + borrowable_rects
-
-
+    if not component_rects: return allocation, wasted
+    borrowable_rects = merged_info.get('borrowable_rects', []); all_rects = component_rects + borrowable_rects
     # Find the time and bandwidth boundaries
     min_time = min(rect[0] for rect in all_rects)
     max_time = max(rect[1] for rect in all_rects)
     min_bandwidth = min(rect[2] for rect in all_rects)
     max_bandwidth = max(rect[3] for rect in all_rects)
 
-    #print(f"Time range: [{min_time}, {max_time}]")
-    #print(f"Bandwidth range: [{min_bandwidth}, {max_bandwidth}]")
-
     # Start from the minimum available bandwidth (usually 0)
     start_bandwidth = min_bandwidth
-
-    #print(f"Starting bandwidth: {start_bandwidth}")
 
     # Allocate rules one by one, stacked vertically
     y_cursor = start_bandwidth
 
     for req_area, rid in rule:
-        #print(f"\n=== Allocating R{rid} (area={req_area}) ===")
 
         # Calculate remaining bandwidth
         remaining_bandwidth = max_bandwidth - y_cursor
-        #print(f"  Remaining bandwidth: {remaining_bandwidth:.2f}")
 
         if remaining_bandwidth <= 0:
-        #    print(f"  Error: No bandwidth left for R{rid}")
             continue
 
         # Strategy: Use as much width as possible to minimize height
         # Find the maximum continuous time width available
-        max_width = 0
-        best_time_range = None
+        max_width = 0; best_time_range = None
 
         # Try different starting times
         for rect in all_rects:
@@ -964,15 +841,10 @@ def allocate_rule_in_merged_slot(
             if not has_conflict:
                 width = rx2 - rx1
                 if width > max_width:
-                    max_width = width
-                    best_time_range = (rx1, rx2)
-
+                    max_width = width; best_time_range = (rx1, rx2)
         if best_time_range is None:
             # Fallback: use the first available rect
-            first_rect = all_rects[0]
-            best_time_range = (first_rect[0], first_rect[1])
-            max_width = first_rect[1] - first_rect[0]
-
+            first_rect = all_rects[0]; best_time_range = (first_rect[0], first_rect[1]); max_width = first_rect[1] - first_rect[0]
         x_start, x_end = best_time_range
 
         #print(f"  Best time range: [{x_start}, {x_end}], width: {max_width}")
@@ -985,30 +857,18 @@ def allocate_rule_in_merged_slot(
         # Check if height fits in remaining bandwidth
         if height_needed > remaining_bandwidth:
             # Use all remaining bandwidth and extend time
-            actual_height = remaining_bandwidth
-            actual_width = req_area / actual_height
-            actual_x_end = x_start + actual_width
-
+            actual_height = remaining_bandwidth; actual_width = req_area / actual_height; actual_x_end = x_start + actual_width
             # Cap at max time
             if actual_x_end > max_time:
-                actual_x_end = max_time
-                actual_width = actual_x_end - x_start
-                actual_height = req_area / actual_width
+                actual_x_end = max_time; actual_width = actual_x_end - x_start; actual_height = req_area / actual_width
         else:
             # Fits within remaining bandwidth
-            actual_height = height_needed
-            actual_width = max_width
-            actual_x_end = x_end
+            actual_height = height_needed; actual_width = max_width; actual_x_end = x_end
 
-        y_start = y_cursor
-        y_end = y_cursor + actual_height
-
+        y_start = y_cursor; y_end = y_cursor + actual_height
         # Ensure we don't exceed boundaries
-        y_end = min(y_end, max_bandwidth)
-        actual_x_end = min(actual_x_end, max_time)
-
-        allocation.append((x_start, actual_x_end, y_start, y_end, rid))
-        update_bandwidth_usage(int(x_start), int(actual_x_end), y_start, y_end)
+        y_end = min(y_end, max_bandwidth); actual_x_end = min(actual_x_end, max_time)
+        allocation.append((x_start, actual_x_end, y_start, y_end, rid)); update_bandwidth_usage(int(x_start), int(actual_x_end), y_start, y_end)
 
         actual_area = (actual_x_end - x_start) * (y_end - y_start)
         print(f"Allocated: time [{x_start:.1f}, {actual_x_end:.1f}], bandwidth [{y_start:.2f}, {y_end:.2f}]")
@@ -1043,29 +903,21 @@ def progressive_inner_outer_merge(
     outer_index = start_outer_index
 
     # Check if previous inner slot exists and is empty
-    if outer_index < 1:
-        return False, {}, 0, []
-
+    if outer_index < 1: return False, {}, 0, []
     prev_inner_index = outer_index - 1
     if prev_inner_index % 2 == 0:  # Should be odd (inner slot)
         return False, {}, 0, []
 
-    if not check_slot_is_empty(prev_inner_index, slot_rects, allocation):
-        return False, {}, 0, []
-
+    if not check_slot_is_empty(prev_inner_index, slot_rects, allocation): return False, {}, 0, []
     #print(f"Slot {prev_inner_index} (inner) is empty")
     #print(f"The slot will be merged with slot {outer_index}")
 
     # Track updated slots
-    prev_inner_slot = slot_rects[prev_inner_index]
-    current_outer_slot = slot_rects[outer_index]
-
+    prev_inner_slot = slot_rects[prev_inner_index]; current_outer_slot = slot_rects[outer_index]
     # Step 1: Merge outer with previous inner
     # outer3 + inner2 → updated_outer3
     vertices, area = merge_two_slots(prev_inner_slot, current_outer_slot)
-    merged_area = slot_area_list[prev_inner_index] + slot_area_list[outer_index]
-
-    updated_outer = {
+    merged_area = slot_area_list[prev_inner_index] + slot_area_list[outer_index]; updated_outer = {
         'vertices': vertices,
         'area': merged_area,
         'bounding_box': (0, max(v[0] for v in vertices), 0, max(v[1] for v in vertices)),
@@ -1107,10 +959,7 @@ def progressive_inner_outer_merge(
     }
 
     # Continue alternating: inner merges with inner, outer merges with inner
-    next_inner_index = outer_index + 1
-    next_outer_index = outer_index + 2
-    step = 2
-
+    next_inner_index = outer_index + 1; next_outer_index = outer_index + 2; step = 2
     while next_outer_index < len(slot_rects):
         # Step: Merge next_inner with updated_inner → new updated_inner
         # inner4 + inner2 → updated_inner4
@@ -1170,16 +1019,13 @@ def progressive_inner_outer_merge(
             return True, updated_outer, slots_consumed, alloc
 
         # Move to next pair
-        next_inner_index = next_outer_index + 1
-        next_outer_index = next_outer_index + 2
-
+        next_inner_index = next_outer_index + 1; next_outer_index = next_outer_index + 2
     # Even if failed, return the last merged state
     if 'updated_outer' in locals() and updated_outer:
         slots_consumed = len(updated_outer.get('component_rects', []))
         return False, updated_outer, slots_consumed, []
     else:
         return False, {}, 0, []
-
 
 def find_borrowable_areas(
         current_time_end: int,
@@ -1192,9 +1038,7 @@ def find_borrowable_areas(
     For the outer slot, if the area shows that it can fit all the rules
     it can borrow the slot area after it (due to it may cause some waste)
     """
-    if current_time_end >= total_time:
-        return []
-
+    if current_time_end >= total_time: return []
     # temp total area
     future_total = [(current_time_end, total_time, total_bandwidth)]
 
@@ -1218,7 +1062,6 @@ def find_borrowable_areas(
 
     return borrowable_rects
 
-
 def extend_merged_area_with_future(
         merged_info: dict,
         total_time: int,
@@ -1232,9 +1075,7 @@ def extend_merged_area_with_future(
     """
 
     component_rects = merged_info.get('component_rects', [])
-    if not component_rects:
-        return merged_info
-
+    if not component_rects: return merged_info
     current_max_time = max(rect[1] for rect in component_rects)
 
     # get the area can be added to current slot
@@ -1259,7 +1100,6 @@ def extend_merged_area_with_future(
     extended_info['all_rects'] = component_rects + borrowable_areas
 
     return extended_info
-
 
 def find_r_slot_with_allocation(
         r_list: List[Tuple[int, int]],
@@ -1291,21 +1131,15 @@ def find_r_slot_with_allocation(
     last_slot_area = slot_area_list[-1] if slot_area_list else 0
     total_available_area = even_slot_sum + last_slot_area
 
-    result = []
-    allocation = []
-    wasted = []
-    slot_index = 1
-    i = 0
+    result, allocation = [], []
+    wasted = []; slot_index = 1; i = 0
 
     # We do compare between: sum of the remaining rules and current outer slot:
     # If everything fitted, then fit in the outer slot
     compare_mode = True
 
-
     while r_remaining and i < len(slot_area_list):
-        current_slot_area = slot_area_list[i]
-        current_slot_rect = slot_rects[i]
-
+        current_slot_area = slot_area_list[i]; current_slot_rect = slot_rects[i]
         # Handle last slot specially: We need to deal with the out_of_range situation
         if i == len(slot_area_list) - 1:
             res, alloc, waste = last_slot(
@@ -1313,9 +1147,7 @@ def find_r_slot_with_allocation(
                 rule_r, unavailable_slots, total_available_area, slot_index,
                 slot_rects, slot_area_list, allocation, i
             )
-            result.extend(res)
-            allocation.extend(alloc)
-            wasted.extend(waste)
+            result.extend(res); allocation.extend(alloc); wasted.extend(waste)
             return result, allocation, wasted, total_available_area, total_r_area
 
         # Compare mode: check if all remaining fit in current slot
@@ -1327,8 +1159,7 @@ def find_r_slot_with_allocation(
             )
             if success:
                 # inner slot is empty. successfully merged, and can be fitted
-                result.append(f"All remaining rules fitted using progressive merge (consumed {slots_consumed} slots)")
-                allocation.extend(alloc)
+                result.append(f"All remaining rules fitted using progressive merge (consumed {slots_consumed} slots)"); allocation.extend(alloc)
                 r_remaining = []
                 return result, allocation, wasted, total_available_area, total_r_area
             # inner slot is not empty
@@ -1338,8 +1169,7 @@ def find_r_slot_with_allocation(
                 alloc, waste = allocate_rule_fill_bandwidth(
                     current_slot_rect, r_remaining, rule_r, unavailable_slots
                 )
-                allocation.extend(alloc)
-                wasted.extend(waste)
+                allocation.extend(alloc); wasted.extend(waste)
                 return result, allocation, wasted, total_available_area, total_r_area
 
             # Move to next slot
@@ -1355,9 +1185,7 @@ def find_r_slot_with_allocation(
         )
 
         if should_continue:
-            result.extend(res)
-            allocation.extend(alloc)
-            wasted.extend(waste)
+            result.extend(res); allocation.extend(alloc); wasted.extend(waste)
             i += 1
             slot_index += 1
             compare_mode = True
@@ -1369,16 +1197,13 @@ def find_r_slot_with_allocation(
             slot_rects, slot_area_list, rule_r, i, slot_index
         )
 
-        result.extend(res)
-        allocation.extend(alloc)
-        wasted.extend(waste)
+        result.extend(res); allocation.extend(alloc); wasted.extend(waste)
 
         i += 1
         slot_index += 1
         compare_mode = True
 
     return result, allocation, wasted, total_available_area, total_r_area
-
 
 def check_allocation_validity(allocations: List[Tuple[float, float, float, float, int]],
                               main_slot: Tuple[float, float],
@@ -1419,11 +1244,7 @@ def check_allocation_validity(allocations: List[Tuple[float, float, float, float
 
 def run_find_least_waste(unavailable_slots, main_slot, request_r):
     bandwidth, time = main_slot
-    total_slots = [(0, time, bandwidth)]
-    slot_rects = get_next_slot(unavailable_slots, total_slots)
-    slot_areas = compute_slot_areas(slot_rects)
-    request_areas = r_sorted_by_area(request_r)
-
+    total_slots = [(0, time, bandwidth)]; slot_rects = get_next_slot(unavailable_slots, total_slots); slot_areas = compute_slot_areas(slot_rects); request_areas = r_sorted_by_area(request_r)
     for area, rid in request_areas:
         size, priority = request_r[rid-1]
 
@@ -1432,8 +1253,7 @@ def run_find_least_waste(unavailable_slots, main_slot, request_r):
     )
     for x1, x2, y1, y2, rid in allocations:
         size, priority = request_r[rid-1]
-        print(f"  R{rid}: time [{x1:.1f}, {x2:.1f}], bandwidth [{y1:.2f}, {y2:.2f}]")
-        print(f"       size={size}, priority={priority}, actual_area={(x2-x1)*(y2-y1):.1f}")
+        print(f"  R{rid}: time [{x1:.1f}, {x2:.1f}], bandwidth [{y1:.2f}, {y2:.2f}]"); print(f"       size={size}, priority={priority}, actual_area={(x2-x1)*(y2-y1):.1f}")
     print()
 
     if total_available_area < total_r_area:
@@ -1442,7 +1262,6 @@ def run_find_least_waste(unavailable_slots, main_slot, request_r):
         print("All requests can be accommodated")
 
     visualize_integrated_schedule(request_r, unavailable_slots, total_slots, allocations, waste_rects)
-
 
 def find_r_slot_with_allocation_with_checking(
         r_list: List[Tuple[int, int]],
@@ -1472,17 +1291,11 @@ def find_r_slot_with_allocation_with_checking(
     last_slot_area = slot_area_list[-1] if slot_area_list else 0
     total_available_area = even_slot_sum + last_slot_area
 
-    result = []
-    allocation = []
-    wasted = []
-    slot_index = 1
-    i = 0
-    compare_mode = True
+    result, allocation = [], []
+    wasted = []; slot_index = 1; i = 0; compare_mode = True
 
     while r_remaining and i < len(slot_area_list):
-        current_slot_area = slot_area_list[i]
-        current_slot_rect = slot_rects[i]
-
+        current_slot_area = slot_area_list[i]; current_slot_rect = slot_rects[i]
         # Handle last slot
         if i == len(slot_area_list) - 1:
             res, alloc, waste = last_slot(
@@ -1490,9 +1303,7 @@ def find_r_slot_with_allocation_with_checking(
                 rule_r, unavailable_slots, total_available_area, slot_index,
                 slot_rects, slot_area_list, allocation, i
             )
-            result.extend(res)
-            allocation.extend(alloc)
-            wasted.extend(waste)
+            result.extend(res); allocation.extend(alloc); wasted.extend(waste)
             return result, allocation, wasted, total_available_area, total_r_area
 
         # Compare mode: check if all remaining fit
@@ -1502,8 +1313,7 @@ def find_r_slot_with_allocation_with_checking(
                 alloc, waste = allocate_rule_fill_bandwidth(
                     current_slot_rect, r_remaining, rule_r, unavailable_slots
                 )
-                allocation.extend(alloc)
-                wasted.extend(waste)
+                allocation.extend(alloc); wasted.extend(waste)
                 return result, allocation, wasted, total_available_area, total_r_area
 
             # Move to next slot
@@ -1521,8 +1331,7 @@ def find_r_slot_with_allocation_with_checking(
             alloc, waste = allocate_rule_in_slot_best_under(
                 current_slot_rect, best_under, rule_r
             )
-            allocation.extend(alloc)
-            wasted.extend(waste)
+            allocation.extend(alloc); wasted.extend(waste)
 
             for val in best_under:
                 r_remaining.remove(val)
@@ -1535,34 +1344,25 @@ def find_r_slot_with_allocation_with_checking(
 
     return result, allocation, wasted, total_available_area, total_r_area
 
-
 def run_find_least_waste_v2(unavailable_slots, main_slot, request_r, max_iterations=10):
     """
     firstly, check the is_valid, if is_valid = false, remove the smallest request, allocated again
     """
     bandwidth, time = main_slot
-    total_slots = [(0, time, bandwidth)]
-
-    remaining_indices = list(range(len(request_r)))
-    dropped_indices = []
-    iteration = 0
+    total_slots = [(0, time, bandwidth)]; remaining_indices = list(range(len(request_r)))
+    dropped_indices = []; iteration = 0
 
     while iteration < max_iterations:
         iteration += 1
 
         # the rule set is empty
-        if not remaining_indices:
-            return [], list(range(len(request_r))), iteration
-
+        if not remaining_indices: return [], list(range(len(request_r))), iteration
         for idx in remaining_indices:
             size, priority = request_r[idx]
             print(f"  R{idx+1}: size={size}, priority={priority}")
 
         # allocated the rules
-        slot_rects = get_next_slot(unavailable_slots, total_slots)
-        slot_areas = compute_slot_areas(slot_rects)
-
-        request_areas = []
+        slot_rects = get_next_slot(unavailable_slots, total_slots); slot_areas = compute_slot_areas(slot_rects); request_areas = []
         for orig_idx in remaining_indices:
             size, priority = request_r[orig_idx]
             request_areas.append((size, orig_idx + 1))
@@ -1578,9 +1378,7 @@ def run_find_least_waste_v2(unavailable_slots, main_slot, request_r, max_iterati
         print(f"\nAllocation results:")
         for x1, x2, y1, y2, rid in allocations:
             size, priority = request_r[rid-1]
-            print(f"  R{rid}: time=[{x1:.1f}, {x2:.1f}], bandwidth=[{y1:.2f}, {y2:.2f}]")
-            print(f"       size={size}, priority={priority}, actual_area={(x2-x1)*(y2-y1):.1f}")
-
+            print(f"  R{rid}: time=[{x1:.1f}, {x2:.1f}], bandwidth=[{y1:.2f}, {y2:.2f}]"); print(f"       size={size}, priority={priority}, actual_area={(x2-x1)*(y2-y1):.1f}")
         is_valid = check_allocation_validity(allocations, main_slot, request_r)
 
         if is_valid:
@@ -1594,21 +1392,18 @@ def run_find_least_waste_v2(unavailable_slots, main_slot, request_r, max_iterati
 
         else:
             # find the minimum rule size
-            min_size = float('inf')
-            min_idx = None
+            min_size = float('inf'); min_idx = None
             for idx in remaining_indices:
                 size, priority = request_r[idx]
                 if size < min_size:
-                    min_size = size
-                    min_idx = idx
+                    min_size = size; min_idx = idx
 
             if min_idx is None:
                 #print("ERROR: Cannot find rule to drop!")
                 break
 
             # delete the minimum
-            remaining_indices.remove(min_idx)
-            dropped_indices.append(min_idx)
+            remaining_indices.remove(min_idx); dropped_indices.append(min_idx)
 
             size, priority = request_r[min_idx]
             #print(f"\n→ Dropping smallest: R{min_idx+1} (size={size}, priority={priority})")
@@ -1616,18 +1411,13 @@ def run_find_least_waste_v2(unavailable_slots, main_slot, request_r, max_iterati
 
     return allocations, dropped_indices, iteration
 
-
 def final_allocation(unavailable_slots, main_slot, request_r):
     """
     Try run_find_least_waste first, if there is conflict, then do v2
     """
     bandwidth, time = main_slot
 
-    total_slots = [(0, time, bandwidth)]
-    slot_rects = get_next_slot(unavailable_slots, total_slots)
-    slot_areas = compute_slot_areas(slot_rects)
-    request_areas = r_sorted_by_area(request_r)
-
+    total_slots = [(0, time, bandwidth)]; slot_rects = get_next_slot(unavailable_slots, total_slots); slot_areas = compute_slot_areas(slot_rects); request_areas = r_sorted_by_area(request_r)
     result_texts, allocations, waste_rects, total_available_area, total_r_area = \
         find_r_slot_with_allocation(
             request_areas, slot_areas, slot_rects,
@@ -1648,7 +1438,6 @@ def final_allocation(unavailable_slots, main_slot, request_r):
     )
 
     return allocations, dropped_indices, iterations
-
 
 def visualize_integrated_schedule(rule_r, unavailable_slots, total_slots, allocations, waste_rects):
     """
@@ -1679,17 +1468,12 @@ def visualize_integrated_schedule(rule_r, unavailable_slots, total_slots, alloca
                                        color='blue', alpha=0.7))
 
         size, priority = rule_r[rid - 1]
-        height = y2 - y1
-        width = x2 - x1
-
+        height = y2 - y1; width = x2 - x1
         label = f'R{rid}\nSize: {size}\nPrio: {priority}\nBW: {height:.1f}'
         ax.text(x1 + width / 2, y1 + height / 2, label,
                 ha='center', va='center', fontsize=8, color='white', weight='bold')
 
-    info_x = max_time + 2
-    info_y = total_bandwidth - 5
-    dy = total_bandwidth / 15
-
+    info_x = max_time + 2; info_y = total_bandwidth - 5; dy = total_bandwidth / 15
     ax.text(info_x, info_y, "rule (size, priority, height):", fontsize=10, weight='bold')
     info_y -= dy
 
@@ -1703,12 +1487,7 @@ def visualize_integrated_schedule(rule_r, unavailable_slots, total_slots, alloca
         ax.text(info_x, info_y, f"R{i}: ({size}, {priority}, {height})", fontsize=9)
         info_y -= dy
 
-    ax.set_xlim(0, max_time + 8)
-    ax.set_ylim(0, total_bandwidth + 10)
-    ax.set_xlabel('Time', fontsize=12)
-    ax.set_ylabel('Bandwidth', fontsize=12)
-    ax.grid(True, alpha=0.3)
-
+    ax.set_xlim(0, max_time + 8); ax.set_ylim(0, total_bandwidth + 10); ax.set_xlabel('Time', fontsize=12); ax.set_ylabel('Bandwidth', fontsize=12); ax.grid(True, alpha=0.3)
     handles = []
     if unavailable_slots:
         handles.append(patches.Patch(color='red', alpha=0.6, label='Unavailable/Reserved'))
@@ -1717,5 +1496,4 @@ def visualize_integrated_schedule(rule_r, unavailable_slots, total_slots, alloca
     if handles:
         ax.legend(handles=handles, loc='upper right')
 
-    plt.tight_layout()
-    plt.show()
+    plt.tight_layout(); plt.show()
