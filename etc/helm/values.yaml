@@ -1,7 +1,13 @@
 replicaCount: 1
 
 nodeSelector:
-  kubernetes.io/hostname: "ucsd-nrp.cern.ch"
+  kubernetes.io/hostname: "k8s-gen5-01.sdsc.optiputer.net"
+
+tolerations:
+  - key: "nautilus.io/reservation"
+    value: "sense"
+    operator: "Equal"
+    effect: "NoSchedule"
 
 postgres:
   image: postgres
@@ -18,7 +24,7 @@ postgres:
 
 dmm:
   image:
-    repository: aaarora/dmm
+    repository: aaarora/dmm-dev
     tag: latest
     pullPolicy: Always
   resources:

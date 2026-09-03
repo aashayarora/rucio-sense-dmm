@@ -51,6 +51,8 @@ spec:
           subPath: {{ .Values.certs.certFile }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
       volumes:
       - name: dmm-config
         secret:
