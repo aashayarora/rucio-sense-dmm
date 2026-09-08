@@ -1,10 +1,17 @@
 replicaCount: 1
 
 nodeSelector:
-  kubernetes.io/hostname: "ucsd-nrp.cern.ch"
+  kubernetes.io/hostname: "k8s-gen5-01.sdsc.optiputer.net"
+
+tolerations:
+  - key: "nautilus.io/reservation"
+    value: "sense"
+    operator: "Equal"
+    effect: "NoSchedule"
 
 postgres:
-  image: postgres
+  enabled: true
+  image: postgres:17
   resources:
     requests:
       memory: "1Gi"
@@ -15,10 +22,21 @@ postgres:
   env:
     user: "dmm"
     password: "dmm"
+    database: "dmm"
+  service:
+    port: 5432
+  dataDir: /var/lib/postgresql/data
+  persistence:
+    enabled: true
+    size: 4Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+  nodeSelector: {}
+  tolerations: []
 
 dmm:
   image:
-    repository: aaarora/dmm
+    repository: aaarora/dmm-dev
     tag: latest
     pullPolicy: Always
   resources:

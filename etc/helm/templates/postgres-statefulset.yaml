@@ -1,0 +1,77 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "dmm.postgres.fullname" . }}
+  labels:
+    {{- include "dmm.postgres.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ include "dmm.postgres.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "dmm.postgres.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dmm.postgres.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: postgres
+        image: {{ .Values.postgres.image }}
+        resources:
+          {{- toYaml .Values.postgres.resources | nindent 10 }}
+        env:
+        - name: POSTGRES_USER
+          value: {{ .Values.postgres.env.user | quote }}
+        - name: POSTGRES_PASSWORD
+          value: {{ .Values.postgres.env.password | quote }}
+        - name: POSTGRES_DB
+          value: {{ .Values.postgres.env.database | quote }}
+        - name: PGDATA
+          value: {{ .Values.postgres.dataDir }}/pgdata
+        ports:
+        - name: postgres
+          containerPort: {{ .Values.postgres.service.port }}
+        volumeMounts:
+        - name: data
+          mountPath: {{ .Values.postgres.dataDir }}
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", {{ .Values.postgres.env.user | quote }}, "-d", {{ .Values.postgres.env.database | quote }}]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", {{ .Values.postgres.env.user | quote }}, "-d", {{ .Values.postgres.env.database | quote }}]
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 6
+      nodeSelector:
+        {{- toYaml (.Values.postgres.nodeSelector | default .Values.nodeSelector) | nindent 8 }}
+      tolerations:
+        {{- toYaml (.Values.postgres.tolerations | default .Values.tolerations) | nindent 8 }}
+      {{- if not .Values.postgres.persistence.enabled }}
+      volumes:
+      - name: data
+        emptyDir: {}
+      {{- end }}
+  {{- if .Values.postgres.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        {{- include "dmm.postgres.labels" . | nindent 8 }}
+    spec:
+      accessModes:
+      - {{ .Values.postgres.persistence.accessMode }}
+      {{- if .Values.postgres.persistence.storageClass }}
+      storageClassName: {{ .Values.postgres.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.postgres.persistence.size }}
+  {{- end }}
+{{- end }}
