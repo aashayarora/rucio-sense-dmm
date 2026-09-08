@@ -113,7 +113,7 @@ class SENSEHandlerDaemon(DaemonBase):
 
     @databased
     def run_once(self, session=None):
-        reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED], session=session)
+        reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED, RequestStatus.FINISHED_R], session=session)
         if not reqs:
             return
         
@@ -142,12 +142,17 @@ class SENSEHandlerDaemon(DaemonBase):
 
             # Affiliate endpoints when ready
             if not req.sense_affiliated and is_affiliated_state(status):
+                if not req.src_pool_site or not req.dst_pool_site:
+                    logging.error(
+                        f"Request {req.rule_id} has no source/destination site, cannot affiliate endpoints"
+                    )
+                    continue
                 logging.debug(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
                 try:
                     affiliate_endpoints(
                         sense_uuid=req.sense_uuid,
-                        src_site_name=req.src_site.name,
-                        dst_site_name=req.dst_site.name,
+                        src_pool_site=req.src_pool_site,
+                        dst_pool_site=req.dst_pool_site,
                         rule_id=req.rule_id,
                         sense_src_uri=req.sense_src_uri,
                         sense_dst_uri=req.sense_dst_uri
@@ -181,6 +186,20 @@ class SENSEHandlerDaemon(DaemonBase):
                     f"({prev_circuit_status} → {status}), marking as PROVISIONED"
                 )
                 req.set_status(RequestStatus.PROVISIONED, session=session)
+
+            elif (
+                req.transfer_status == RequestStatus.FINISHED_R
+                and is_being_modified(prev_circuit_status)
+                and is_ready_for_modify(status)
+            ):
+                # The modifier submitted a throttle (to 1 Gbps) for this finished request
+                # and set MODIFY_COMMITTING.  SENSE has now confirmed the throttle was applied
+                # (circuit back in READY state).  Safe to mark FINISHED so the canceller proceeds.
+                logging.info(
+                    f"Request {req.rule_id} throttle modification confirmed "
+                    f"({prev_circuit_status} → {status}), marking as FINISHED"
+                )
+                req.set_status(RequestStatus.FINISHED, session=session)
 
             elif req.transfer_status == RequestStatus.PROVISIONED and is_modify_failed(status):
                 # A modification entered MODIFY - FAILED while the request was already

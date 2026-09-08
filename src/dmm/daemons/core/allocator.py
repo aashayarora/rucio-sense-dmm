@@ -11,6 +11,7 @@ from dmm.core.allocation import (
     allocate_address,
     free_address,
     format_ipv6_compressed,
+    subnet_pool_name,
 )
 
 class AllocatorDaemon(DaemonBase):
@@ -50,13 +51,23 @@ class AllocatorDaemon(DaemonBase):
                 )
                 continue
 
+            # Match on the logical sites, not just the physical ones. Reusing a
+            # circuit means inheriting its endpoints, and the endpoint hostname is
+            # what DMM hands back to Rucio - a T2_US_UCSD rule adopting a
+            # T2_US_UCSD_Blackhole circuit would send real data to a host that
+            # discards it. Compared via the pool-site property so that requests
+            # predating this feature (no logical site recorded) still match.
             same_direction = (
                 req_fin.src_site == new_request.src_site
                 and req_fin.dst_site == new_request.dst_site
+                and req_fin.src_pool_site == new_request.src_pool_site
+                and req_fin.dst_pool_site == new_request.dst_pool_site
             )
             reverse_direction = (
                 req_fin.src_site == new_request.dst_site
                 and req_fin.dst_site == new_request.src_site
+                and req_fin.src_pool_site == new_request.dst_pool_site
+                and req_fin.dst_pool_site == new_request.src_pool_site
             )
 
             if same_direction or reverse_direction:
@@ -86,6 +97,7 @@ class AllocatorDaemon(DaemonBase):
                     "transfer_status": RequestStatus.PROVISIONED
                 }, session=session)
                 req_fin.set_status(status=RequestStatus.DELETED, session=session)
+                session.commit()  # commit reuse atomically before continuing loop — prevents a later session.rollback() from erasing this request's writes
                 claimed_rule_ids.add(req_fin.rule_id)
                 return True
 
@@ -108,10 +120,14 @@ class AllocatorDaemon(DaemonBase):
         src_endpoint = None
         dst_endpoint = None
         endpoints_marked = False
-        
+
+        # Subnet pools are per logical site, endpoints belong to the physical one.
+        src_pool_site = new_request.src_pool_site
+        dst_pool_site = new_request.dst_pool_site
+
         try:
-            src_allocation = allocate_address(new_request.src_site.name, new_request.rule_id)
-            dst_allocation = allocate_address(new_request.dst_site.name, new_request.rule_id)
+            src_allocation = allocate_address(src_pool_site, new_request.rule_id)
+            dst_allocation = allocate_address(dst_pool_site, new_request.rule_id)
 
             free_src_ipv6 = format_ipv6_compressed(src_allocation)
             free_dst_ipv6 = format_ipv6_compressed(dst_allocation)
@@ -128,9 +144,15 @@ class AllocatorDaemon(DaemonBase):
             )
 
             if not src_endpoint:
-                raise ValueError(f"Could not find source endpoint with IP range {free_src_ipv6}")
+                raise ValueError(
+                    f"Subnet {free_src_ipv6} from pool {subnet_pool_name(src_pool_site)} is not a registered "
+                    f"endpoint of physical site {new_request.src_site.name} — check that site's SENSE metadata"
+                )
             if not dst_endpoint:
-                raise ValueError(f"Could not find destination endpoint with IP range {free_dst_ipv6}")
+                raise ValueError(
+                    f"Subnet {free_dst_ipv6} from pool {subnet_pool_name(dst_pool_site)} is not a registered "
+                    f"endpoint of physical site {new_request.dst_site.name} — check that site's SENSE metadata"
+                )
 
             if src_endpoint.is_allocated:
                 raise ValueError(f"Source endpoint {free_src_ipv6} is already in use")

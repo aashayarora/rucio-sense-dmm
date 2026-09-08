@@ -16,6 +16,7 @@ from dmm.models.mesh import Mesh
 from dmm.models.endpoint import Endpoint
 from dmm.core.rucio import list_rses, get_rse_protocol
 from dmm.core.config import config_get
+from dmm.core.sitemap import physical_site_candidates
 
 def _good_response(response):
     if not response:
@@ -25,27 +26,42 @@ def _good_response(response):
             return False
     return not any("error" in str(r).lower() for r in response)
 
-def allocate_address(sitename, alloc_name):
+def subnet_pool_name(pool_site):
+    """
+    Name of the SENSE-O global address pool for a site.
+
+    Pools are per *logical* site: T2_US_UCSD and T2_US_UCSD_Blackhole are one
+    physical site with one pool each.
+
+    Args:
+        pool_site: Logical site name owning the pool
+
+    Returns:
+        SENSE-O address pool name
+    """
+    return f"RUCIO_Site_BGP_Subnet_Pool-{pool_site}"
+
+def allocate_address(pool_site, alloc_name):
     """
     Allocate an IPv6 address from SENSE-O address pool.
-    
+
     Args:
-        sitename: Name of the site (used for the address pool)
+        pool_site: Logical site name whose address pool to allocate from
         alloc_name: Alias for the allocation used in SENSE-O (typically rule_id)
-        
+
     Returns:
         Allocated IPv6 address string
-        
+
     Raises:
         Exception: If allocation fails
     """
     address_api = AddressApi()
-    pool_name = f"RUCIO_Site_BGP_Subnet_Pool-{sitename}"
+    pool_name = subnet_pool_name(pool_site)
     alloc_type = "IPv6"
     try:
-        logging.debug(f"Getting IPv6 allocation for {sitename}")
+        logging.debug(f"Getting IPv6 allocation from pool {pool_name}")
         response = address_api.allocate_address(pool_name, alloc_type, alloc_name, netmask="/64", batch="subnet")
-        logging.debug(f"Got allocation: {response} for {sitename}")
+        logging.debug(f"Got allocation: {response} from pool {pool_name}")
         return response
     except Exception as e:
         logging.error(f"allocate_address: {str(e)}")
@@ -58,56 +74,59 @@ def allocate_address(sitename, alloc_name):
             )
         raise
 
-def free_address(sitename, alloc_name):
+def free_address(pool_site, alloc_name):
     """
     Free an IPv6 address allocation from SENSE-O.
-    
+
+    Must be called with the logical site whose pool the address was allocated
+    from, not the physical site - see Request.src_pool_site.
+
     Args:
-        sitename: Name of the site (used for the address pool)
+        pool_site: Logical site name whose address pool holds the allocation
         alloc_name: Alias for the allocation to free
-        
+
     Returns:
         True if successful
-        
+
     Raises:
         ValueError: If freeing fails
     """
     try:
         logging.debug(f"Freeing IPv6 allocation {alloc_name}")
         address_api = AddressApi()
-        pool_name = f'RUCIO_Site_BGP_Subnet_Pool-{sitename}'
+        pool_name = subnet_pool_name(pool_site)
         address_api.free_address(pool_name, name=alloc_name)
-        logging.debug(f"Allocation {alloc_name} freed for {sitename}")
+        logging.debug(f"Allocation {alloc_name} freed from pool {pool_name}")
         return True
     except Exception as e:
         logging.error(f"free_address: {str(e)}")
-        raise ValueError(f"Freeing allocation failed for {sitename} and {alloc_name}")
+        raise ValueError(f"Freeing allocation failed for pool {subnet_pool_name(pool_site)} and {alloc_name}")
 
-def affiliate_endpoints(sense_uuid, src_site_name, dst_site_name, rule_id,
+def affiliate_endpoints(sense_uuid, src_pool_site, dst_pool_site, rule_id,
                         sense_src_uri, sense_dst_uri):
     """
     Affiliate endpoints with a SENSE instance.
-    
+
     Args:
         sense_uuid: SENSE instance UUID
-        src_site_name: Source site name
-        dst_site_name: Destination site name
+        src_pool_site: Logical site name whose pool holds the source allocation
+        dst_pool_site: Logical site name whose pool holds the destination allocation
         rule_id: Rule ID used as alias for the affiliation in SENSE-O
         sense_src_uri: SENSE source URI
         sense_dst_uri: SENSE destination URI
-        
+
     Raises:
         Exception: If affiliation fails
     """
     address_api = AddressApi()
-    
+
     try:
-        src_pool_name = f'RUCIO_Site_BGP_Subnet_Pool-{src_site_name}'
+        src_pool_name = subnet_pool_name(src_pool_site)
         logging.debug(f"Affiliating allocation {rule_id} with SENSE instance {sense_uuid} in address pool {src_pool_name}")
         address_api.affiliate_address(pool=src_pool_name, uri=sense_src_uri, name=rule_id)
         address_api.expire_address(pool=src_pool_name, expire=-1, name=rule_id)
 
-        dst_pool_name = f'RUCIO_Site_BGP_Subnet_Pool-{dst_site_name}'
+        dst_pool_name = subnet_pool_name(dst_pool_site)
         logging.debug(f"Affiliating allocation {rule_id} with SENSE instance {sense_uuid} in address pool {dst_pool_name}")
         address_api.affiliate_address(pool=dst_pool_name, uri=sense_dst_uri, name=rule_id)
         address_api.expire_address(pool=dst_pool_name, expire=-1, name=rule_id)
@@ -284,23 +303,73 @@ def refresh_all_sites(rucio_client, session):
         session: Database session
         
     Returns:
-        List of site names that were processed
+        List of Rucio site names that were processed
     """
-    
+
     logging.debug("Getting list of sites registered in Rucio")
-    sites = [i['rse'] for i in list_rses(rucio_client)]
-    logging.debug(f"Got list of sites: {sites}, adding to database")
-    
+    rse_names = [i['rse'] for i in list_rses(rucio_client)]
+    logging.debug(f"Got list of sites: {rse_names}, adding to database")
+
     site_objs = []
-    for site_name in sites:
+    refreshed = {}  # physical site name -> Rucio site name that refreshed it
+    for rse_name in rse_names:
         try:
-            site_ = _get_or_create_site(site_name, site_objs, session, config_get)
+            physical_name = _resolve_physical_site_name(rse_name, session)
+            if physical_name != rse_name:
+                logging.info(f"Rucio site {rse_name} maps to physical site {physical_name}")
+
+            if physical_name in refreshed:
+                logging.debug(
+                    f"Physical site {physical_name} already refreshed this cycle "
+                    f"(via {refreshed[physical_name]}), skipping {rse_name}"
+                )
+                continue
+
+            site_ = _get_or_create_site(physical_name, site_objs, session, config_get)
             site_objs.append(site_)
-            _add_endpoints_for_site(site_, rucio_client, session)
+            refreshed[physical_name] = rse_name
+            _add_endpoints_for_site(site_, rucio_client, session, rse_name=rse_name)
         except Exception as e:
-            logging.error(f"Error occurred in refresh_sites for site {site_name}: {str(e)}")
-    
-    return sites
+            logging.error(f"Error occurred in refresh_sites for site {rse_name}: {str(e)}")
+
+    return rse_names
+
+def _resolve_physical_site_name(rse_name, session):
+    """
+    Resolve a Rucio (logical) site name to its physical site name.
+
+    Known sites win over SENSE lookups so an existing site is never folded into
+    a shorter name; SENSE discovery is only consulted for names DMM has not seen
+    before.
+
+    Args:
+        rse_name: Rucio site name
+        session: Database session
+
+    Returns:
+        Physical site name
+
+    Raises:
+        ValueError: If no candidate is a known site
+    """
+    candidates = physical_site_candidates(rse_name)
+
+    for candidate in candidates:
+        if Site.get_by_name(name=candidate, session=session, use_lock=False):
+            return candidate
+
+    for candidate in candidates:
+        try:
+            get_site_uris(candidate)
+            return candidate
+        except Exception:
+            logging.debug(f"SENSE does not know a site named {candidate}")
+
+    raise ValueError(
+        f"Cannot resolve Rucio site '{rse_name}' to a known physical site "
+        f"(tried: {', '.join(candidates)}). Add a [site-aliases] entry to dmm.cfg "
+        "if its physical site cannot be derived from the name."
+    )
 
 def _get_or_create_site(site_name, site_objs, session, config_get_func):
     """
@@ -353,29 +422,34 @@ def _get_vlan_range_for_pair(site_obj, site_, config_get_func):
     logging.debug(f"Using vlan range {vlan_range} for {site_obj.name} and {site_.name}")
     return vlan_range
 
-def _add_endpoints_for_site(site_, rucio_client, session):
+def _add_endpoints_for_site(site_, rucio_client, session, rse_name=None):
     """
     Add endpoints for a site from SENSE metadata.
-    
+
+    Endpoints belong to the physical site, but the protocol has to be read from
+    a Rucio RSE - the physical site name is not necessarily one itself.
+
     Args:
-        site_: Site object
+        site_: Site object (physical site)
         rucio_client: Rucio client instance
         session: Database session
+        rse_name: Rucio site name to read the protocol from (defaults to the site name)
     """
+    rse_name = rse_name or site_.name
     try:
         if not site_.sense_uri:
             logging.warning(f"Site {site_.name} has no SENSE URI, skipping endpoint creation")
             return
-        
+
         endpoint_list = get_endpoints_for_site(site_.sense_uri, site_.name)
         if not endpoint_list:
             logging.warning(f"No endpoints found for {site_.name}")
             return
 
-        logging.info(f"Getting protocol for the registered endpoints for {site_.name}")
-        protocol = get_rse_protocol(rucio_client, site_.name)
+        logging.info(f"Getting protocol for the registered endpoints for {rse_name}")
+        protocol = get_rse_protocol(rucio_client, rse_name)
         if not protocol:
-            raise ValueError(f"No protocol found for RSE {site_.name}")
+            raise ValueError(f"No protocol found for RSE {rse_name}")
 
         endpoints_added = 0
         for iprange, hostname in endpoint_list.items():

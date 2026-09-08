@@ -9,6 +9,8 @@ from dmm.models.request import Request, RequestStatus
 from dmm.core.config import config_get_int
 from dmm.core.sense import (
     cancel_link,
+    get_instance_status,
+    is_being_cancelled,
     is_cancel_ready,
     is_create_compiled,
     is_ready_for_cancel
@@ -64,29 +66,53 @@ class SENSECancellerDaemon(DaemonBase):
                     continue
 
                 logging.info(f"Cancelling SENSE link with uuid {req.sense_uuid} for request {req.rule_id}")
-                status = req.sense_circuit_status
-                
-                if is_cancel_ready(status):
-                    logging.debug(f"Request {req.sense_uuid} already in cancel-ready status, marking as canceled")
+
+                # Always fetch the live status from SENSE before deciding how to cancel.
+                # The DB column (sense_circuit_status) may be stale if a previous cancel
+                # call timed out (504) and SENSE has already transitioned internally.
+                try:
+                    live_status = get_instance_status(req.sense_uuid)
+                except Exception as status_err:
+                    logging.warning(
+                        f"Could not fetch live circuit status for {req.sense_uuid}: {status_err}. "
+                        "Will retry next cycle."
+                    )
+                    continue
+
+                # Persist the refreshed status so other daemons see the correct state.
+                req.set_sense_circuit_status(live_status, session=session)
+
+                if is_cancel_ready(live_status):
+                    logging.debug(f"Circuit {req.sense_uuid} in CANCEL-READY, releasing and marking CANCELED")
                     release_endpoints_and_addresses(req, session)
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue
-                    
-                if is_create_compiled(status):
-                    logging.debug(f"Request {req.sense_uuid} in compiled status, safe to mark as canceled without cancellation")
+
+                if is_being_cancelled(live_status):
+                    # SENSE has accepted the cancel (CANCEL-COMMITTING / CANCEL-COMMITTED).
+                    # Do NOT re-issue cancel_link() — that causes a 500 BadRequest storm.
+                    # Wait for SENSE to reach CANCEL-READY on the next poll cycle.
+                    logging.debug(
+                        f"Circuit {req.sense_uuid} is already being cancelled on SENSE side "
+                        f"(status={live_status}). Waiting for CANCEL-READY."
+                    )
+                    continue
+
+                if is_create_compiled(live_status):
+                    logging.debug(f"Circuit {req.sense_uuid} in CREATE-COMPILED, safe to mark CANCELED without cancel call")
                     release_endpoints_and_addresses(req, session)
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue
-                    
-                if not is_ready_for_cancel(status):
-                    logging.debug(f"Cannot cancel instance {req.sense_uuid} in status '{status}', will try again later")
+
+                if not is_ready_for_cancel(live_status):
+                    logging.debug(f"Cannot cancel instance {req.sense_uuid} in status '{live_status}', will try again later")
                     continue
-                    
-                cancel_link(req.sense_uuid, status)
-                
+
+                cancel_link(req.sense_uuid, live_status)
+
                 release_endpoints_and_addresses(req, session)
                 req.set_status(status=RequestStatus.CANCELED, session=session)
                 logging.info(f"Successfully cancelled SENSE link for request {req.rule_id}")
-                
+
             except Exception as e:
                 logging.error(f"Failed to cancel link for {req.rule_id}: {e}", exc_info=True)

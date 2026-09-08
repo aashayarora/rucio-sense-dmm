@@ -16,15 +16,16 @@ def release_endpoints_and_addresses(req, session):
             req.dst_endpoint.set_allocated(is_allocated=False, session=session)
             
         alloc_rule_id = getattr(req, 'sense_alloc_rule_id', None) or req.rule_id
-        if req.src_site:
+        # Free from the logical site's pool: that is where the subnet came from.
+        if req.src_pool_site:
             try:
-                free_address(req.src_site.name, alloc_rule_id)
+                free_address(req.src_pool_site, alloc_rule_id)
             except Exception as e:
                 logging.debug(f"Failed or skipped freeing src address for {alloc_rule_id}: {e}")
 
-        if req.dst_site:
+        if req.dst_pool_site:
             try:
-                free_address(req.dst_site.name, alloc_rule_id)
+                free_address(req.dst_pool_site, alloc_rule_id)
             except Exception as e:
                 logging.debug(f"Failed or skipped freeing dst address for {alloc_rule_id}: {e}")
     except Exception as e:

@@ -12,6 +12,7 @@ db_name=dmm
 [sense]
 profile_uuid=
 sense_keep_alive_seconds=60
+finished_r_hold_seconds=120
 
 [prometheus]
 host=
@@ -44,5 +45,16 @@ monit=60
 db=7200
 
 [vlan-ranges]
+# Keyed by physical site names (see [site-aliases])
 T2_US_SDSC-T2_US_Caltech=3602-3606
 T2_US_SDSC-T2_US_Caltech_Test=3602-3606
+
+# Rucio site names that are extra "logical" names for a physical SENSE site.
+# Each logical site gets its own SENSE-O subnet pool
+# (RUCIO_Site_BGP_Subnet_Pool-<logical name>); everything else - SENSE site
+# name, VLAN ranges, link capacity, FTS stream caps - uses the physical name.
+# Names of the form PhysicalSiteName_ExtName are resolved automatically, so an
+# entry is only needed when the physical name cannot be derived from the
+# logical one. The physical site must be one DMM or SENSE already knows.
+[site-aliases]
+# T2_US_UCSD_Blackhole=T2_US_UCSD

@@ -66,9 +66,13 @@
                 {% for req in data %}
                 {% set status = req.transfer_status if req.transfer_status else 'UNKNOWN' %}
                 {% set circuit = req.sense_circuit_status if req.sense_circuit_status else '' %}
+                {% set src_site = req.src_site.name if req.src_site else '' %}
+                {% set dst_site = req.dst_site.name if req.dst_site else '' %}
+                {% set src_rse = req.src_logical_site if req.src_logical_site else src_site %}
+                {% set dst_rse = req.dst_logical_site if req.dst_logical_site else dst_site %}
                 <tr class="rule-row {% if status == 'FAILED' %}row-failed{% endif %}"
                     data-status="{{ status }}"
-                    data-search="{{ req.rule_id }} {{ req.src_site.name if req.src_site else '' }} {{ req.dst_site.name if req.dst_site else '' }} {{ req.src_endpoint.hostname if req.src_endpoint else '' }} {{ req.dst_endpoint.hostname if req.dst_endpoint else '' }}">
+                    data-search="{{ req.rule_id }} {{ src_site }} {{ dst_site }} {{ src_rse }} {{ dst_rse }} {{ req.src_endpoint.hostname if req.src_endpoint else '' }} {{ req.dst_endpoint.hostname if req.dst_endpoint else '' }}">
                     <td title="{{ req.rule_id }}">{{ req.rule_id }}</td>
                     <td>
                         <span class="status-badge {% if status in ['PROVISIONED', 'FINISHED_R', 'FINISHED', 'DELETED'] %}status-good{% elif status in ['FAILED', 'CANCELED'] %}status-bad{% else %}status-warn{% endif %}">{{ status }}</span>
@@ -78,10 +82,10 @@
                         <span class="status-badge {% if 'READY' in circuit %}status-good{% elif 'FAILED' in circuit %}status-bad{% else %}status-warn{% endif %}">{{ circuit }}</span>
                         {% else %}—{% endif %}
                     </td>
-                    <td title="{{ req.src_site.name if req.src_site else '' }}">{{ req.src_site.name if req.src_site else '—' }}</td>
+                    <td title="{{ src_site }}{% if src_rse != src_site %} (RSE: {{ src_rse }}){% endif %}">{{ src_site if src_site else '—' }}{% if src_rse != src_site %} <span class="muted">*</span>{% endif %}</td>
                     <td title="{{ req.src_endpoint.ip_range if req.src_endpoint else '' }}">{{ req.src_endpoint.ip_range if req.src_endpoint else '—' }}</td>
                     <td title="{{ req.src_endpoint.hostname if req.src_endpoint else '' }}">{{ req.src_endpoint.hostname if req.src_endpoint else '—' }}</td>
-                    <td title="{{ req.dst_site.name if req.dst_site else '' }}">{{ req.dst_site.name if req.dst_site else '—' }}</td>
+                    <td title="{{ dst_site }}{% if dst_rse != dst_site %} (RSE: {{ dst_rse }}){% endif %}">{{ dst_site if dst_site else '—' }}{% if dst_rse != dst_site %} <span class="muted">*</span>{% endif %}</td>
                     <td title="{{ req.dst_endpoint.ip_range if req.dst_endpoint else '' }}">{{ req.dst_endpoint.ip_range if req.dst_endpoint else '—' }}</td>
                     <td title="{{ req.dst_endpoint.hostname if req.dst_endpoint else '' }}">{{ req.dst_endpoint.hostname if req.dst_endpoint else '—' }}</td>
                     <td>{{ req.priority if req.priority is not none else '—' }}</td>

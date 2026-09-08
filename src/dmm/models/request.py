@@ -33,6 +33,8 @@ class SenseCircuitStatus(str, Enum):
     MODIFY_COMMITTED   = "MODIFY - COMMITTED"
     MODIFY_FAILED      = "MODIFY - FAILED"
     REINSTATE_READY    = "REINSTATE - READY"
+    CANCEL_COMMITTING  = "CANCEL - COMMITTING"
+    CANCEL_COMMITTED   = "CANCEL - COMMITTED"
     CANCEL_READY       = "CANCEL - READY"
 
 class Request(ModelBase, table=True):
@@ -60,6 +62,13 @@ class Request(ModelBase, table=True):
     sense_alloc_rule_id: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
     failed_at: Optional[datetime] = Field(default=None)
+
+    # Site names as Rucio sent them. Several logical sites can map to one
+    # physical site (T2_US_UCSD_Blackhole -> T2_US_UCSD); src_site_/dst_site_
+    # below are always the physical site. The logical name picks the SENSE-O
+    # subnet pool and nothing else.
+    src_logical_site: Optional[str] = Field(default=None)
+    dst_logical_site: Optional[str] = Field(default=None)
 
     src_site_: Optional[str] = Field(default=None, foreign_key='site.name')
     dst_site_: Optional[str] = Field(default=None, foreign_key='site.name')
@@ -90,6 +99,19 @@ class Request(ModelBase, table=True):
         if not isinstance(other, Request):
             return NotImplemented
         return self.rule_id == other.rule_id
+
+    # Requests created before multi-logical-site support have no logical site
+    # recorded; back then the pool was named after the physical site, so falling
+    # back to it keeps their allocations addressable.
+    @property
+    def src_pool_site(self) -> Optional[str]:
+        """Logical site whose SENSE-O subnet pool holds the source allocation."""
+        return self.src_logical_site or (self.src_site.name if self.src_site else None)
+
+    @property
+    def dst_pool_site(self) -> Optional[str]:
+        """Logical site whose SENSE-O subnet pool holds the destination allocation."""
+        return self.dst_logical_site or (self.dst_site.name if self.dst_site else None)
 
     @classmethod
     def get_by_status(cls, statuses: List[str], session=None, use_lock: bool = True):

@@ -94,10 +94,10 @@
 
                 <div class="details-section">
                     <h3>Path & Endpoints</h3>
-                    <div class="details-row"><span class="details-label">Source Site:</span><span class="details-value">{{ data.src_site.name if data.src_site else '—' }}</span></div>
+                    <div class="details-row"><span class="details-label">Source Site:</span><span class="details-value">{{ data.src_site.name if data.src_site else '—' }}{% if data.src_logical_site and data.src_site and data.src_logical_site != data.src_site.name %} <span class="muted">(RSE: {{ data.src_logical_site }})</span>{% endif %}</span></div>
                     <div class="details-row"><span class="details-label">Source Hostname:</span><span class="details-value">{{ data.src_endpoint.hostname if data.src_endpoint else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">Source IPv6 Range:</span><span class="details-value">{{ data.src_endpoint.ip_range if data.src_endpoint else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Destination Site:</span><span class="details-value">{{ data.dst_site.name if data.dst_site else '—' }}</span></div>
+                    <div class="details-row"><span class="details-label">Destination Site:</span><span class="details-value">{{ data.dst_site.name if data.dst_site else '—' }}{% if data.dst_logical_site and data.dst_site and data.dst_logical_site != data.dst_site.name %} <span class="muted">(RSE: {{ data.dst_logical_site }})</span>{% endif %}</span></div>
                     <div class="details-row"><span class="details-label">Destination Hostname:</span><span class="details-value">{{ data.dst_endpoint.hostname if data.dst_endpoint else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">Destination IPv6 Range:</span><span class="details-value">{{ data.dst_endpoint.ip_range if data.dst_endpoint else '—' }}</span></div>
                 </div>

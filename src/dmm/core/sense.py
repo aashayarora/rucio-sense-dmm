@@ -355,6 +355,19 @@ def is_ready_for_modify(status):
         SenseCircuitStatus.REINSTATE_READY.value
     }
 
+def is_being_cancelled(status):
+    """Check if SENSE has accepted a cancel and is still processing it.
+    
+    Returns True when the instance is in CANCEL-COMMITTING or CANCEL-COMMITTED,
+    meaning a previous cancel call was accepted by SENSE (even if it timed out
+    on our side with a 504). Re-issuing cancel_link() in these states causes
+    a 500 BadRequestException storm — callers should wait for CANCEL-READY instead.
+    """
+    return status in {
+        SenseCircuitStatus.CANCEL_COMMITTING.value,
+        SenseCircuitStatus.CANCEL_COMMITTED.value
+    }
+
 def is_being_modified(status):
     """Check if instance is currently being modified."""
     return status in {

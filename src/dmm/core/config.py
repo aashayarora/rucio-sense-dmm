@@ -6,6 +6,13 @@ import threading
 __CONFIG = None
 __CONFIG_LOCK = threading.Lock()
 
+# Sentinel object that distinguishes "caller explicitly passed default=None"
+# from "caller did not provide a default at all".
+# Using None for both meanings makes it impossible to return None as a fallback value,
+# e.g. config_get_int("fts-streams", "SiteA-SiteB", default=None) would raise instead
+# of returning None when the key is absent.
+_UNSET = object()
+
 class Config:
     def __init__(self) -> None:
         """
@@ -40,41 +47,47 @@ def get_config() -> ConfigParser.ConfigParser:
                 __CONFIG = Config()
     return __CONFIG.parser
 
-def config_get(section, option, default=None, extract_function=ConfigParser.ConfigParser.get) -> str:
+def config_get(section, option, default=_UNSET, extract_function=ConfigParser.ConfigParser.get) -> str:
     """
     Get a string from the configuration file.
+
+    Pass ``default=None`` to return ``None`` when the key is absent (valid fallback).
+    Omit ``default`` entirely to raise an exception when the key is absent.
     """
     global __CONFIG
     logging.debug(f"Getting config option {option} from section {section}")
     try:
         return extract_function(get_config(), section, option)
     except ConfigParser.NoSectionError:
-        if default is not None:
+        if default is not _UNSET:
             return default
         else:
             logging.error(f"No section '{section}' found, and no default provided")
             raise
     except ConfigParser.NoOptionError:
-        if default is not None:
+        if default is not _UNSET:
             return default
         else:
             logging.error(f"No option '{option}' found in section '{section}', and no default provided")
             raise
 
-def config_get_bool(section, option, default=None) -> bool:
+def config_get_bool(section, option, default=_UNSET) -> bool:
     """
     Get a boolean from the configuration file.
+
+    Pass ``default=None`` to return ``None`` when the key is absent (valid fallback).
+    Omit ``default`` entirely to raise an exception when the key is absent.
     """
     try:
         return config_get(section, option, extract_function=ConfigParser.ConfigParser.getboolean)
     except ConfigParser.NoSectionError:
-        if default is not None:
+        if default is not _UNSET:
             return default
         else:
             logging.error(f"No section '{section}' found, and no default provided")
             raise
     except ConfigParser.NoOptionError:
-        if default is not None:
+        if default is not _UNSET:
             return default
         else:
             logging.error(f"No '{option}' in section '{section}', and no default provided")
@@ -83,9 +96,12 @@ def config_get_bool(section, option, default=None) -> bool:
         logging.error(str(ve))
         raise
 
-def config_get_int(section, option, default=None, constraint=None) -> int:
+def config_get_int(section, option, default=_UNSET, constraint=None) -> int:
     """
     Get an integer from the configuration file.
+
+    Pass ``default=None`` to return ``None`` when the key is absent (valid fallback).
+    Omit ``default`` entirely to raise an exception when the key is absent.
     """
     try:
         value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getint)
@@ -96,13 +112,13 @@ def config_get_int(section, option, default=None, constraint=None) -> int:
                 raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint 'non-negative'")
         return value
     except ConfigParser.NoSectionError:
-        if default is not None:
+        if default is not _UNSET:
             return default
         else:
             logging.error(f"No section '{section}' found, and no default provided")
             raise
     except ConfigParser.NoOptionError:
-        if default is not None:
+        if default is not _UNSET:
             return default
         else:
             logging.error(f"No '{option}' in section '{section}', and no default provided")

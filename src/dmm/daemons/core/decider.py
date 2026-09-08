@@ -184,14 +184,44 @@ class DeciderDaemon(DaemonBase):
         reqs_provisioned = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.PROVISIONED, RequestStatus.DECIDED], session=session)
         for req in reqs_provisioned:
             allocated_bandwidth = None  # Initialize to prevent NameError
-            for _, _, key, data in multi_graph.edges(keys=True, data=True):
+            req_u = None  # source-node name on the multi_graph (needed for cap logic)
+            for u, v, key, data in multi_graph.edges(keys=True, data=True):
                 if "rule_id" in data and data["rule_id"] == req.rule_id:
                     allocated_bandwidth = int(data["bandwidth"])
+                    req_u = u
                     break  # Found the matching edge, no need to continue
 
             if allocated_bandwidth is None:
                 logging.error(f"Could not find bandwidth allocation for request {req.rule_id} in multi_graph")
                 continue  # Skip this request, don't update it
+
+            if req_u is not None and allocated_bandwidth > (req.allocated_bandwidth_mbps or 0):
+                link_capacity = multi_graph.nodes[req_u].get('link_capacity_mbps', allocated_bandwidth)
+                cotenant_statuses = [
+                    RequestStatus.PROVISIONED, RequestStatus.STALE, RequestStatus.MODIFIED,
+                    RequestStatus.DECIDED, RequestStatus.FINISHED, RequestStatus.FINISHED_R,
+                ]
+                cotenant_reqs = Request.get_by_status(
+                    statuses=cotenant_statuses, session=session, use_lock=False
+                )
+                reserved_by_others = sum(
+                    (r.allocated_bandwidth_mbps or 0)
+                    for r in cotenant_reqs
+                    if r.rule_id != req.rule_id
+                    and (
+                        (r.src_site_ == req.src_site_ and r.dst_site_ == req.dst_site_)
+                        or (r.src_site_ == req.dst_site_ and r.dst_site_ == req.src_site_)
+                    )
+                    and r.sense_uuid is not None
+                )
+                capped = int(min(allocated_bandwidth, link_capacity - reserved_by_others))
+                if capped != allocated_bandwidth:
+                    logging.info(
+                        f"Capping upward MODIFY for {req.rule_id}: "
+                        f"LP={allocated_bandwidth} → capped={capped} Mbps "
+                        f"({reserved_by_others} Mbps reserved by co-tenant circuits with active SENSE UUIDs)"
+                    )
+                allocated_bandwidth = capped
 
             if allocated_bandwidth == req.allocated_bandwidth_mbps:
                 continue

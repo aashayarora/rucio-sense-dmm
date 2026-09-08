@@ -1,4 +1,4 @@
-FROM python:3.7-slim-bullseye
+FROM python:3.10-slim-bullseye
 
 RUN apt update && \
     apt-get clean autoclean && \
