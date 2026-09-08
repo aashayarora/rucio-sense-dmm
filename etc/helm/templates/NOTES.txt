@@ -1,0 +1,3 @@
+DMM is installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Frontend: {{ if .Values.ingress.enabled }}http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}{{ else }}kubectl port-forward svc/{{ include "dmm.fullname" . }} 8080:{{ .Values.service.port }}{{ end }}

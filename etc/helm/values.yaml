@@ -10,7 +10,8 @@ tolerations:
     effect: "NoSchedule"
 
 postgres:
-  image: postgres
+  enabled: true
+  image: postgres:17
   resources:
     requests:
       memory: "1Gi"
@@ -21,6 +22,17 @@ postgres:
   env:
     user: "dmm"
     password: "dmm"
+    database: "dmm"
+  service:
+    port: 5432
+  dataDir: /var/lib/postgresql/data
+  persistence:
+    enabled: true
+    size: 4Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+  nodeSelector: {}
+  tolerations: []
 
 dmm:
   image:

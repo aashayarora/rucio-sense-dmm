@@ -15,15 +15,6 @@ spec:
         {{- include "dmm.selectorLabels" . | nindent 8 }}
     spec:
       containers:
-      - name: postgres
-        image: {{ .Values.postgres.image }}
-        resources:
-          {{- toYaml .Values.postgres.resources | nindent 10 }}
-        env:
-        - name: POSTGRES_USER
-          value: {{ .Values.postgres.env.user | quote }}
-        - name: POSTGRES_PASSWORD
-          value: {{ .Values.postgres.env.password | quote }}
       - name: dmm
         image: "{{ .Values.dmm.image.repository }}:{{ .Values.dmm.image.tag }}"
         imagePullPolicy: {{ .Values.dmm.image.pullPolicy }}
