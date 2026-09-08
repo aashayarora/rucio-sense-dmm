@@ -41,6 +41,42 @@ def subnet_pool_name(pool_site):
     """
     return f"RUCIO_Site_BGP_Subnet_Pool-{pool_site}"
 
+def _one_subnet(response, pool_name):
+    """
+    Unwrap a batch="subnet" allocation down to the single subnet requested.
+
+    AddressApi.allocate_address returns a *list* for batch="subnet", even when
+    the netmask asks for exactly one /64. Passing that list on gets it
+    stringified by ipaddress.IPv6Network into "['2001:...']", which fails as
+    "Only hex digits permitted" and takes the whole request to FAILED.
+
+    Anything other than exactly one entry means SENSE-O answered a different
+    question from the one asked, so it raises rather than picking arbitrarily.
+
+    Args:
+        response: Raw AddressApi response, a list or a bare string
+        pool_name: Pool the allocation came from, for the error message
+
+    Returns:
+        Allocated IPv6 subnet string
+
+    Raises:
+        ValueError: If the response is empty or holds more than one subnet
+    """
+    if isinstance(response, str):
+        return response
+    if isinstance(response, (list, tuple)):
+        if len(response) == 1:
+            return response[0]
+        raise ValueError(
+            f"Pool {pool_name} returned {len(response)} subnets for a single "
+            f"/64 request, expected exactly 1: {response}"
+        )
+    raise ValueError(
+        f"Pool {pool_name} returned an unexpected allocation of type "
+        f"{type(response).__name__}: {response}"
+    )
+
 def allocate_address(pool_site, alloc_name):
     """
     Allocate an IPv6 address from SENSE-O address pool.
@@ -62,7 +98,7 @@ def allocate_address(pool_site, alloc_name):
         logging.debug(f"Getting IPv6 allocation from pool {pool_name}")
         response = address_api.allocate_address(pool_name, alloc_type, alloc_name, netmask="/64", batch="subnet")
         logging.debug(f"Got allocation: {response} from pool {pool_name}")
-        return response
+        return _one_subnet(response, pool_name)
     except Exception as e:
         logging.error(f"allocate_address: {str(e)}")
         try:

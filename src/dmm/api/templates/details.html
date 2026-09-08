@@ -131,12 +131,18 @@
                 </div>
             </div>
 
+            {% if auth_enabled %}
+            <div class="details-row details-actions">
+                <p>Operator actions require a bearer token; use the API.</p>
+            </div>
+            {% else %}
             <div class="details-row details-actions">
                 <button type="button" onclick="markAsFinished('{{ data.rule_id }}')">Mark as Finished</button>
                 <button type="button" onclick="updateFtsLimit('{{ data.rule_id }}')">Update FTS Limit</button>
                 <button type="button" onclick="reInitializeSense('{{ data.rule_id }}')">Re-Initialize SENSE</button>
                 <button type="button" onclick="reInitializeRequest('{{ data.rule_id }}')">Re-Initialize Request</button>
             </div>
+            {% endif %}
             {% else %}
             <h2>Request not found</h2>
             <p>No details are available for this rule.</p>

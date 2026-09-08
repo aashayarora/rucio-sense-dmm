@@ -17,7 +17,11 @@
         <a href="/logs" target="_blank" rel="noopener">Logs</a>
     </nav>
     <div class="toolbar sites-toolbar">
+        {% if auth_enabled %}
+        <span class="legend">Refresh requires a bearer token; use POST /refresh_sites.</span>
+        {% else %}
         <button type="button" onclick="refreshSites()">Refresh Sites</button>
+        {% endif %}
         <span class="legend"><span class="legend-dot legend-free"></span>Free</span>
         <span class="legend"><span class="legend-dot legend-used"></span>Allocated</span>
     </div>

@@ -1,6 +1,7 @@
-from sqlmodel import Field, Relationship, select
+from sqlmodel import Field, Relationship, or_, select
 from typing import Optional, List, ClassVar
 from enum import Enum
+from datetime import datetime, timedelta, timezone
 
 import logging
 
@@ -112,6 +113,37 @@ class Request(ModelBase, table=True):
     def dst_pool_site(self) -> Optional[str]:
         """Logical site whose SENSE-O subnet pool holds the destination allocation."""
         return self.dst_logical_site or (self.dst_site.name if self.dst_site else None)
+
+    # Requests in these states never change again, so exporting them forever
+    # only grows the series count.
+    TERMINAL_STATUSES: ClassVar[List[str]] = [
+        RequestStatus.FAILED,
+        RequestStatus.CANCELED,
+        RequestStatus.DELETED,
+    ]
+
+    @classmethod
+    def get_for_metrics(cls, session=None, terminal_window_hours: int = 6, limit: int = 5000):
+        """Requests worth exporting: everything live, plus recently-finished ones.
+
+        Unbounded export means a full table scan per scrape and a series count
+        that only ever grows. Terminal requests are kept briefly so a rule that
+        just failed is still visible on a dashboard.
+
+        The cutoff uses the same clock ModelBase.save writes with, so the
+        comparison is against like values.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=terminal_window_hours)
+        statement = (
+            select(cls)
+            .where(or_(
+                cls.transfer_status.notin_(cls.TERMINAL_STATUSES),
+                cls.updated_at >= cutoff,
+            ))
+            .order_by(cls.updated_at.desc())
+            .limit(limit)
+        )
+        return list(session.exec(statement).all())
 
     @classmethod
     def get_by_status(cls, statuses: List[str], session=None, use_lock: bool = True):
