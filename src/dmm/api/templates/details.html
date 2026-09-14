@@ -57,6 +57,18 @@
                     <div class="summary-value">{{ data.sense_retries if data.sense_retries is not none else 0 }}</div>
                 </div>
                 <div class="summary-box">
+                    <div class="summary-label">Transfer Audit</div>
+                    <div>
+                        {% if data.transfer_verdict %}
+                        <span class="status-badge {% if data.transfer_verdict == 'OK' %}status-good{% elif data.transfer_verdict in ['FAILED', 'BYPASSED'] %}status-bad{% else %}status-warn{% endif %}">
+                            {{ data.transfer_verdict }}
+                        </span>
+                        {% else %}
+                        <span class="status-badge status-warn">PENDING</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="summary-box">
                     <div class="summary-label">Health</div>
                     <div>
                         <span class="status-badge {% if health_status == '1' %}status-good{% elif health_status == '0' %}status-bad{% else %}status-warn{% endif %}">
@@ -117,9 +129,36 @@
                     <div class="details-row"><span class="details-label">Allocated Bandwidth (Gbps):</span><span class="details-value">{{ (data.allocated_bandwidth_mbps / 1000) | round(2) if data.allocated_bandwidth_mbps is not none else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">Available Bandwidth (Gbps):</span><span class="details-value">{{ (data.available_bandwidth_mbps / 1000) | round(2) if data.available_bandwidth_mbps is not none else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">Previous Bandwidth (Gbps):</span><span class="details-value">{{ (data.previous_bandwidth_mbps / 1000) | round(2) if data.previous_bandwidth_mbps is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Throughput (Gbps):</span><span class="details-value">{{ data.prometheus_throughput if data.prometheus_throughput is not none else '—' }}</span></div>
+                    <div class="details-row"><span class="details-label">Throughput (Gbps):</span><span class="details-value">{{ (data.prometheus_throughput / 1000) | round(3) if data.prometheus_throughput is not none else '—' }}</span></div>
+                    <div class="details-row"><span class="details-label">Utilization:</span>
+                        <span class="details-value">
+                            {% if utilization %}{{ utilization.percent }}% <span class="status-badge {{ utilization.css }}">{{ utilization.label }}</span>{% else %}—{% endif %}
+                        </span>
+                    </div>
                     <div class="details-row"><span class="details-label">Prometheus Bytes:</span><span class="details-value">{{ data.prometheus_bytes if data.prometheus_bytes is not none else '—' }}</span></div>
                 </div>
+
+                {% if data.transfer_audit %}
+                {% set audit = data.transfer_audit %}
+                <div class="details-section">
+                    <h3>Transfer Audit</h3>
+                    <div class="details-row"><span class="details-label">Verdict:</span><span class="details-value">{{ data.transfer_verdict }}</span></div>
+                    <div class="details-row"><span class="details-label">Summary:</span><span class="details-value">{{ audit.summary }}</span></div>
+                    <div class="details-row"><span class="details-label">FTS Files:</span><span class="details-value">{{ audit.fts_files_succeeded if audit.fts_files_succeeded is not none else '—' }} ok / {{ audit.fts_files_failed if audit.fts_files_failed is not none else '—' }} failed of {{ audit.fts_files_total if audit.fts_files_total is not none else '—' }}</span></div>
+                    <div class="details-row"><span class="details-label">FTS Volume (GB):</span><span class="details-value">{{ (audit.fts_bytes_in_window / 1e9) | round(2) if audit.fts_bytes_in_window is not none else '—' }}</span></div>
+                    {% if audit.fts_bytes_outside_window %}
+                    <div class="details-row"><span class="details-label">Moved Outside Circuit (GB):</span><span class="details-value">{{ (audit.fts_bytes_outside_window / 1e9) | round(2) }}</span></div>
+                    {% endif %}
+                    <div class="details-row"><span class="details-label">Circuit Carried (GB):</span><span class="details-value">{{ (audit.wire_bytes / 1e9) | round(2) if audit.wire_bytes is not none else '—' }}</span></div>
+                    {% if audit.fts_error_categories %}
+                    <div class="details-row"><span class="details-label">FTS Errors:</span><span class="details-value">{% for category, count in audit.fts_error_categories.items() %}{{ category }} ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}</span></div>
+                    {% endif %}
+                    {% if audit.note %}
+                    <div class="details-row"><span class="details-label">Note:</span><span class="details-value">{{ audit.note }}</span></div>
+                    {% endif %}
+                    <div class="details-row"><span class="details-label">Audited At:</span><span class="details-value">{{ audit.audited_at }}</span></div>
+                </div>
+                {% endif %}
 
                 <div class="details-section">
                     <h3>Timestamps</h3>

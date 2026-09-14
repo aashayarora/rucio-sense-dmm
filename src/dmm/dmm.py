@@ -8,6 +8,7 @@ import uvicorn
 
 from rucio.client import Client
 from dmm.core.config import config_get_int
+from dmm.db.session import get_engine
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 
@@ -27,6 +28,7 @@ from dmm.daemons.sense.deleter import SENSEDeleterDaemon
 from dmm.daemons.core.allocator import AllocatorDaemon
 from dmm.daemons.core.decider import DeciderDaemon
 from dmm.daemons.core.monit import MonitDaemon
+from dmm.daemons.core.auditor import TransferAuditDaemon
 
 from dmm.api.frontend import api
 
@@ -39,6 +41,7 @@ class DMM:
         self.dmm_frequency = config_get_int("daemons", "dmm", default=60, constraint="nonneg")
         self.sense_frequency = config_get_int("daemons", "sense", default=60, constraint="nonneg")
         self.monit_frequency = config_get_int("daemons", "monit", default=60, constraint="nonneg")
+        self.audit_frequency = config_get_int("daemons", "audit", default=600, constraint="nonneg")
         self.sites_frequency = config_get_int("daemons", "db", default=7200, constraint="nonneg")
         self.fts_frequency = config_get_int("daemons", "fts", default=60)
 
@@ -54,9 +57,12 @@ class DMM:
     
     @staticmethod
     def run_server(port):
+        get_engine().dispose(close=False)
         try:
             uvicorn.run(api, host="0.0.0.0", port=port)
-        except BaseException as e:
+        except BaseException:
+            if port == 31601:
+                raise
             logging.error(f"Failed to start frontend on {port}, trying default port 31601", exc_info=True)
             uvicorn.run(api, host="0.0.0.0", port=31601)
 
@@ -76,6 +82,7 @@ class DMM:
         decider = DeciderDaemon(frequency=self.dmm_frequency)
 
         monit = MonitDaemon(frequency=self.monit_frequency)
+        auditor = TransferAuditDaemon(frequency=self.audit_frequency)
         fts = FTSModifierDaemon(frequency=self.fts_frequency)
         
         rucio_init = RucioInitDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
@@ -90,7 +97,7 @@ class DMM:
         deleter = SENSEDeleterDaemon(frequency=self.sense_frequency)
 
         daemons = [
-            sitedb, fts, allocator, decider, monit,
+            sitedb, fts, allocator, decider, monit, auditor,
             rucio_init, rucio_modifier, rucio_finisher,
             sense_updater, stager, provision, sense_modifier,
             canceller, deleter

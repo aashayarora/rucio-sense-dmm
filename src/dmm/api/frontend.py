@@ -1,6 +1,6 @@
 import logging
 import os
-import asyncio
+import time
 from datetime import datetime
 from json import JSONDecodeError
 
@@ -10,10 +10,13 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
 from dmm.db.session import databased
+from dmm.models.base import utcnow
 from dmm.models.request import Request as DBRequest, RequestStatus
 from dmm.models.site import Site
-from dmm.core.config import config_get_int
+from dmm.core.config import config_get_float, config_get_int
 from dmm.core.allocation import refresh_all_sites
+from dmm.core.sense import cancel_link, delete_instance
+from dmm.core.utils import release_endpoints_and_addresses
 
 from rucio.client import Client
 
@@ -56,6 +59,31 @@ def _validate_sense_request(req):
         raise HTTPException(status_code=400, detail="This is not a SENSE rule")
 
 
+def _utilization(req):
+    """
+    How much of its allocated bandwidth a request is actually using, graded.
+
+    Deliberately separate from health: health answers "is this circuit carrying
+    traffic at all", while utilization is a tuning signal for the optimizer. A
+    transfer running well under its allocation is worth seeing, but it is not a
+    fault, so it never feeds the health verdict.
+    """
+    if req.prometheus_throughput is None or not req.allocated_bandwidth_mbps:
+        return None
+
+    ratio = req.prometheus_throughput / req.allocated_bandwidth_mbps
+    excellent = config_get_float("monit", "utilization_excellent", default=0.9)
+    ok = config_get_float("monit", "utilization_ok", default=0.8)
+
+    if ratio >= excellent:
+        label, css = "EXCELLENT", "status-good"
+    elif ratio >= ok:
+        label, css = "OK", "status-warn"
+    else:
+        label, css = "LOW", "status-bad"
+    return {"percent": round(100 * ratio, 1), "label": label, "css": css}
+
+
 def _prometheus_escape_label(value) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
@@ -74,7 +102,7 @@ def _emit_gauge(lines: list[str], name: str, value, labels: dict | None = None):
 
 @api.get("/metrics", response_class=PlainTextResponse)
 @databased
-async def metrics(session=None):
+def metrics(session=None):
     reqs = DBRequest.get_all(session=session)
 
     lines: list[str] = []
@@ -107,12 +135,18 @@ async def metrics(session=None):
     lines.append("# TYPE dmm_request_fts_streams_current gauge")
     lines.append("# HELP dmm_request_fts_streams_desired Desired FTS streams")
     lines.append("# TYPE dmm_request_fts_streams_desired gauge")
-    lines.append("# HELP dmm_request_prometheus_throughput_gbps Measured throughput in Gbps")
-    lines.append("# TYPE dmm_request_prometheus_throughput_gbps gauge")
+    lines.append("# HELP dmm_request_prometheus_throughput_mbps Measured throughput in Mbps")
+    lines.append("# TYPE dmm_request_prometheus_throughput_mbps gauge")
     lines.append("# HELP dmm_request_prometheus_bytes Measured bytes from prometheus polling")
     lines.append("# TYPE dmm_request_prometheus_bytes gauge")
+    lines.append("# HELP dmm_request_utilization_ratio Measured throughput as a fraction of allocated bandwidth")
+    lines.append("# TYPE dmm_request_utilization_ratio gauge")
     lines.append("# HELP dmm_request_health Health status (1=healthy, 0=unhealthy, absent=unknown)")
     lines.append("# TYPE dmm_request_health gauge")
+    lines.append("# HELP dmm_request_transfer_audit Post-transfer audit outcome (always 1, read the verdict label)")
+    lines.append("# TYPE dmm_request_transfer_audit gauge")
+    lines.append("# HELP dmm_transfer_audits_by_verdict Number of audited requests by verdict")
+    lines.append("# TYPE dmm_transfer_audits_by_verdict gauge")
 
     for req in reqs:
         labels = {
@@ -140,26 +174,43 @@ async def metrics(session=None):
         _emit_gauge(lines, "dmm_request_previous_bandwidth_mbps", req.previous_bandwidth_mbps, labels)
         _emit_gauge(lines, "dmm_request_fts_streams_current", req.fts_streams_current, labels)
         _emit_gauge(lines, "dmm_request_fts_streams_desired", req.fts_streams_desired, labels)
-        _emit_gauge(lines, "dmm_request_prometheus_throughput_gbps", req.prometheus_throughput, labels)
+        _emit_gauge(lines, "dmm_request_prometheus_throughput_mbps", req.prometheus_throughput, labels)
         _emit_gauge(lines, "dmm_request_prometheus_bytes", req.prometheus_bytes, labels)
 
-        if req.health is not None:
-            if str(req.health) == "1":
-                _emit_gauge(lines, "dmm_request_health", 1, labels)
-            elif str(req.health) == "0":
-                _emit_gauge(lines, "dmm_request_health", 0, labels)
+        if req.prometheus_throughput is not None and req.allocated_bandwidth_mbps:
+            _emit_gauge(
+                lines,
+                "dmm_request_utilization_ratio",
+                round(req.prometheus_throughput / req.allocated_bandwidth_mbps, 4),
+                labels,
+            )
+
+        # A request with no verdict yet emits no sample at all - "unknown" is the
+        # absence of the series, not a third value.
+        if str(req.health) in ("0", "1"):
+            _emit_gauge(lines, "dmm_request_health", int(req.health), labels)
+
+        if req.transfer_verdict:
+            _emit_gauge(lines, "dmm_request_transfer_audit", 1, {**labels, "verdict": req.transfer_verdict})
+
+    verdict_counts: dict[str, int] = {}
+    for req in reqs:
+        if req.transfer_verdict:
+            verdict_counts[req.transfer_verdict] = verdict_counts.get(req.transfer_verdict, 0) + 1
+    for verdict, count in sorted(verdict_counts.items()):
+        _emit_gauge(lines, "dmm_transfer_audits_by_verdict", count, {"verdict": verdict})
 
     payload = "\n".join(lines) + "\n"
     return PlainTextResponse(payload, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 @api.get("/query/{rule_id}")
 @databased
-async def handle_client(rule_id: str, session=None):
+def handle_client(rule_id: str, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
     max_retries = config_get_int("rucio", "max_retries", default=2)
 
     retry_count = 0
-    
+
     while retry_count < max_retries:
         try:
             req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
@@ -171,7 +222,8 @@ async def handle_client(rule_id: str, session=None):
                     retry_count += 1
                     if retry_count < max_retries:
                         logging.info(f"Request {rule_id} not yet allocated, retrying in 15 seconds (attempt {retry_count}/{max_retries})")
-                        await asyncio.sleep(15)
+                        time.sleep(15)
+                        session.expire_all()
                     else:
                         raise HTTPException(status_code=404, detail="Request not yet allocated after retries")
             else:
@@ -181,14 +233,15 @@ async def handle_client(rule_id: str, session=None):
         except Exception as e:
             logging.error(f"Error processing client request: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error")
-    
+
     raise HTTPException(status_code=404, detail="Request not yet allocated")
 
 @api.get("/")
 @databased
-async def get_dmm_status(request: Request, session=None):
+def get_dmm_status(request: Request, session=None):
     try:
         reqs = DBRequest.get_all(session=session)
+        reqs.sort(key=lambda r: r.created_at or datetime.min, reverse=True)
         return templates.TemplateResponse(request, "index.html", {"data": reqs})
     except Exception as e:
         logging.error(e, exc_info=True)
@@ -196,7 +249,7 @@ async def get_dmm_status(request: Request, session=None):
 
 @api.get("/sites")
 @databased
-async def get_sites(request: Request, session=None):
+def get_sites(request: Request, session=None):
     try:
         sites = Site.get_all(session=session)
         return templates.TemplateResponse(request, "sites.html", {"data": sites})
@@ -206,13 +259,70 @@ async def get_sites(request: Request, session=None):
 
 @api.get("/details/{rule_id}")
 @databased
-async def open_rule_details(request: Request, rule_id: str, session=None):
+def open_rule_details(request: Request, rule_id: str, session=None):
     try:
         req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
-        return templates.TemplateResponse(request, "details.html", {"data": req})
+        return templates.TemplateResponse(
+            request,
+            "details.html",
+            {"data": req, "utilization": _utilization(req) if req else None},
+        )
     except Exception as e:
         logging.error(e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+_TERMINAL_STATUSES = [
+    RequestStatus.FINISHED_R, RequestStatus.FINISHED, RequestStatus.CANCELED,
+    RequestStatus.DELETED, RequestStatus.FAILED,
+]
+
+_SENSE_STATE_RESET = {
+    "sense_uuid": None,
+    "sense_src_uri": None,
+    "sense_dst_uri": None,
+    "sense_circuit_status": None,
+    "sense_affiliated": False,
+    "sense_provisioned_at": None,
+    "sense_retries": 0,
+    "allocated_bandwidth_mbps": None,
+    "available_bandwidth_mbps": None,
+    "previous_bandwidth_mbps": None,
+}
+
+
+def _cleanup_sense_instance(req):
+    """Best-effort cancel + delete of a request's old SENSE instance."""
+    if not req.sense_uuid:
+        return
+    try:
+        cancel_link(req.sense_uuid, req.sense_circuit_status)
+    except Exception as e:
+        logging.error(f"Failed to cancel SENSE instance {req.sense_uuid} for {req.rule_id}: {e}")
+    try:
+        delete_instance(req.sense_uuid)
+    except Exception as e:
+        logging.error(f"Failed to delete SENSE instance {req.sense_uuid} for {req.rule_id}: {e}")
+
+
+def _reject_if_circuit_shared(req, session):
+    if not req.sense_uuid:
+        return
+    live_reqs = DBRequest.get_by_status(
+        statuses=[
+            RequestStatus.STAGED, RequestStatus.DECIDED, RequestStatus.PROVISIONED,
+            RequestStatus.STALE, RequestStatus.MODIFIED, RequestStatus.FINISHED_R,
+            RequestStatus.FINISHED,
+        ],
+        session=session,
+        use_lock=False,
+    )
+    for other in live_reqs:
+        if other.rule_id != req.rule_id and other.sense_uuid == req.sense_uuid:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Circuit {req.sense_uuid} is in use by request '{other.rule_id}'",
+            )
+
 
 @api.post("/mark_finished")
 @databased
@@ -222,8 +332,10 @@ async def mark_finished(request: Request, session=None):
         rule_id = _require_rule_id(data)
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
+        if req.transfer_status in _TERMINAL_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Request is already in state '{req.transfer_status}'")
         req.set_status(RequestStatus.FINISHED_R, session=session)
-        req.update({"rucio_finished_at": datetime.now()}, session=session)
+        req.update({"rucio_finished_at": utcnow()}, session=session)
         return "Request marked as finished"
     except HTTPException:
         raise
@@ -262,6 +374,12 @@ async def reinitialize_sense(request: Request, session=None):
         rule_id = _require_rule_id(data)
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
+        if not req.src_endpoint or not req.dst_endpoint:
+            raise HTTPException(status_code=400, detail="Request has no allocated endpoints; use /reinitialize_request instead")
+        _reject_if_circuit_shared(req, session)
+        _cleanup_sense_instance(req)
+        req.update(dict(_SENSE_STATE_RESET), session=session)
+        req.clear_failure_reason(session=session)
         req.set_status(RequestStatus.ALLOCATED, session=session)
         return "Request reinitialized"
     except HTTPException:
@@ -278,6 +396,11 @@ async def reinitialize_request(request: Request, session=None):
         rule_id = _require_rule_id(data)
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
+        _reject_if_circuit_shared(req, session)
+        _cleanup_sense_instance(req)
+        release_endpoints_and_addresses(req, session)
+        req.update({**_SENSE_STATE_RESET, "src_endpoint": None, "dst_endpoint": None}, session=session)
+        req.clear_failure_reason(session=session)
         req.set_status(RequestStatus.INIT, session=session)
         return "Request reinitialized"
     except HTTPException:
@@ -289,7 +412,7 @@ async def reinitialize_request(request: Request, session=None):
 
 @api.post("/refresh_sites")
 @databased
-async def refresh_sites(session=None):
+def refresh_sites(session=None):
     try:
         client = Client()
         refresh_all_sites(client, session)
