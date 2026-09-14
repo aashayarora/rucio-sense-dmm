@@ -1,4 +1,7 @@
 [dmm]
+; Shared secret for the mutating POST endpoints. Unset means they are
+; open to anyone who can reach DMM. Set this whenever DMM is exposed.
+; api_token = change-me
 port=80
 
 [db]
