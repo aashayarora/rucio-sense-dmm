@@ -126,3 +126,34 @@ def config_get_int(section, option, default=_UNSET, constraint=None) -> int:
     except ValueError as ve:
         logging.error(str(ve))
         raise
+
+def config_get_float(section, option, default=_UNSET, constraint=None) -> float:
+    """
+    Get a float from the configuration file.
+
+    Pass ``default=None`` to return ``None`` when the key is absent (valid fallback).
+    Omit ``default`` entirely to raise an exception when the key is absent.
+    """
+    try:
+        value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getfloat)
+        if constraint:
+            if constraint == "pos" and value <= 0:
+                raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint 'positive'")
+            elif constraint == "nonneg" and value < 0:
+                raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint 'non-negative'")
+        return value
+    except ConfigParser.NoSectionError:
+        if default is not _UNSET:
+            return default
+        else:
+            logging.error(f"No section '{section}' found, and no default provided")
+            raise
+    except ConfigParser.NoOptionError:
+        if default is not _UNSET:
+            return default
+        else:
+            logging.error(f"No '{option}' in section '{section}', and no default provided")
+            raise
+    except ValueError as ve:
+        logging.error(str(ve))
+        raise

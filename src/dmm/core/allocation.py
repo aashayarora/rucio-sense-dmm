@@ -5,6 +5,7 @@ extracted from the allocator and sites daemons for better separation of concerns
 """
 import logging
 import json
+import ast
 import ipaddress
 
 from sense.client.address_api import AddressApi
@@ -22,9 +23,15 @@ def _good_response(response):
     if not response:
         return False
     if isinstance(response, dict):
-        if response.get("error"):
-            return False
-    return not any("error" in str(r).lower() for r in response)
+        return not response.get("error")
+    if isinstance(response, str):
+        return "error" not in response.lower()
+    if isinstance(response, (list, tuple)):
+        return not any(
+            (isinstance(r, dict) and r.get("error")) or (isinstance(r, str) and "error" in r.lower())
+            for r in response
+        )
+    return True
 
 def subnet_pool_name(pool_site):
     """
@@ -202,41 +209,71 @@ def get_site_info(root_uri):
         logging.error(f"Error occurred while getting site info for {root_uri}: {str(e)}")
         raise
 
+def _parse_vlan_range(vlan_range):
+    """
+    Parse a VLAN range string ("100-200", "100,101", "100") into (start, end).
+    Returns (None, None) if the string can't be parsed.
+    """
+    value = str(vlan_range).strip()
+    try:
+        if "-" in value:
+            start, end = map(int, value.split("-"))
+            return start, end
+        if "," in value:
+            values = [int(v) for v in value.split(",")]
+            return min(values), max(values)
+        return int(value), int(value)
+    except ValueError:
+        return None, None
+
+def _vlan_in_pool(vlan, pool):
+    """Check whether a VLAN id falls inside a pool string like "3600-3619,3700"."""
+    for token in str(pool).split(","):
+        token = token.strip()
+        try:
+            if "-" in token:
+                lo, hi = map(int, token.split("-"))
+            else:
+                lo = hi = int(token)
+        except ValueError:
+            continue
+        if lo <= vlan <= hi:
+            return True
+    return False
+
 def get_link_capacity(site_info, vlan_range):
     """
     Get the link capacity for a given site and VLAN range.
-    
+
     Args:
         site_info: Site info dict from get_site_info
-        vlan_range: VLAN range string (e.g., "100-200", "100,101", or "any")
-        
+        vlan_range: VLAN range string (e.g., "100-200", "100,101", "100", or "any")
+
     Returns:
         Link capacity in Mbps
     """
-    vlan_range_start = None
-    vlan_range_end = None
-    
-    if "-" in vlan_range:
-        vlan_range_start, vlan_range_end = map(int, vlan_range.split("-"))
-        logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
-    elif "," in vlan_range:
-        vlan_range_start = min(map(int, vlan_range.split(",")))
-        vlan_range_end = max(map(int, vlan_range.split(",")))
-        logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
-    
+    peer_points = site_info.get("peer_points") or []
+    if not peer_points:
+        raise ValueError("No peer points found in site info")
+
     if vlan_range == "any":
-        port_capacity = int(site_info["peer_points"][0]["port_capacity"])
+        port_capacity = int(peer_points[0]["port_capacity"])
         logging.debug(f"Using port capacity {port_capacity} for vlan range 'any'")
         return port_capacity
-    else:
-        for peer_point in site_info["peer_points"]:
-            if str(vlan_range_start) in peer_point["peer_vlan_pool"] and str(vlan_range_end) in peer_point["peer_vlan_pool"]:
+
+    vlan_range_start, vlan_range_end = _parse_vlan_range(vlan_range)
+    if vlan_range_start is not None:
+        logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
+        for peer_point in peer_points:
+            pool = peer_point.get("peer_vlan_pool", "")
+            if _vlan_in_pool(vlan_range_start, pool) and _vlan_in_pool(vlan_range_end, pool):
                 port_capacity = int(peer_point["port_capacity"])
                 logging.debug(f"Using port capacity {port_capacity} for vlan range {vlan_range_start}-{vlan_range_end}")
                 return port_capacity
-        port_capacity = int(site_info["peer_points"][0]["port_capacity"])
-        logging.debug(f"Using default port capacity {port_capacity} for vlan range {vlan_range}")
-        return port_capacity
+
+    port_capacity = int(peer_points[0]["port_capacity"])
+    logging.debug(f"Using default port capacity {port_capacity} for vlan range {vlan_range}")
+    return port_capacity
 
 def get_endpoints_for_site(sense_uri, site_name):
     """
@@ -280,8 +317,15 @@ def get_endpoints_for_site(sense_uri, site_name):
         if "Metadata" not in metadata:
             logging.warning(f"No Metadata field in response for {sense_uri}")
             return {}
-            
-        endpoint_list = json.loads(metadata["Metadata"].replace("'", "\""))
+
+        raw_metadata = metadata["Metadata"]
+        if isinstance(raw_metadata, dict):
+            endpoint_list = raw_metadata
+        else:
+            try:
+                endpoint_list = json.loads(raw_metadata)
+            except json.JSONDecodeError:
+                endpoint_list = ast.literal_eval(raw_metadata)
         if not endpoint_list:
             logging.warning(f"Empty endpoint list for {sense_uri}")
             return {}
@@ -325,12 +369,14 @@ def refresh_all_sites(rucio_client, session):
                 )
                 continue
 
-            site_ = _get_or_create_site(physical_name, site_objs, session, config_get)
+            site_ = _get_or_create_site(physical_name, session)
             site_objs.append(site_)
             refreshed[physical_name] = rse_name
             _add_endpoints_for_site(site_, rucio_client, session, rse_name=rse_name)
         except Exception as e:
             logging.error(f"Error occurred in refresh_sites for site {rse_name}: {str(e)}")
+
+    _ensure_mesh_links(site_objs, session, config_get)
 
     return rse_names
 
@@ -371,25 +417,23 @@ def _resolve_physical_site_name(rse_name, session):
         "if its physical site cannot be derived from the name."
     )
 
-def _get_or_create_site(site_name, site_objs, session, config_get_func):
+def _get_or_create_site(site_name, session):
     """
     Get existing site or create new one with SENSE URIs.
-    
+
     Args:
         site_name: Name of the site
-        site_objs: List of already processed site objects
         session: Database session
-        config_get_func: Config get function for VLAN ranges
-        
+
     Returns:
         Site object
     """
-    
+
     site_exists = Site.get_by_name(name=site_name, session=session, use_lock=False)
     if site_exists:
         logging.debug(f"Site {site_name} already exists in database")
         return site_exists
-    
+
     logging.debug(f"Site {site_name} not found in database, adding...")
     try:
         full_uri, root_uri = get_site_uris(site_name)
@@ -398,21 +442,37 @@ def _get_or_create_site(site_name, site_objs, session, config_get_func):
         query_url = site_info["domain_url"]
         site_ = Site(name=site_name, sense_uri=sense_uri, query_url=query_url)
         site_.save(session=session)
-
-        # Create mesh links between this site and existing sites
-        for site_obj in site_objs:
-            if site_obj == site_:
-                continue
-            vlan_range = _get_vlan_range_for_pair(site_obj, site_, config_get_func)
-            link_capacity = get_link_capacity(site_info, vlan_range)
-            mesh = Mesh(site1=site_obj, site2=site_, vlan_range=vlan_range, link_capacity_mbps=link_capacity)
-            mesh.save(session=session)
-
         logging.debug(f"Site {site_name} added to database")
         return site_
     except Exception as e:
         logging.error(f"Error occurred while adding site {site_name}: {str(e)}")
         raise
+
+def _ensure_mesh_links(site_objs, session, config_get_func):
+    """
+    Create missing mesh links between every pair of known sites. Done as a separate
+    pass over all pairs (rather than only when a site is first created) so that a
+    site added to Rucio later still gets linked to every existing site, regardless
+    of the order the sites are processed in.
+    """
+    site_info_cache = {}
+    for i, site_a in enumerate(site_objs):
+        for site_b in site_objs[i + 1:]:
+            try:
+                if Mesh.get_by_sites(site_a, site_b, session=session, use_lock=False) is not None:
+                    continue
+                vlan_range = _get_vlan_range_for_pair(site_a, site_b, config_get_func)
+                site_info = site_info_cache.get(site_b.name)
+                if site_info is None:
+                    _, root_uri = get_site_uris(site_b.name)
+                    site_info = get_site_info(root_uri)
+                    site_info_cache[site_b.name] = site_info
+                link_capacity = get_link_capacity(site_info, vlan_range)
+                mesh = Mesh(site1=site_a, site2=site_b, vlan_range=vlan_range, link_capacity_mbps=link_capacity)
+                mesh.save(session=session)
+                logging.info(f"Created mesh link {site_a.name}-{site_b.name} (vlan={vlan_range}, capacity={link_capacity} Mbps)")
+            except Exception as e:
+                logging.error(f"Failed to create mesh link between {site_a.name} and {site_b.name}: {str(e)}")
 
 def _get_vlan_range_for_pair(site_obj, site_, config_get_func):
     """Get VLAN range for a site pair."""

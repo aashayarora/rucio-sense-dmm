@@ -16,10 +16,15 @@ def _good_response(response):
     if not response:
         return False
     if isinstance(response, dict):
-        error_val = response.get("error")
-        if error_val:
-            return False
-    return not any("error" in str(r).lower() for r in response)
+        return not response.get("error")
+    if isinstance(response, str):
+        return "error" not in response.lower()
+    if isinstance(response, (list, tuple)):
+        return not any(
+            (isinstance(r, dict) and r.get("error")) or (isinstance(r, str) and "error" in r.lower())
+            for r in response
+        )
+    return True
 
 def get_instance_status(sense_uuid):
     """

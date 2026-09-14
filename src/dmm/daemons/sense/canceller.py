@@ -1,9 +1,9 @@
 import logging
-from datetime import datetime
 
 from dmm.daemons.base import DaemonBase
 
 from dmm.db.session import databased
+from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus
 
 from dmm.core.config import config_get_int
@@ -13,7 +13,9 @@ from dmm.core.sense import (
     is_being_cancelled,
     is_cancel_ready,
     is_create_compiled,
-    is_ready_for_cancel
+    is_ready_for_cancel,
+    is_create_failed,
+    is_modify_failed,
 )
 from dmm.core.utils import release_endpoints_and_addresses
 
@@ -58,9 +60,9 @@ class SENSECancellerDaemon(DaemonBase):
                         f"Request {req.rule_id} has no rucio_finished_at timestamp; "
                         "proceeding with cancellation immediately"
                     )
-                elif (datetime.now() - req.rucio_finished_at).total_seconds() < keep_alive_secs:
+                elif (utcnow() - req.rucio_finished_at).total_seconds() < keep_alive_secs:
                     logging.debug(
-                        f"Request {req.rule_id} finished {(datetime.now() - req.rucio_finished_at).total_seconds():.0f}s ago, "
+                        f"Request {req.rule_id} finished {(utcnow() - req.rucio_finished_at).total_seconds():.0f}s ago, "
                         f"waiting for keep-alive window ({keep_alive_secs}s) before cancellation"
                     )
                     continue
@@ -104,7 +106,9 @@ class SENSECancellerDaemon(DaemonBase):
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue
 
-                if not is_ready_for_cancel(live_status):
+                # Failed circuits can't reach a READY state — force-cancel them so the
+                # request doesn't stay FINISHED forever.
+                if not (is_ready_for_cancel(live_status) or is_create_failed(live_status) or is_modify_failed(live_status)):
                     logging.debug(f"Cannot cancel instance {req.sense_uuid} in status '{live_status}', will try again later")
                     continue
 

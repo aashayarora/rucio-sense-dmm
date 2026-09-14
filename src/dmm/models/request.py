@@ -1,3 +1,4 @@
+from sqlalchemy import Column, JSON
 from sqlmodel import Field, Relationship, select
 from typing import Optional, List, ClassVar
 from enum import Enum
@@ -37,6 +38,18 @@ class SenseCircuitStatus(str, Enum):
     CANCEL_COMMITTED   = "CANCEL - COMMITTED"
     CANCEL_READY       = "CANCEL - READY"
 
+class TransferVerdict(str, Enum):
+    """
+    Outcome of the post-transfer audit: what FTS says moved, checked against what
+    the circuit actually carried.
+    """
+    OK       = "OK"        # every FTS transfer finished, wire volume consistent
+    DEGRADED = "DEGRADED"  # some files failed, or the volume doesn't add up
+    FAILED   = "FAILED"    # most or all files failed
+    BYPASSED = "BYPASSED"  # files moved, but not over the circuit we provisioned
+    UNKNOWN  = "UNKNOWN"   # not enough data from FTS or Prometheus to judge
+
+
 class Request(ModelBase, table=True):
     rule_id: str = Field(primary_key=True)
     transfer_status: Optional[str] = Field(default=None, index=True)
@@ -62,6 +75,8 @@ class Request(ModelBase, table=True):
     sense_alloc_rule_id: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
     failed_at: Optional[datetime] = Field(default=None)
+    transfer_verdict: Optional[str] = Field(default=None, index=True)
+    transfer_audit: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # Site names as Rucio sent them. Several logical sites can map to one
     # physical site (T2_US_UCSD_Blackhole -> T2_US_UCSD); src_site_/dst_site_
@@ -128,6 +143,47 @@ class Request(ModelBase, table=True):
         if use_lock:
             statement = statement.with_for_update()
         return session.exec(statement).first()
+
+    @classmethod
+    def get_pending_audit(cls, statuses: List[str], finished_before, finished_after, limit=None, session=None, use_lock: bool = True):
+        """
+        Finished SENSE requests that haven't been audited yet.
+
+        finished_before keeps the audit off transfers whose FTS records may not have
+        been indexed in CERN monit yet - querying too early reads as "no transfers".
+        finished_after skips rules older than the monitoring backends retain, which
+        also bounds how long a rule that never gets records is retried.
+        """
+        logging.debug(f"REQUEST QUERY: pending audit, statuses={statuses}, finished in ({finished_after}, {finished_before})")
+        statement = select(cls).where(
+            cls.transfer_verdict.is_(None),
+            cls.transfer_status.in_(statuses),
+            cls.rucio_finished_at.is_not(None),
+            cls.rucio_finished_at < finished_before,
+            cls.rucio_finished_at > finished_after,
+        ).order_by(cls.rucio_finished_at)
+        # Limit in SQL, not after the fact: with_for_update() locks every row the
+        # statement returns, and a backlog shouldn't be held for a whole cycle.
+        if limit:
+            statement = statement.limit(limit)
+        if use_lock:
+            statement = statement.with_for_update()
+        return list(session.exec(statement).all())
+
+    @classmethod
+    def get_stale_health(cls, active_statuses: List[str], session=None, use_lock: bool = True):
+        """
+        Requests still carrying a health verdict that nothing updates any more -
+        only PROVISIONED requests get sampled, so anything else holds a stale value.
+        """
+        logging.debug(f"REQUEST QUERY: health set outside statuses={active_statuses}, locked={use_lock}")
+        statement = select(cls).where(
+            cls.health.is_not(None),
+            cls.transfer_status.not_in(active_statuses),
+        )
+        if use_lock:
+            statement = statement.with_for_update()
+        return list(session.exec(statement).all())
     
     # Failure reasons can be long (tracebacks, SENSE error blobs); cap what we persist.
     FAILURE_REASON_MAX_LEN: ClassVar[int] = 2000
@@ -166,7 +222,7 @@ class Request(ModelBase, table=True):
         logging.debug(f"REQUEST UPDATE: {self.rule_id} -> FAILED ({reason})")
         self.transfer_status = RequestStatus.FAILED
         self.failure_reason = reason
-        self.failed_at = datetime.now()
+        self.failed_at = utcnow()
         self.save(session)
 
     def mark_retry(self, reason, session=None):
@@ -237,4 +293,12 @@ class Request(ModelBase, table=True):
 
     def set_health(self, health: str, session=None):
         self.health = health
+        self.save(session)
+
+    def set_transfer_audit(self, verdict: str, audit: dict, session=None):
+        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> transfer_verdict={verdict}")
+        # Store the plain value: a str-mixin Enum renders as "TransferVerdict.OK"
+        # through str(), which is what the metrics labels would pick up.
+        self.transfer_verdict = getattr(verdict, "value", verdict)
+        self.transfer_audit = audit
         self.save(session)

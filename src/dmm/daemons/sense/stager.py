@@ -8,6 +8,7 @@ from dmm.models.mesh import Mesh
 
 from dmm.core.config import config_get
 from dmm.core.sense import stage_link, parse_staging_response
+from dmm.core.utils import release_endpoints_and_addresses
 
 class SENSEStagerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -28,6 +29,7 @@ class SENSEStagerDaemon(DaemonBase):
                 if vlan_range is None:
                     logging.error(f"No VLAN range found for {req.rule_id}, marking as FAILED")
                     req.mark_failed(f"No VLAN range found between {req.src_site} and {req.dst_site}", session=session)
+                    release_endpoints_and_addresses(req, session)
                     continue
                     
                 response = stage_link(

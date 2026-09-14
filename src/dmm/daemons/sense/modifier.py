@@ -1,9 +1,9 @@
 import logging
-from datetime import datetime
 
 from dmm.daemons.base import DaemonBase
 
 from dmm.db.session import databased
+from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
 from dmm.models.mesh import Mesh
 
@@ -17,6 +17,7 @@ from dmm.core.sense import (
     is_ready_for_modify,
     is_being_modified,
     is_modify_failed,
+    is_create_compiled,
 )
 
 class SENSEModifierDaemon(DaemonBase):
@@ -79,7 +80,7 @@ class SENSEModifierDaemon(DaemonBase):
             # Hold in FINISHED_R for a configurable grace period to allow circuit reuse
             finished_r_hold_secs = config_get_int("sense", "finished_r_hold_seconds", default=120, constraint="nonneg")
             if req.rucio_finished_at is not None:
-                elapsed = (datetime.now() - req.rucio_finished_at).total_seconds()
+                elapsed = (utcnow() - req.rucio_finished_at).total_seconds()
                 if elapsed < finished_r_hold_secs:
                     logging.debug(
                         f"Request {req.rule_id} entered FINISHED_R {elapsed:.0f}s ago, "
@@ -87,12 +88,21 @@ class SENSEModifierDaemon(DaemonBase):
                     )
                     continue
 
+            max_retries = config_get_int("sense", "max_retries", default=3)
+            if (req.sense_retries or 0) >= max_retries:
+                logging.warning(
+                    f"Throttle of finished request {req.rule_id} failed {req.sense_retries} times; "
+                    "skipping throttle and marking FINISHED so the circuit can be torn down"
+                )
+                req.set_status(status=RequestStatus.FINISHED, session=session)
+                continue
+
             try:
                 vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 if not vlan_range:
                     logging.error(f"No VLAN range found for {req.rule_id}")
                     continue
-                
+
                 modify_link(
                     sense_uuid=req.sense_uuid,
                     profile_uuid=self.profile_uuid,
@@ -120,12 +130,12 @@ class SENSEModifierDaemon(DaemonBase):
                         status=SenseCircuitStatus.MODIFY_COMMITTING.value, session=session
                     )
                 else:
+                    req.increment_sense_retries(session=session)
                     logging.error(
-                        f"Failed to throttle {req.rule_id}: {e} — "
-                        "skipping throttle, advancing to FINISHED for cancellation",
+                        f"Failed to throttle {req.rule_id}: {e} — will retry, then skip the "
+                        "throttle and advance to FINISHED for cancellation once retries run out",
                         exc_info=True,
                     )
-                    req.set_status(status=RequestStatus.FINISHED, session=session)
 
         for req in reqs_stale:
             # Skip this specific request if it's already being modified
@@ -134,11 +144,29 @@ class SENSEModifierDaemon(DaemonBase):
                 continue
                 
             if req.sense_uuid is None:
-                logging.warning(f"Request {req.rule_id} has no SENSE UUID, skipping modification")
+                # A STALE request with no circuit can't be modified and would block the
+                # provisioner forever — send it back through staging (endpoints are
+                # still allocated) or fail it if they're gone.
+                if req.src_endpoint and req.dst_endpoint:
+                    logging.warning(f"Request {req.rule_id} is STALE but has no SENSE UUID, resetting to ALLOCATED for re-staging")
+                    req.set_status(status=RequestStatus.ALLOCATED, session=session)
+                else:
+                    logging.error(f"Request {req.rule_id} is STALE with no SENSE UUID and no endpoints, marking as FAILED")
+                    req.mark_failed("STALE request with no SENSE UUID and no endpoints", session=session)
                 continue
-                
+
             try:
                 status = req.sense_circuit_status
+
+                if is_create_compiled(status):
+                    # The circuit was never provisioned — there's nothing to modify.
+                    # Fold the new bandwidth into DECIDED so the provisioner handles it.
+                    logging.info(
+                        f"Request {req.rule_id} is STALE but circuit {req.sense_uuid} is only compiled; "
+                        "returning to DECIDED so it gets provisioned at the new bandwidth"
+                    )
+                    req.set_status(status=RequestStatus.DECIDED, session=session)
+                    continue
 
                 if status == "UNKNOWN":
                     # The circuit UUID is no longer known to SENSE-O — most likely cleaned up

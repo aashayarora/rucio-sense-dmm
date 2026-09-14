@@ -18,11 +18,11 @@ class Mesh(ModelBase, table=True):
         super().__init__(**kwargs)
 
     @classmethod
-    def get_vlan_range(cls, site_1, site_2, session=None, use_lock: bool = True):
+    def get_by_sites(cls, site_1, site_2, session=None, use_lock: bool = True):
         site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
         site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
 
-        logging.debug(f"MESH QUERY: vlan_range between {site_1_name} and {site_2_name}, locked={use_lock}")
+        logging.debug(f"MESH QUERY: link between {site_1_name} and {site_2_name}, locked={use_lock}")
         statement = (
             select(cls)
             .where(or_(cls.site_1 == site_1_name, cls.site_1 == site_2_name))
@@ -30,21 +30,14 @@ class Mesh(ModelBase, table=True):
         )
         if use_lock:
             statement = statement.with_for_update()
-        mesh = session.exec(statement).first()
+        return session.exec(statement).first()
+
+    @classmethod
+    def get_vlan_range(cls, site_1, site_2, session=None, use_lock: bool = True):
+        mesh = cls.get_by_sites(site_1, site_2, session=session, use_lock=use_lock)
         return mesh.vlan_range if mesh else None
 
     @classmethod
     def get_link_capacity(cls, site_1, site_2, session=None, use_lock: bool = True):
-        site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
-        site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
-
-        logging.debug(f"MESH QUERY: link_capacity between {site_1_name} and {site_2_name}, locked={use_lock}")
-        statement = (
-            select(cls)
-            .where(or_(cls.site_1 == site_1_name, cls.site_1 == site_2_name))
-            .where(or_(cls.site_2 == site_1_name, cls.site_2 == site_2_name))
-        )
-        if use_lock:
-            statement = statement.with_for_update()
-        mesh = session.exec(statement).first()
+        mesh = cls.get_by_sites(site_1, site_2, session=session, use_lock=use_lock)
         return mesh.link_capacity_mbps if mesh else None

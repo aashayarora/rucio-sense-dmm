@@ -37,50 +37,84 @@ class DeciderDaemon(DaemonBase):
     def _build_multi_graph(self, session) -> nx.MultiGraph:
         """
         Build a network graph from the requests in the database.
-        The max available bandwidth is gotten from the Mesh table.
+        The link capacity is taken from the Mesh table.
+
+        FINISHED_R/FINISHED requests are kept in the graph as *fixed* reservations at
+        their allocated bandwidth: they don't compete in the priority split, but the
+        capacity they hold stays reserved (for a potential circuit takeover) until the
+        request is cancelled or taken over. This way active requests get readjusted
+        exactly once — when the finished circuit's final disposition is known — rather
+        than on every intermediate step (throttle to 1G, then cancel).
         """
         multi_graph = nx.MultiGraph()
-        reqs = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.DECIDED, RequestStatus.STALE, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.FINISHED], session=session) # get all requests which would affect the decision (i.e. don't consider requests that are in CANCELLED or FAILED state)
+        reqs = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.DECIDED, RequestStatus.STALE, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.FINISHED_R, RequestStatus.FINISHED], session=session) # get all requests which would affect the decision (i.e. don't consider requests that are in CANCELLED or FAILED state)
         if reqs == []:
             return multi_graph
         for req in reqs:
+            if not req.src_site or not req.dst_site:
+                logging.error(f"Request {req.rule_id} is missing source or destination site, excluding from optimization")
+                continue
             link_capacity_mbps = Mesh.get_link_capacity(req.src_site, req.dst_site, session=session)
-            multi_graph.add_node(req.src_site.name, link_capacity_mbps=link_capacity_mbps)
-            multi_graph.add_node(req.dst_site.name, link_capacity_mbps=link_capacity_mbps)
+            if link_capacity_mbps is None:
+                logging.error(f"No link capacity found for {req.src_site.name}-{req.dst_site.name}, excluding request {req.rule_id} from optimization")
+                continue
+            is_fixed = req.transfer_status in (RequestStatus.FINISHED_R, RequestStatus.FINISHED)
+            self._add_site_node(multi_graph, req.src_site.name, link_capacity_mbps)
+            self._add_site_node(multi_graph, req.dst_site.name, link_capacity_mbps)
             multi_graph.add_edge(
                 req.src_site.name, req.dst_site.name,
                 rule_id=req.rule_id,
                 priority=req.priority or 0,  # guard against None priority
                 bandwidth=req.allocated_bandwidth_mbps,
-                available_bandwidth=req.available_bandwidth_mbps,
+                link_capacity=link_capacity_mbps,
+                fixed=is_fixed,
+                fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
             )
         return multi_graph
 
+    @staticmethod
+    def _add_site_node(graph, site_name, link_capacity_mbps) -> None:
+        """
+        A site's capacity constraint must not be overwritten by whichever request is
+        processed last — keep the maximum of its adjacent link capacities.
+        """
+        if graph.has_node(site_name):
+            current = graph.nodes[site_name].get('link_capacity_mbps')
+            if current is None or link_capacity_mbps > current:
+                graph.nodes[site_name]['link_capacity_mbps'] = link_capacity_mbps
+        else:
+            graph.add_node(site_name, link_capacity_mbps=link_capacity_mbps)
+
     def _simplify_graph(self, multi_graph) -> tuple:
         """
-        Simplify the network graph by merging edges with the same source and destination nodes.
+        Simplify the network graph by merging edges with the same source and destination
+        nodes. Fixed (finished) requests contribute reserved bandwidth instead of priority.
         """
         simple_graph = nx.Graph()
         simple_graph.add_nodes_from(multi_graph.nodes(data=True))
 
         for u, v, data in multi_graph.edges(data=True):
-            priority = data['priority']
-            available_bandwidth = data.get('available_bandwidth', 1000)
+            priority = 0 if data.get('fixed') else data['priority']
+            fixed_bandwidth = data.get('fixed_bandwidth', 0)
+            link_capacity = data['link_capacity']
             if simple_graph.has_edge(u, v):
                 simple_graph[u][v]['priority'] += priority
+                simple_graph[u][v]['fixed_bandwidth'] += fixed_bandwidth
                 # The physical link capacity is fixed — take the max (not sum) so we
                 # don't artificially inflate the upper-bound constraint in the LP.
-                simple_graph[u][v]['available_bandwidth'] = max(
-                    simple_graph[u][v]['available_bandwidth'], available_bandwidth
+                simple_graph[u][v]['link_capacity'] = max(
+                    simple_graph[u][v]['link_capacity'], link_capacity
                 )
             else:
-                simple_graph.add_edge(u, v, priority=priority, available_bandwidth=available_bandwidth)
-        
+                simple_graph.add_edge(u, v, priority=priority, fixed_bandwidth=fixed_bandwidth, link_capacity=link_capacity)
+
         return simple_graph, list(simple_graph.nodes), list(simple_graph.edges(data=True))
 
     def _prepare_optimization_matrices(self, simple_graph, nodes, edges) -> tuple:
         """
         Prepare the matrices for the linear programming optimization.
+        Capacity reserved by finished circuits is subtracted from both the per-edge
+        and the per-node constraints before optimizing the active requests.
         """
         n_edges = len(edges)
         edge_index = {edge[:2]: i for i, edge in enumerate(edges)}
@@ -89,14 +123,22 @@ class DeciderDaemon(DaemonBase):
         for i, (u, v, data) in enumerate(edges):
             priority = data['priority']
             c[i] = -priority
-        
-        A = nx.incidence_matrix(simple_graph, nodelist=nodes, edgelist=edges).toarray()
-        b = np.array([simple_graph.nodes[node]['link_capacity_mbps'] for node in nodes])
 
-        available_bandwidths = np.array([data['available_bandwidth'] for _, _, data in edges])
+        A = nx.incidence_matrix(simple_graph, nodelist=nodes, edgelist=edges).toarray()
+        b = np.array([simple_graph.nodes[node]['link_capacity_mbps'] for node in nodes], dtype=float)
+
+        node_index = {node: i for i, node in enumerate(nodes)}
+        for u, v, data in edges:
+            b[node_index[u]] -= data['fixed_bandwidth']
+            b[node_index[v]] -= data['fixed_bandwidth']
+
+        edge_bounds = np.array(
+            [data['link_capacity'] - data['fixed_bandwidth'] for _, _, data in edges], dtype=float
+        )
 
         A = np.vstack([A, np.eye(n_edges)])
-        b = np.concatenate([b, available_bandwidths])
+        b = np.concatenate([b, edge_bounds])
+        b = np.clip(b, 0, None)
 
         return A, c, b, edge_index
 
@@ -143,6 +185,8 @@ class DeciderDaemon(DaemonBase):
         @param x: the optimization result
         """
         for u, v, key, data in multi_graph.edges(keys=True, data=True):
+            if data.get('fixed'):
+                continue
             total_priority = simple_graph[u][v]['priority']
             if total_priority > 0:
                 proportion = data['priority'] / total_priority

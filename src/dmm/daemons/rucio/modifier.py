@@ -32,4 +32,5 @@ class RucioModifierDaemon(DaemonBase):
     def _update_request_priority(self, req, new_priority, session):
         logging.debug(f"{req.rule_id} priority changed from {req.priority} to {new_priority}")
         req.set_priority(priority=new_priority, session=session)
-        req.set_status(status=RequestStatus.MODIFIED, session=session)
+        if req.transfer_status == RequestStatus.PROVISIONED:
+            req.set_status(status=RequestStatus.MODIFIED, session=session)

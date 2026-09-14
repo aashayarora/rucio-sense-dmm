@@ -13,6 +13,7 @@ from dmm.core.allocation import (
     format_ipv6_compressed,
     subnet_pool_name,
 )
+from dmm.core.sense import is_circuit_active
 
 class AllocatorDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -39,8 +40,11 @@ class AllocatorDaemon(DaemonBase):
             self._allocate_new_endpoints(new_request, session)  # if not found, allocate new endpoints
 
     def _reuse_finished_request(self, new_request, session, claimed_rule_ids: set) -> bool:
-        reqs_finished_r = Request.get_by_status(statuses=[RequestStatus.FINISHED_R], session=session)
-        for req_fin in reqs_finished_r:
+        reqs_finished = Request.get_by_status(statuses=[RequestStatus.FINISHED_R, RequestStatus.FINISHED], session=session)
+        # Prefer FINISHED_R circuits (still at full bandwidth) over FINISHED ones
+        # (already throttled to 1G, which forces an extra modify after takeover).
+        reqs_finished.sort(key=lambda r: 0 if r.transfer_status == RequestStatus.FINISHED_R else 1)
+        for req_fin in reqs_finished:
             if req_fin.rule_id in claimed_rule_ids:
                 continue
 
@@ -48,6 +52,13 @@ class AllocatorDaemon(DaemonBase):
                 logging.debug(
                     f"Skipping reuse of circuit {req_fin.sense_uuid} from {req_fin.rule_id}: "
                     "circuit_status is UNKNOWN — likely cleaned up by SENSE-O ConsistencyService"
+                )
+                continue
+
+            if not is_circuit_active(req_fin.sense_circuit_status):
+                logging.debug(
+                    f"Skipping reuse of circuit {req_fin.sense_uuid} from {req_fin.rule_id}: "
+                    f"circuit_status '{req_fin.sense_circuit_status}' is not an active state"
                 )
                 continue
 
@@ -83,13 +94,18 @@ class AllocatorDaemon(DaemonBase):
 
                 inherited_alloc_rule_id = req_fin.sense_alloc_rule_id or req_fin.rule_id
 
+                if req_fin.transfer_status == RequestStatus.FINISHED:
+                    inherited_bandwidth = 1000
+                else:
+                    inherited_bandwidth = req_fin.allocated_bandwidth_mbps
+
                 new_request.update({
                     "src_endpoint": reused_src_endpoint,
                     "dst_endpoint": reused_dst_endpoint,
                     "sense_uuid": req_fin.sense_uuid,
                     "sense_src_uri": reused_src_uri,
                     "sense_dst_uri": reused_dst_uri,
-                    "allocated_bandwidth_mbps": req_fin.allocated_bandwidth_mbps,
+                    "allocated_bandwidth_mbps": inherited_bandwidth,
                     "available_bandwidth_mbps": req_fin.available_bandwidth_mbps,
                     "sense_circuit_status": req_fin.sense_circuit_status,
                     "sense_affiliated": req_fin.sense_affiliated,
@@ -169,7 +185,7 @@ class AllocatorDaemon(DaemonBase):
                 "transfer_status": RequestStatus.ALLOCATED
             }, session=session)
 
-            # Let the @databased decorator on run_once own the final commit.
+            session.commit()
             logging.info(f"Successfully allocated endpoints for request {new_request.rule_id}")
 
         except Exception as e:

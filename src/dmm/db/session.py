@@ -1,5 +1,5 @@
 from functools import wraps
-from inspect import iscoroutinefunction
+from inspect import iscoroutinefunction, signature
 import logging
 
 from sqlmodel import create_engine, Session
@@ -12,7 +12,7 @@ def get_engine():
     global _ENGINE
     if not _ENGINE:
         db_type = config_get("db", "db_type", default="postgresql")
-        if db_type == "postgresql":
+        if db_type in ("postgresql", "postgres"):
             username = config_get("db", "username", default="dmm")
             password = config_get("db", "password", default="dmm")
             host = config_get("db", "db_host", default="localhost")
@@ -76,4 +76,9 @@ def databased(function):
             else:
                 result = function(*args, **kwargs)
             return result
+
+    sig = signature(function)
+    new_funct.__signature__ = sig.replace(
+        parameters=[p for p in sig.parameters.values() if p.name != "session"]
+    )
     return new_funct
