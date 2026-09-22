@@ -2,10 +2,9 @@ import logging
 import os
 import asyncio
 from hmac import compare_digest
-import time
 from datetime import datetime
 from json import JSONDecodeError
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -21,8 +20,8 @@ from dmm.models.base import utcnow
 from dmm.models.request import Request as DBRequest, RequestStatus
 from dmm.models.site import Site
 from dmm.models.mesh import Mesh
-from dmm.core.config import config_get, config_get_int
-from dmm.core.config import config_get_float, config_get_int
+from dmm.core.config import config_get
+from dmm.core.config import config_get_float
 from dmm.core.allocation import refresh_all_sites
 from dmm.core.health import health_report
 from dmm.api.serializers import mesh_to_dict, request_to_dict, site_to_dict
@@ -323,38 +322,56 @@ async def metrics():
     payload = await run_in_threadpool(_collect_metrics)
     return PlainTextResponse(payload, media_type="text/plain; version=0.0.4; charset=utf-8")
 
+def _allocation(req: DBRequest) -> Optional[dict]:
+    """SENSE endpoints Rucio should route a rule's transfers to, or None if not allocated yet.
+
+    src_rse/dst_rse are the logical sites, i.e. the RSE names from the rule, so
+    Rucio can check that a transfer runs between the RSEs the circuit was built for.
+    """
+    if not (req.src_endpoint and req.dst_endpoint):
+        return None
+    return {
+        "source": req.src_endpoint.hostname,
+        "destination": req.dst_endpoint.hostname,
+        "src_rse": req.src_pool_site,
+        "dst_rse": req.dst_pool_site,
+    }
+
+
+# Both lookups answer straight away. Rucio asks again on its next submission
+# cycle, so holding the request open while an allocation is pending only stalls
+# the submitter.
+@api.get("/query")
+@databased
+def query_allocations(rule_id: List[str] = Query(...), session=None):
+    """Allocations of several rules at once: {rule_id: allocation}, with rules that have none left out."""
+    logging.debug(f"Received allocation query for rule_ids: {rule_id}")
+    try:
+        reqs = DBRequest.get_by_ids(rule_id, session=session, use_lock=False)
+        allocations = {req.rule_id: _allocation(req) for req in reqs}
+        return JSONResponse(content={rid: alloc for rid, alloc in allocations.items() if alloc})
+    except Exception as e:
+        logging.error(f"Error querying allocations for {len(rule_id)} rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @api.get("/query/{rule_id}")
 @databased
 def handle_client(rule_id: str, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
-    max_retries = config_get_int("rucio", "max_retries", default=2)
-
-    retry_count = 0
-
-    while retry_count < max_retries:
-        try:
-            req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
-            if req:
-                if req.src_endpoint and req.dst_endpoint:
-                    result = {"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname}
-                    return JSONResponse(content=result)
-                else:
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        logging.info(f"Request {rule_id} not yet allocated, retrying in 15 seconds (attempt {retry_count}/{max_retries})")
-                        time.sleep(15)
-                        session.expire_all()
-                    else:
-                        raise HTTPException(status_code=404, detail="Request not yet allocated after retries")
-            else:
-                raise HTTPException(status_code=404, detail="Request not found")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logging.error(f"Error processing client request: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-
-    raise HTTPException(status_code=404, detail="Request not yet allocated")
+    try:
+        req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+        allocation = _allocation(req)
+        if not allocation:
+            raise HTTPException(status_code=404, detail="Request not yet allocated")
+        return JSONResponse(content=allocation)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error processing client request: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # response_class on the three template handlers below is not cosmetic: without
 # it FastAPI documents them as application/json, which is what the generated

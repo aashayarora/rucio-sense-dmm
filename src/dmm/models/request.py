@@ -177,6 +177,14 @@ class Request(ModelBase, table=True):
         return session.exec(statement).first()
 
     @classmethod
+    def get_by_ids(cls, rule_ids: List[str], session=None, use_lock: bool = True):
+        logging.debug(f"REQUEST QUERY: rule_ids={rule_ids}, locked={use_lock}")
+        statement = select(cls).where(cls.rule_id.in_(rule_ids))
+        if use_lock:
+            statement = statement.with_for_update()
+        return list(session.exec(statement).all())
+
+    @classmethod
     def get_pending_audit(cls, statuses: List[str], finished_before, finished_after, limit=None, session=None, use_lock: bool = True):
         """
         Finished SENSE requests that haven't been audited yet.
