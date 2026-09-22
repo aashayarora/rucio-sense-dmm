@@ -154,6 +154,23 @@ class Request(ModelBase, table=True):
         return list(session.exec(statement).all())
 
     @classmethod
+    def get_by_ids(cls, rule_ids: List[str], session=None, use_lock: bool = False):
+        """Several requests in one query, for callers holding a list of ids.
+
+        `use_lock` defaults to False, unlike `get_by_id`: the caller this
+        exists for is Rucio's submitter asking what is allocated, and taking
+        a row lock on a batch of live requests to answer a read would put the
+        daemons behind an HTTP request.
+        """
+        if not rule_ids:
+            return []
+        logging.debug(f"REQUEST QUERY: {len(rule_ids)} rule_ids, locked={use_lock}")
+        statement = select(cls).where(cls.rule_id.in_(rule_ids))
+        if use_lock:
+            statement = statement.with_for_update()
+        return list(session.exec(statement).all())
+
+    @classmethod
     def get_by_id(cls, rule_id: str, session=None, use_lock: bool = True):
         logging.debug(f"REQUEST QUERY: rule_id={rule_id}, locked={use_lock}")
         statement = select(cls).where(cls.rule_id == rule_id)
