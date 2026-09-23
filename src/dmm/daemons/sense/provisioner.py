@@ -61,7 +61,7 @@ class SENSEProvisionerDaemon(DaemonBase):
             try:
                 status = req.sense_circuit_status
                 if is_create_ready(status):
-                    logging.debug(f"Request {req.sense_uuid} already in ready status, marking as provisioned")
+                    logging.info(f"Request {req.sense_uuid} already in ready status, marking as provisioned")
                     req.clear_failure_reason(session=session)
                     req.set_status(status=RequestStatus.PROVISIONED, session=session)
                     continue

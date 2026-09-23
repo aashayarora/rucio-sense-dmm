@@ -31,7 +31,7 @@ class FTSModifierDaemon(DaemonBase):
                     f"Skipping FTS update for request {req.rule_id}: missing source or destination endpoint"
                 )
                 return
-            logging.debug(f"Modifying FTS limits for request {req.rule_id}, from {req.fts_streams_current} to {req.fts_streams_desired}")
+            logging.info(f"Modifying FTS limits for request {req.rule_id}, from {req.fts_streams_current} to {req.fts_streams_desired}")
             if modify_fts_config(req.src_endpoint, req.dst_endpoint, req.fts_streams_desired):
                 req.set_fts_streams(current=req.fts_streams_desired, session=session)
 
@@ -45,6 +45,6 @@ class FTSModifierDaemon(DaemonBase):
                     "missing source or destination endpoint. The cap may still be active in FTS."
                 )
                 return
-            logging.debug(f"Deleting FTS limits for request {req.rule_id}")
+            logging.info(f"Deleting FTS limits for request {req.rule_id}")
             delete_fts_config(req.src_endpoint, req.dst_endpoint)
             req.set_fts_streams(current=0, session=session)

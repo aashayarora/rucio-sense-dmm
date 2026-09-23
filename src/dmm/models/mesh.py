@@ -1,6 +1,5 @@
 from sqlmodel import Field, Relationship, or_, select
 from typing import Optional
-import logging
 
 from dmm.models.base import *
 
@@ -22,7 +21,6 @@ class Mesh(ModelBase, table=True):
         site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
         site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
 
-        logging.debug(f"MESH QUERY: vlan_range between {site_1_name} and {site_2_name}, locked={use_lock}")
         statement = (
             select(cls)
             .where(or_(cls.site_1 == site_1_name, cls.site_1 == site_2_name))
@@ -38,7 +36,6 @@ class Mesh(ModelBase, table=True):
         site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
         site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
 
-        logging.debug(f"MESH QUERY: link_capacity between {site_1_name} and {site_2_name}, locked={use_lock}")
         statement = (
             select(cls)
             .where(or_(cls.site_1 == site_1_name, cls.site_1 == site_2_name))

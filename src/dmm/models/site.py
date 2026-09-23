@@ -1,6 +1,5 @@
 from sqlmodel import Field, Relationship, select
 from typing import List, Optional
-import logging
 
 from dmm.models.base import *
 
@@ -30,7 +29,6 @@ class Site(ModelBase, table=True):
 
     @classmethod
     def get_by_name(cls, name: str, session=None, use_lock: bool = True):
-        logging.debug(f"SITE QUERY: name={name}, locked={use_lock}")
         statement = select(cls).where(cls.name == name)
         if use_lock:
             statement = statement.with_for_update()

@@ -16,6 +16,7 @@ class FTSClient:
         }
     
     def _send_post(self, endpoint, data):
+        logging.debug(f"FTS POST {self.fts_host}{endpoint}: {data}")
         try:
             response = requests.post(
                 self.fts_host + endpoint,
@@ -25,6 +26,7 @@ class FTSClient:
                 data=data,
                 timeout=15,
             )
+            logging.debug(f"FTS POST {endpoint} response {response.status_code}: {response.text}")
             success = response.status_code in [200, 201]
             if success:
                 logging.info(f"FTS config modified successfully for {endpoint}")
@@ -36,6 +38,7 @@ class FTSClient:
             return False
     
     def _send_delete(self, endpoint):
+        logging.debug(f"FTS DELETE {self.fts_host}{endpoint}")
         try:
             response = requests.delete(
                 self.fts_host + endpoint,
@@ -44,6 +47,7 @@ class FTSClient:
                 verify=self.capath,
                 timeout=15,
             )
+            logging.debug(f"FTS DELETE {endpoint} response {response.status_code}: {response.text}")
             success = response.status_code in [200, 201, 204]
             if not success:
                 logging.warning(f"FTS deletion returned status {response.status_code}: {response.text}")

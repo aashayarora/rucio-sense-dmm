@@ -45,7 +45,7 @@ class SENSECancellerDaemon(DaemonBase):
                     continue
 
                 if req.sense_uuid is None:
-                    logging.debug(f"Request {req.rule_id} has no SENSE UUID, releasing endpoints and marking as DELETED")
+                    logging.info(f"Request {req.rule_id} has no SENSE UUID, releasing endpoints and marking as DELETED")
                     release_endpoints_and_addresses(req, session)
                     req.set_status(status=RequestStatus.DELETED, session=session)
                     continue
@@ -83,7 +83,7 @@ class SENSECancellerDaemon(DaemonBase):
                 req.set_sense_circuit_status(live_status, session=session)
 
                 if is_cancel_ready(live_status):
-                    logging.debug(f"Circuit {req.sense_uuid} in CANCEL-READY, releasing and marking CANCELED")
+                    logging.info(f"Circuit {req.sense_uuid} in CANCEL-READY, releasing and marking CANCELED")
                     release_endpoints_and_addresses(req, session)
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue
@@ -99,7 +99,7 @@ class SENSECancellerDaemon(DaemonBase):
                     continue
 
                 if is_create_compiled(live_status):
-                    logging.debug(f"Circuit {req.sense_uuid} in CREATE-COMPILED, safe to mark CANCELED without cancel call")
+                    logging.info(f"Circuit {req.sense_uuid} in CREATE-COMPILED, safe to mark CANCELED without cancel call")
                     release_endpoints_and_addresses(req, session)
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue

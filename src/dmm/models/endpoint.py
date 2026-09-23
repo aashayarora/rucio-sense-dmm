@@ -29,7 +29,6 @@ class Endpoint(ModelBase, table=True):
 
     @classmethod
     def get_all(cls, session=None, use_lock: bool = True):
-        logging.debug(f"ENDPOINT QUERY: getting all endpoints, locked={use_lock}")
         statement = select(cls)
         if use_lock:
             statement = statement.with_for_update()
@@ -37,7 +36,6 @@ class Endpoint(ModelBase, table=True):
     
     @classmethod
     def get_by_ip_range(cls, ip_range: str, session=None, use_lock: bool = True):
-        logging.debug(f"ENDPOINT QUERY: ip range {ip_range}, locked={use_lock}")
         statement = select(cls).where(cls.ip_range == ip_range)
         if use_lock:
             statement = statement.with_for_update()
@@ -45,7 +43,6 @@ class Endpoint(ModelBase, table=True):
     
     @classmethod
     def get_by_site(cls, site_name: str, session=None, use_lock: bool = True):
-        logging.debug(f"ENDPOINT QUERY: site name {site_name}, locked={use_lock}")
         statement = select(cls).where(cls.site_name == site_name)
         if use_lock:
             statement = statement.with_for_update()
@@ -53,7 +50,6 @@ class Endpoint(ModelBase, table=True):
     
     @classmethod
     def get_for_allocation(cls, site_name: str, ip_range: str, session=None):
-        logging.debug(f"ENDPOINT QUERY: site={site_name}, ip_range={ip_range}")
         statement = (
             select(cls)
             .where(cls.site_name == site_name)
@@ -63,6 +59,6 @@ class Endpoint(ModelBase, table=True):
         return session.exec(statement).first()
 
     def set_allocated(self, is_allocated: bool, session=None):
-        logging.debug(f"Setting endpoint {self.ip_range} allocation status to {is_allocated}")
+        logging.info(f"Setting endpoint {self.ip_range} allocation status to {is_allocated}")
         self.is_allocated = is_allocated
         self.save(session)
