@@ -4,7 +4,7 @@ import asyncio
 from hmac import compare_digest
 from datetime import datetime
 from json import JSONDecodeError
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -15,12 +15,11 @@ from starlette.concurrency import run_in_threadpool
 from sqlmodel import select
 
 from dmm.db.session import databased, get_session
-from dmm.db.session import databased
 from dmm.models.base import utcnow
 from dmm.models.request import Request as DBRequest, RequestStatus
 from dmm.models.site import Site
 from dmm.models.mesh import Mesh
-from dmm.core.config import config_get
+from dmm.core.config import config_get, config_get_int
 from dmm.core.config import config_get_float
 from dmm.core.allocation import refresh_all_sites
 from dmm.core.health import health_report
@@ -166,11 +165,6 @@ MAX_EXPORTED_REQUESTS = 5000
 
 
 def _render_metrics(reqs) -> str:
-@api.get("/metrics", response_class=PlainTextResponse)
-@databased
-def metrics(session=None):
-    reqs = DBRequest.get_all(session=session)
-
     lines: list[str] = []
 
     lines.append("# HELP dmm_requests_total Number of requests exported: all non-terminal, "
@@ -208,8 +202,6 @@ def metrics(session=None):
                  "dmm_request_prometheus_throughput_mbps, in Gbps. Kept so existing "
                  "dashboards keep resolving; scheduled for removal")
     lines.append("# TYPE dmm_request_prometheus_throughput_gbps gauge")
-    lines.append("# HELP dmm_request_prometheus_throughput_mbps Measured throughput in Mbps")
-    lines.append("# TYPE dmm_request_prometheus_throughput_mbps gauge")
     lines.append("# HELP dmm_request_prometheus_bytes Measured bytes from prometheus polling")
     lines.append("# TYPE dmm_request_prometheus_bytes gauge")
     lines.append("# HELP dmm_request_utilization_ratio Measured throughput as a fraction of allocated bandwidth")
@@ -268,7 +260,6 @@ def metrics(session=None):
             None if req.prometheus_throughput is None else req.prometheus_throughput / 1000,
             labels,
         )
-        _emit_gauge(lines, "dmm_request_prometheus_throughput_mbps", req.prometheus_throughput, labels)
         _emit_gauge(lines, "dmm_request_prometheus_bytes", req.prometheus_bytes, labels)
         # _emit_gauge skips None, so modified_priority is simply absent for a
         # rule the operator never overrode, rather than reported as 0.
@@ -414,21 +405,35 @@ async def handle_client_bulk(rule_id: list[str] = Query(default=[])):
 
 @api.get("/query/{rule_id}")
 @databased
-def handle_client(rule_id: str, session=None):
+async def handle_client(rule_id: str, session=None):
     logging.info(f"Received request for rule_id: {rule_id}")
-    try:
-        req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
-        if not req:
-            raise HTTPException(status_code=404, detail="Request not found")
-        allocation = _allocation(req)
-        if not allocation:
-            raise HTTPException(status_code=404, detail="Request not yet allocated")
-        return JSONResponse(content=allocation)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error processing client request: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    max_retries = config_get_int("rucio", "max_retries", default=2)
+
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
+            if req:
+                if req.src_endpoint and req.dst_endpoint:
+                    result = {"source": req.src_endpoint.hostname, "destination": req.dst_endpoint.hostname}
+                    return JSONResponse(content=result)
+                else:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logging.info(f"Request {rule_id} not yet allocated, retrying in 15 seconds (attempt {retry_count}/{max_retries})")
+                        await asyncio.sleep(15)
+                    else:
+                        raise HTTPException(status_code=404, detail="Request not yet allocated after retries")
+            else:
+                raise HTTPException(status_code=404, detail="Request not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logging.error(f"Error processing client request: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+    
+    raise HTTPException(status_code=404, detail="Request not yet allocated")
 
 # response_class on the three template handlers below is not cosmetic: without
 # it FastAPI documents them as application/json, which is what the generated
@@ -462,7 +467,13 @@ def open_rule_details(request: Request, rule_id: str, session=None):
     try:
         req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
         return templates.TemplateResponse(
-            request, "details.html", {"data": req, "auth_enabled": auth_enabled()}
+            request,
+            "details.html",
+            {
+                "data": req,
+                "auth_enabled": auth_enabled(),
+                "utilization": _utilization(req) if req else None,
+            },
         )
     except Exception as e:
         logging.error(e, exc_info=True)
@@ -558,11 +569,6 @@ async def api_list_mesh(session=None):
             "count": len(links),
             "links": [mesh_to_dict(link) for link in links],
         })
-        return templates.TemplateResponse(
-            request,
-            "details.html",
-            {"data": req, "utilization": _utilization(req) if req else None},
-        )
     except Exception as e:
         logging.error(e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -714,7 +720,6 @@ async def reinitialize_request(request: Request, authorization: Optional[str] = 
 @databased
 async def refresh_sites(authorization: Optional[str] = Header(None), session=None):
     _require_token(authorization)
-def refresh_sites(session=None):
     try:
         client = Client()
         refresh_all_sites(client, session)

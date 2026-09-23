@@ -486,16 +486,6 @@ def _get_or_create_site(site_name, session):
         query_url = site_info["domain_url"]
         site_ = Site(name=site_name, sense_uri=sense_uri, query_url=query_url)
         site_.save(session=session)
-
-        # Create mesh links between this site and existing sites
-        for site_obj in site_objs:
-            if site_obj == site_:
-                continue
-            vlan_range = _get_vlan_range_for_pair(site_obj, site_, config_get_func)
-            link_capacity = get_link_capacity(site_info, vlan_range)
-            mesh = Mesh(site1=site_obj, site2=site_, vlan_range=vlan_range, link_capacity_mbps=link_capacity)
-            mesh.save(session=session)
-
         logging.info(f"Site {site_name} added to database")
         return site_
     except Exception as e:

@@ -8,6 +8,7 @@ import uvicorn
 
 from rucio.client import Client
 from dmm.core.config import config_get, config_get_int
+from dmm.db.session import get_engine
 from dmm.core.health import reset_heartbeats
 from dmm.api.frontend import auth_enabled
 
