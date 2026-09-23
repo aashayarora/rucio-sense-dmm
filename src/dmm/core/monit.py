@@ -37,6 +37,7 @@ class PrometheusUtils:
     def submit_query(self, query_dict) -> dict:
         endpoint = "api/v1/query"
         query_addr = f"{self.prometheus_host}/{endpoint}"
+        logging.debug(f"Prometheus query {query_addr}: {json.dumps(query_dict)}")
         try:
             response = requests.get(
                 query_addr,
@@ -44,6 +45,7 @@ class PrometheusUtils:
                 auth=self._auth,
                 timeout=15,
             )
+            logging.debug(f"Prometheus response {response.status_code}: {response.text}")
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -211,8 +213,10 @@ class FTSMonitUtils:
             "_source": query_params
         }
         data_string = json.dumps(data)
+        logging.debug(f"FTS Monit query for {rule_id} {query_addr}: {data_string}")
         try:
-            response_obj = requests.get(query_addr, data=data_string, headers=self.headers, timeout=30)
+            response_obj = requests.get(query_addr, data=data_string, headers=self.headers, timeout=15)
+            logging.debug(f"FTS Monit response for {rule_id} {response_obj.status_code}: {response_obj.text}")
             response_obj.raise_for_status()
             response = response_obj.json()
         except requests.RequestException as e:

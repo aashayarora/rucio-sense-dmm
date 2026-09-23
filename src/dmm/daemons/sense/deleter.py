@@ -22,7 +22,7 @@ class SENSEDeleterDaemon(DaemonBase):
             
         for req in reqs_cancelled:
             if req.sense_uuid is None:
-                logging.debug(f"Request {req.rule_id} has no SENSE UUID, marking as DELETED")
+                logging.info(f"Request {req.rule_id} has no SENSE UUID, marking as DELETED")
                 req.set_status(status=RequestStatus.DELETED, session=session)
                 continue
                 

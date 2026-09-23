@@ -322,37 +322,94 @@ async def metrics():
     payload = await run_in_threadpool(_collect_metrics)
     return PlainTextResponse(payload, media_type="text/plain; version=0.0.4; charset=utf-8")
 
-def _allocation(req: DBRequest) -> Optional[dict]:
-    """SENSE endpoints Rucio should route a rule's transfers to, or None if not allocated yet.
+# Rucio asks for every SENSE rule in a submission batch at once. Bounded so a
+# malformed caller cannot ask for the whole table; Rucio's own batches are far
+# smaller than this.
+MAX_BULK_RULE_IDS = 1000
 
-    src_rse/dst_rse are the logical sites, i.e. the RSE names from the rule, so
-    Rucio can check that a transfer runs between the RSEs the circuit was built for.
+
+def _allocation_of(req):
+    """The four fields Rucio needs to reroute a transfer, or None.
+
+    Rucio's SenseFTS3Transfertool requires `source`, `destination`, `src_rse`
+    and `dst_rse` to all be strings and skips the rule otherwise, so a partial
+    allocation is worth nothing to it and is reported as no allocation at all.
+
+    The RSE names are the site names as Rucio sent them -- the logical site,
+    falling back to the physical one for requests created before multi-logical
+    -site support. Rucio compares them against `transfer.src.rse.name`, so
+    returning the physical site for a logical-site rule would make it refuse
+    to reroute. Same rule the `src_rse` metrics label follows.
     """
     if not (req.src_endpoint and req.dst_endpoint):
         return None
-    return {
-        "source": req.src_endpoint.hostname,
-        "destination": req.dst_endpoint.hostname,
-        "src_rse": req.src_pool_site,
-        "dst_rse": req.dst_pool_site,
-    }
+    source = req.src_endpoint.hostname
+    destination = req.dst_endpoint.hostname
+    src_rse = req.src_logical_site or (req.src_site.name if req.src_site else None)
+    dst_rse = req.dst_logical_site or (req.dst_site.name if req.dst_site else None)
+    if not (source and destination and src_rse and dst_rse):
+        return None
+    return {"source": source, "destination": destination,
+            "src_rse": src_rse, "dst_rse": dst_rse}
 
 
-# Both lookups answer straight away. Rucio asks again on its next submission
-# cycle, so holding the request open while an allocation is pending only stalls
-# the submitter.
+def _collect_allocations(ids):
+    """Read the allocations of several rules in one query.
+
+    Its own session, opened here rather than injected by `@databased`, for the
+    same reason `/metrics` does it: this runs in a worker thread, and a session
+    is not something to hand across one. It also skips the `commit()` that
+    decorator issues after every handler, which a read has no use for.
+    """
+    with get_session() as session:
+        reqs = DBRequest.get_by_ids(ids, session=session)
+        out = {}
+        for req in reqs:
+            allocation = _allocation_of(req)
+            if allocation:
+                out[req.rule_id] = allocation
+        return out
+
+
 @api.get("/query")
-@databased
-def query_allocations(rule_id: List[str] = Query(...), session=None):
-    """Allocations of several rules at once: {rule_id: allocation}, with rules that have none left out."""
-    logging.debug(f"Received allocation query for rule_ids: {rule_id}")
+async def handle_client_bulk(rule_id: list[str] = Query(default=[])):
+    """Allocations for several rules at once: `{rule_id: {...}}`.
+
+    This is the route Rucio's SENSE transfertool actually calls --
+    `GET /query?rule_id=<id>&rule_id=<id>...` -- and until it existed every
+    SENSE transfer was silently submitted over the ordinary storage door while
+    DMM went on provisioning circuits nobody used.
+
+    Two properties matter more than they look:
+
+    **It always answers 200.** On any error -- including a 404 -- the
+    transfertool sets an internal `dmm_unavailable` flag and submits the rest
+    of its cycle without SENSE routing, logging one warning into a daemon log.
+    So a rule DMM has never heard of is an absent key, never a 404; the
+    transfertool reads that as "no allocation yet" and submits that one rule
+    unrouted, which is correct.
+
+    **It never sleeps.** The per-rule route below waits for an allocation to
+    appear, which suits a caller asking about one rule. Doing that here would
+    block Rucio's submitter for minutes on the slowest rule in the batch. This
+    reports what is allocated now.
+    """
+    ids = [r for r in dict.fromkeys(rule_id) if r][:MAX_BULK_RULE_IDS]
+    if not ids:
+        return JSONResponse(content={})
+
     try:
-        reqs = DBRequest.get_by_ids(rule_id, session=session, use_lock=False)
-        allocations = {req.rule_id: _allocation(req) for req in reqs}
-        return JSONResponse(content={rid: alloc for rid, alloc in allocations.items() if alloc})
+        # SQLAlchemy here is synchronous, and this sits on the submitter's
+        # critical path: doing it inline would block the event loop, and every
+        # other request, for the whole scan.
+        out = await run_in_threadpool(_collect_allocations, ids)
     except Exception as e:
-        logging.error(f"Error querying allocations for {len(rule_id)} rules: {e}", exc_info=True)
+        logging.error(f"Error serving bulk query for {len(ids)} rule(s): {e}",
+                      exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+    logging.info(f"Bulk query: {len(out)}/{len(ids)} rule(s) allocated")
+    return JSONResponse(content=out)
 
 
 @api.get("/query/{rule_id}")

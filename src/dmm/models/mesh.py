@@ -1,6 +1,5 @@
 from sqlmodel import Field, Relationship, or_, select
 from typing import Optional
-import logging
 
 from dmm.models.base import *
 
@@ -22,7 +21,6 @@ class Mesh(ModelBase, table=True):
         site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
         site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
 
-        logging.debug(f"MESH QUERY: link between {site_1_name} and {site_2_name}, locked={use_lock}")
         statement = (
             select(cls)
             .where(or_(cls.site_1 == site_1_name, cls.site_1 == site_2_name))
@@ -39,5 +37,15 @@ class Mesh(ModelBase, table=True):
 
     @classmethod
     def get_link_capacity(cls, site_1, site_2, session=None, use_lock: bool = True):
-        mesh = cls.get_by_sites(site_1, site_2, session=session, use_lock=use_lock)
+        site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
+        site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
+
+        statement = (
+            select(cls)
+            .where(or_(cls.site_1 == site_1_name, cls.site_1 == site_2_name))
+            .where(or_(cls.site_2 == site_1_name, cls.site_2 == site_2_name))
+        )
+        if use_lock:
+            statement = statement.with_for_update()
+        mesh = session.exec(statement).first()
         return mesh.link_capacity_mbps if mesh else None

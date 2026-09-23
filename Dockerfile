@@ -1,9 +1,7 @@
 FROM python:3.11-slim-bookworm
 
 RUN apt update && \
-    apt-get install -y --no-install-recommends \
-    netcat-traditional \
-    curl && \
+    apt-get install --yes --no-install-recommends tini && \
     apt-get clean autoclean && \
     apt-get autoremove --yes && \
     rm -rf /var/lib/{apt,dpkg,cache,log}/
@@ -23,8 +21,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 80
 
-# Add health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:80/health || exit 1
-
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["tini", "-g", "--", "/docker-entrypoint.sh"]

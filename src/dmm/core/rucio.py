@@ -1,3 +1,4 @@
+import json
 import logging
 
 from rucio.common.exception import RuleNotFound
@@ -35,7 +36,9 @@ def get_replication_rule(client, rule_id):
     Raises:
         RuleNotFound: If the rule doesn't exist
     """
-    return client.get_replication_rule(rule_id)
+    rule = client.get_replication_rule(rule_id)
+    logging.debug(f"Rucio rule {rule_id}: {json.dumps(rule, default=str)}")
+    return rule
 
 def get_rule_status(client, rule_id):
     """
@@ -51,7 +54,7 @@ def get_rule_status(client, rule_id):
     Raises:
         RuleNotFound: If the rule doesn't exist
     """
-    return client.get_replication_rule(rule_id)['state']
+    return get_replication_rule(client, rule_id)['state']
 
 def get_rule_priority(client, rule_id):
     """
@@ -67,7 +70,7 @@ def get_rule_priority(client, rule_id):
     Raises:
         RuleNotFound: If the rule doesn't exist
     """
-    return client.get_replication_rule(rule_id)['priority']
+    return get_replication_rule(client, rule_id)['priority']
 
 def is_rule_finished(status):
     """
@@ -134,6 +137,7 @@ def get_rule_size(client, scope, name):
     try:
         files = list(client.list_files(scope=scope, name=name))
         total_bytes = sum([f.get("bytes", 0) for f in files if f.get("bytes") is not None])
+        logging.debug(f"Rucio size of {scope}:{name}: {total_bytes} bytes in {len(files)} files")
         return total_bytes if total_bytes > 0 else 0
     except Exception as e:
         logging.error(f"Failed to get rule size: {e}", exc_info=True)
@@ -162,7 +166,9 @@ def get_rse(client, rse_name):
     Returns:
         RSE dict
     """
-    return client.get_rse(rse_name)
+    rse = client.get_rse(rse_name)
+    logging.debug(f"Rucio RSE {rse_name}: {json.dumps(rse, default=str)}")
+    return rse
 
 def get_rse_protocol(client, rse_name):
     """
@@ -175,7 +181,7 @@ def get_rse_protocol(client, rse_name):
     Returns:
         Protocol scheme string or None if not found
     """
-    rse = client.get_rse(rse_name)
+    rse = get_rse(client, rse_name)
     if not rse:
         return None
     

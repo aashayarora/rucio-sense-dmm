@@ -70,7 +70,7 @@ class SENSEModifierDaemon(DaemonBase):
 
             # Skip if the circuit has been taken over by a new provisioned request
             if req.sense_uuid in reused_uuids:
-                logging.debug(
+                logging.info(
                     f"Request {req.rule_id} circuit {req.sense_uuid} has been reused by another "
                     f"request — skipping throttle/teardown, marking as DELETED"
                 )

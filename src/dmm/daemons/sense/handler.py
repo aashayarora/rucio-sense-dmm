@@ -145,31 +145,31 @@ class SENSEHandlerDaemon(DaemonBase):
                 status = get_instance_status(req.sense_uuid)
                 req.set_sense_circuit_status(status=status, session=session)
 
-                # Affiliate endpoints when ready
-                if not req.sense_affiliated and is_affiliated_state(status):
-                    if not req.src_pool_site or not req.dst_pool_site:
-                        logging.error(
-                            f"Request {req.rule_id} has no source/destination site, cannot affiliate endpoints"
-                        )
-                        continue
-                    logging.debug(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
-                    try:
-                        affiliate_endpoints(
-                            sense_uuid=req.sense_uuid,
-                            src_pool_site=req.src_pool_site,
-                            dst_pool_site=req.dst_pool_site,
-                            rule_id=req.rule_id,
-                            sense_src_uri=req.sense_src_uri,
-                            sense_dst_uri=req.sense_dst_uri
-                        )
-                        req.update({"sense_affiliated": True}, session=session)
-                    except Exception as e:
-                        logging.error(f"Failed to affiliate endpoints for {req.rule_id}, will retry next cycle: {e}")
-                        continue
+            # Affiliate endpoints when ready
+            if not req.sense_affiliated and is_affiliated_state(status):
+                if not req.src_pool_site or not req.dst_pool_site:
+                    logging.error(
+                        f"Request {req.rule_id} has no source/destination site, cannot affiliate endpoints"
+                    )
+                    continue
+                logging.info(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
+                try:
+                    affiliate_endpoints(
+                        sense_uuid=req.sense_uuid,
+                        src_pool_site=req.src_pool_site,
+                        dst_pool_site=req.dst_pool_site,
+                        rule_id=req.rule_id,
+                        sense_src_uri=req.sense_src_uri,
+                        sense_dst_uri=req.sense_dst_uri
+                    )
+                    req.update({"sense_affiliated": True}, session=session)
+                except Exception as e:
+                    logging.error(f"Failed to affiliate endpoints for {req.rule_id}, will retry next cycle: {e}")
+                    continue
 
-                if not req.sense_provisioned_at and is_create_ready(status):
-                    logging.debug(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
-                    req.update({"sense_provisioned_at": utcnow()}, session=session)
+            if not req.sense_provisioned_at and is_create_ready(status):
+                logging.info(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
+                req.update({"sense_provisioned_at": datetime.now()}, session=session)
 
                 elif req.transfer_status in [RequestStatus.PROVISIONED] and is_create_failed(status):
                     logging.warning(

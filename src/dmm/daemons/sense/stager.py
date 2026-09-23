@@ -46,8 +46,6 @@ class SENSEStagerDaemon(DaemonBase):
                     logging.error(f"Staging returned empty response for {req.rule_id}")
                     continue
                     
-                logging.debug(f"Staging returned response {response}")
-                
                 sense_uuid, bandwidth_mbps, src_uri, dst_uri = parse_staging_response(
                     response,
                     src_ip_range=req.src_endpoint.ip_range,

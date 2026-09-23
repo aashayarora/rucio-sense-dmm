@@ -106,12 +106,16 @@
     <script>
         const GROUPS = {
             active: ["PROVISIONED"],
-            progress: ["INIT", "NOT_SENSE", "ALLOCATED", "RETRY", "STAGED", "DECIDED", "STALE", "MODIFIED"],
+            progress: ["INIT", "ALLOCATED", "RETRY", "STAGED", "DECIDED", "STALE", "MODIFIED"],
             finished: ["FINISHED_R", "FINISHED", "CANCELED", "DELETED"],
             failed: ["FAILED"],
         };
 
+        // Rules DMM does not manage (no SENSE circuit): listed under Total only.
+        const UNGROUPED = ["NOT_SENSE"];
+
         function groupOf(status) {
+            if (UNGROUPED.includes(status)) return null;
             for (const [group, statuses] of Object.entries(GROUPS)) {
                 if (statuses.includes(status)) return group;
             }
@@ -130,7 +134,10 @@
 
         function computeCounts() {
             const counts = { all: rows.length, active: 0, progress: 0, finished: 0, failed: 0 };
-            rows.forEach(r => { counts[groupOf(r.dataset.status)]++; });
+            rows.forEach(r => {
+                const group = groupOf(r.dataset.status);
+                if (group) counts[group]++;
+            });
             for (const key of Object.keys(counts)) {
                 document.getElementById("count-" + key).textContent = counts[key];
             }

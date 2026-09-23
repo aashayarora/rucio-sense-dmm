@@ -162,15 +162,29 @@ class Request(ModelBase, table=True):
 
     @classmethod
     def get_by_status(cls, statuses: List[str], session=None, use_lock: bool = True):
-        logging.debug(f"REQUEST QUERY: statuses={statuses}, locked={use_lock}")
         statement = select(cls).where(cls.transfer_status.in_(statuses))
         if use_lock:
             statement = statement.with_for_update()
         return list(session.exec(statement).all())
 
     @classmethod
+    def get_by_ids(cls, rule_ids: List[str], session=None, use_lock: bool = False):
+        """Several requests in one query, for callers holding a list of ids.
+
+        `use_lock` defaults to False, unlike `get_by_id`: the caller this
+        exists for is Rucio's submitter asking what is allocated, and taking
+        a row lock on a batch of live requests to answer a read would put the
+        daemons behind an HTTP request.
+        """
+        if not rule_ids:
+            return []
+        statement = select(cls).where(cls.rule_id.in_(rule_ids))
+        if use_lock:
+            statement = statement.with_for_update()
+        return list(session.exec(statement).all())
+
+    @classmethod
     def get_by_id(cls, rule_id: str, session=None, use_lock: bool = True):
-        logging.debug(f"REQUEST QUERY: rule_id={rule_id}, locked={use_lock}")
         statement = select(cls).where(cls.rule_id == rule_id)
         if use_lock:
             statement = statement.with_for_update()
@@ -238,20 +252,20 @@ class Request(ModelBase, table=True):
         return reason
 
     def set_status(self, status: str, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> status={status}")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> status={status}")
         self.transfer_status = status
         self.save(session)
 
     def set_failure_reason(self, reason, session=None):
         reason = self._truncate_reason(reason)
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> failure_reason={reason}")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> failure_reason={reason}")
         self.failure_reason = reason
         self.save(session)
 
     def clear_failure_reason(self, session=None):
         if self.failure_reason is None and self.failed_at is None:
             return
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> clearing failure_reason")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> clearing failure_reason")
         self.failure_reason = None
         self.failed_at = None
         self.save(session)
@@ -259,7 +273,7 @@ class Request(ModelBase, table=True):
     def mark_failed(self, reason, session=None):
         """Permanently fail the request, recording why and when."""
         reason = self._truncate_reason(reason)
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> FAILED ({reason})")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> FAILED ({reason})")
         self.transfer_status = RequestStatus.FAILED
         self.failure_reason = reason
         self.failed_at = utcnow()
@@ -268,29 +282,29 @@ class Request(ModelBase, table=True):
     def mark_retry(self, reason, session=None):
         """Transient failure: record the reason but keep the request retrying."""
         reason = self._truncate_reason(reason)
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> RETRY ({reason})")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> RETRY ({reason})")
         self.transfer_status = RequestStatus.RETRY
         self.failure_reason = reason
         self.save(session)
 
     def set_available_bandwidth(self, bandwidth_mbps: float, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> available_bandwidth={bandwidth_mbps} Mbps")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> available_bandwidth={bandwidth_mbps} Mbps")
         self.available_bandwidth_mbps = bandwidth_mbps
         self.save(session)
 
     def set_sense_uuid(self, sense_uuid: str, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> sense_uuid={sense_uuid}")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> sense_uuid={sense_uuid}")
         self.sense_uuid = sense_uuid
         self.save(session)
 
     def set_sense_uris(self, src_uri: str, dst_uri: str, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> src_uri={src_uri}, dst_uri={dst_uri}")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> src_uri={src_uri}, dst_uri={dst_uri}")
         self.sense_src_uri = src_uri
         self.sense_dst_uri = dst_uri
         self.save(session)
     
     def set_allocated_bandwidth(self, bandwidth_mbps: float, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> allocated_bandwidth={bandwidth_mbps} Mbps")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> allocated_bandwidth={bandwidth_mbps} Mbps")
         self.allocated_bandwidth_mbps = bandwidth_mbps
         self.save(session)
 
@@ -300,7 +314,7 @@ class Request(ModelBase, table=True):
         self.save(session)
 
     def set_priority(self, priority: int, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> priority={priority}")
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> priority={priority}")
         self.priority = priority
         self.modified_priority = priority
         self.save(session)
@@ -311,16 +325,18 @@ class Request(ModelBase, table=True):
         self.save(session)
 
     def set_sense_circuit_status(self, status: str, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> circuit_status={status}")
+        # Called with the polled status every handler cycle; only a change is news.
+        if status != self.sense_circuit_status:
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit_status={status} (was {self.sense_circuit_status})")
         self.sense_circuit_status = status
         self.save(session)
     
     def set_fts_streams(self, current: int = None, desired: int = None, session=None):
         if current is not None:
-            logging.debug(f"REQUEST UPDATE: {self.rule_id} -> fts_streams_current={current}")
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> fts_streams_current={current}")
             self.fts_streams_current = current
         if desired is not None:
-            logging.debug(f"REQUEST UPDATE: {self.rule_id} -> fts_streams_desired={desired}")
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> fts_streams_desired={desired}")
             self.fts_streams_desired = desired
         self.save(session)
 

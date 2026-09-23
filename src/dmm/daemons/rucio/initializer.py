@@ -1,3 +1,4 @@
+import json
 import logging
 
 from datetime import datetime
@@ -41,7 +42,6 @@ class RucioInitDaemon(DaemonBase):
         for rule in rules:
             try:
                 if self._is_rule_in_db(rule, session):
-                    logging.debug(f"Rule {rule['id']} already exists in the database.")
                     continue
                 
                 rule_state = rule.get("state")
@@ -52,7 +52,7 @@ class RucioInitDaemon(DaemonBase):
                     logging.debug(f"Rule {rule['id']} is stuck; skipping.")
                     continue
 
-                logging.debug(f"Processing rule {rule['id']}.")
+                logging.debug(f"Processing rule {rule['id']}: {json.dumps(rule, default=str)}")
                 new_request = self._create_request_from_rule(rule, client, session)
                 new_request.save(session=session)
                 session.commit()
@@ -126,10 +126,10 @@ class RucioInitDaemon(DaemonBase):
             )
 
         if is_sense_rule(rule):
-            logging.debug(f"Rule {rule_id} identified as a SENSE rule.")
+            logging.info(f"Rule {rule_id} identified as a SENSE rule.")
             transfer_status = RequestStatus.INIT
         else:
-            logging.debug(f"Rule {rule_id} is not a SENSE rule; setting status to 'NOT_SENSE'.")
+            logging.info(f"Rule {rule_id} is not a SENSE rule; setting status to 'NOT_SENSE'.")
             transfer_status = RequestStatus.NOT_SENSE
 
         return Request(transfer_status=transfer_status, **request_kwargs)
