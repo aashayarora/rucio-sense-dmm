@@ -36,8 +36,8 @@ postgres:
 
 dmm:
   image:
-    repository: aaarora/dmm-dev
-    tag: latest
+    repository: aaarora/dmm
+    tag: dev
     pullPolicy: Always
   resources:
     requests:
