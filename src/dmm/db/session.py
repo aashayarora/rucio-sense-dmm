@@ -1,12 +1,23 @@
 from functools import wraps
 from inspect import iscoroutinefunction
 import logging
+import os
 
 from sqlmodel import create_engine, Session
 
 from dmm.core.config import config_get
 
 _ENGINE = None
+
+def _drop_inherited_pool():
+    # The frontend is forked after the site refresh has already pooled a
+    # connection, so without this both processes check out the same Postgres
+    # socket and read each other's replies. close=False leaves the parent's
+    # connections open; the child just starts with an empty pool.
+    if _ENGINE is not None:
+        _ENGINE.dispose(close=False)
+
+os.register_at_fork(after_in_child=_drop_inherited_pool)
 
 def get_engine():
     global _ENGINE

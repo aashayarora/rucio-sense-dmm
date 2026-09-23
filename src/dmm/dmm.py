@@ -7,7 +7,7 @@ import multiprocessing
 import uvicorn
 
 from rucio.client import Client
-from dmm.core.config import config_get_int
+from dmm.core.config import config_get, config_get_int
 from dmm.core.health import reset_heartbeats
 from dmm.api.frontend import auth_enabled
 
@@ -34,6 +34,8 @@ from dmm.api.frontend import api
 
 class DMM:
     def __init__(self) -> None:
+        logging.getLogger().setLevel(config_get("dmm", "log_level", default="INFO").upper())
+
         self.port = config_get_int("dmm", "port")
 
         # frequencies at which daemons run (in seconds)

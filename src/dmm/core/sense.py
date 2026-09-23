@@ -32,7 +32,9 @@ def get_instance_status(sense_uuid):
         Status string or "UNKNOWN" if not available
     """
     workflow_api = WorkflowCombinedApi()
-    return workflow_api.instance_get_status(si_uuid=sense_uuid) or "UNKNOWN"
+    status = workflow_api.instance_get_status(si_uuid=sense_uuid) or "UNKNOWN"
+    logging.debug(f"SENSE status of {sense_uuid}: {status}")
+    return status
 
 def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vlan_range, rule_id):
     """
@@ -92,7 +94,9 @@ def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vla
             ],
             "alias": rule_id
         }
+        logging.debug(f"SENSE stage intent for {rule_id} on {getattr(workflow_api, 'si_uuid', None)}: {json.dumps(intent)}")
         response = workflow_api.instance_create(json.dumps(intent))
+        logging.debug(f"SENSE stage response for {rule_id}: {json.dumps(response, default=str)}")
         if not _good_response(response):
             raise ValueError(f"SENSE req staging failed for {rule_id}")
         return response
@@ -230,10 +234,13 @@ def provision_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site,
             ],
             "alias": rule_id
         }
+        logging.debug(f"SENSE provision intent for {rule_id} on {sense_uuid}: {json.dumps(intent)}")
         response = workflow_api.instance_create(json.dumps(intent))
+        logging.debug(f"SENSE provision create response for {rule_id}: {json.dumps(response, default=str)}")
         if not _good_response(response):
             raise ValueError(f"Failed to create instance for request {rule_id}, response: {response}")
-        workflow_api.instance_operate("provision", sync="true")
+        operate_response = workflow_api.instance_operate("provision", sync="true")
+        logging.debug(f"SENSE provision operate response for {rule_id}: {json.dumps(operate_response, default=str)}")
         return response
     except Exception as e:
         logging.error(f"Failed to provision request {rule_id}: {e}")
@@ -282,7 +289,9 @@ def modify_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site,
             ],
             "alias": rule_id
         }
+        logging.debug(f"SENSE modify intent for {rule_id} on {sense_uuid}: {json.dumps(intent)}")
         response = workflow_api.instance_modify(json.dumps(intent), sync="true")
+        logging.debug(f"SENSE modify response for {rule_id}: {json.dumps(response, default=str)}")
         return True
     except Exception as e:
         logging.error(f"Failed to modify request {rule_id}: {e}")
@@ -301,7 +310,9 @@ def cancel_link(sense_uuid, status=None):
     """
     workflow_api = WorkflowCombinedApi()
     force_cancel = "READY" not in (status or "")
+    logging.debug(f"SENSE cancel {sense_uuid} (status={status}, force={force_cancel})")
     response = workflow_api.instance_operate("cancel", si_uuid=sense_uuid, sync="true", force=str(force_cancel).lower())
+    logging.debug(f"SENSE cancel response for {sense_uuid}: {json.dumps(response, default=str)}")
     return response
 
 def delete_instance(sense_uuid):
@@ -316,6 +327,7 @@ def delete_instance(sense_uuid):
     """
     workflow_api = WorkflowCombinedApi()
     response = workflow_api.instance_delete(si_uuid=sense_uuid)
+    logging.debug(f"SENSE delete response for {sense_uuid}: {json.dumps(response, default=str)}")
     return response
 
 

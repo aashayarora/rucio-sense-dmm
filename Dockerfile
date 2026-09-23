@@ -1,6 +1,7 @@
 FROM python:3.10-slim-bullseye
 
 RUN apt update && \
+    apt-get install --yes --no-install-recommends tini && \
     apt-get clean autoclean && \
     apt-get autoremove --yes && \
     rm -rf /var/lib/{apt,dpkg,cache,log}/
@@ -16,4 +17,4 @@ ENV DMM_CONFIG /opt/dmm/dmm.cfg
 
 EXPOSE 80
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["tini", "-g", "--", "/docker-entrypoint.sh"]

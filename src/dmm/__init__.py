@@ -12,7 +12,7 @@ _LOG_BACKUP_COUNT = int(os.environ.get("DMM_LOG_BACKUP_COUNT", 10))          # k
 logging.basicConfig(
     format="(%(threadName)s) [%(asctime)s] %(levelname)s: %(message)s",
     datefmt="%m-%d-%Y %H:%M:%S %p",
-    level=logging.DEBUG,
+    level=logging.INFO,  # DMM() applies [dmm] log_level once the config is loaded
     handlers=[
         RotatingFileHandler(
             filename=_LOG_FILE,

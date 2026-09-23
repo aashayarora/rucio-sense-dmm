@@ -147,7 +147,7 @@ class SENSEHandlerDaemon(DaemonBase):
                         f"Request {req.rule_id} has no source/destination site, cannot affiliate endpoints"
                     )
                     continue
-                logging.debug(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
+                logging.info(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
                 try:
                     affiliate_endpoints(
                         sense_uuid=req.sense_uuid,
@@ -163,7 +163,7 @@ class SENSEHandlerDaemon(DaemonBase):
                     continue
 
             if not req.sense_provisioned_at and is_create_ready(status):
-                logging.debug(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
+                logging.info(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
                 req.update({"sense_provisioned_at": datetime.now()}, session=session)
 
             elif req.transfer_status in [RequestStatus.PROVISIONED] and is_create_failed(status):

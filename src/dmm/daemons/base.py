@@ -36,7 +36,6 @@ class DaemonBase:
             while self.running:
                 try:
                     with lock:
-                        logging.debug(f"acquired lock")
                         try:
                             process(**kwargs)
                             # Only a completed cycle counts. Staleness is
@@ -46,7 +45,6 @@ class DaemonBase:
                             self._publish(running=True)
                         except Exception as e:
                             logging.error(f"Error in {self.__class__.__name__}: {e}", exc_info=True)
-                    logging.debug(f"released lock, sleeping for {self.frequency} seconds")
                 except Exception as e:
                     logging.error(f"Unexpected error: {e}", exc_info=True)
 

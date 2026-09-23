@@ -95,9 +95,9 @@ def allocate_address(pool_site, alloc_name):
     pool_name = subnet_pool_name(pool_site)
     alloc_type = "IPv6"
     try:
-        logging.debug(f"Getting IPv6 allocation from pool {pool_name}")
+        logging.debug(f"Getting IPv6 allocation from pool {pool_name} for {alloc_name} (type={alloc_type}, netmask=/64, batch=subnet)")
         response = address_api.allocate_address(pool_name, alloc_type, alloc_name, netmask="/64", batch="subnet")
-        logging.debug(f"Got allocation: {response} from pool {pool_name}")
+        logging.info(f"Got allocation: {response} from pool {pool_name}")
         return _one_subnet(response, pool_name)
     except Exception as e:
         logging.error(f"allocate_address: {str(e)}")
@@ -131,8 +131,9 @@ def free_address(pool_site, alloc_name):
         logging.debug(f"Freeing IPv6 allocation {alloc_name}")
         address_api = AddressApi()
         pool_name = subnet_pool_name(pool_site)
-        address_api.free_address(pool_name, name=alloc_name)
-        logging.debug(f"Allocation {alloc_name} freed from pool {pool_name}")
+        response = address_api.free_address(pool_name, name=alloc_name)
+        logging.debug(f"SENSE free_address response for {alloc_name}: {json.dumps(response, default=str)}")
+        logging.info(f"Allocation {alloc_name} freed from pool {pool_name}")
         return True
     except Exception as e:
         logging.error(f"free_address: {str(e)}")
@@ -158,14 +159,18 @@ def affiliate_endpoints(sense_uuid, src_pool_site, dst_pool_site, rule_id,
 
     try:
         src_pool_name = subnet_pool_name(src_pool_site)
-        logging.debug(f"Affiliating allocation {rule_id} with SENSE instance {sense_uuid} in address pool {src_pool_name}")
-        address_api.affiliate_address(pool=src_pool_name, uri=sense_src_uri, name=rule_id)
-        address_api.expire_address(pool=src_pool_name, expire=-1, name=rule_id)
+        logging.debug(f"Affiliating allocation {rule_id} with SENSE instance {sense_uuid} in address pool {src_pool_name}, uri={sense_src_uri}")
+        response = address_api.affiliate_address(pool=src_pool_name, uri=sense_src_uri, name=rule_id)
+        logging.debug(f"SENSE affiliate_address response for {rule_id} in {src_pool_name}: {json.dumps(response, default=str)}")
+        response = address_api.expire_address(pool=src_pool_name, expire=-1, name=rule_id)
+        logging.debug(f"SENSE expire_address response for {rule_id} in {src_pool_name}: {json.dumps(response, default=str)}")
 
         dst_pool_name = subnet_pool_name(dst_pool_site)
-        logging.debug(f"Affiliating allocation {rule_id} with SENSE instance {sense_uuid} in address pool {dst_pool_name}")
-        address_api.affiliate_address(pool=dst_pool_name, uri=sense_dst_uri, name=rule_id)
-        address_api.expire_address(pool=dst_pool_name, expire=-1, name=rule_id)
+        logging.debug(f"Affiliating allocation {rule_id} with SENSE instance {sense_uuid} in address pool {dst_pool_name}, uri={sense_dst_uri}")
+        response = address_api.affiliate_address(pool=dst_pool_name, uri=sense_dst_uri, name=rule_id)
+        logging.debug(f"SENSE affiliate_address response for {rule_id} in {dst_pool_name}: {json.dumps(response, default=str)}")
+        response = address_api.expire_address(pool=dst_pool_name, expire=-1, name=rule_id)
+        logging.debug(f"SENSE expire_address response for {rule_id} in {dst_pool_name}: {json.dumps(response, default=str)}")
         
         logging.info(f"Successfully affiliated endpoints for SENSE instance {sense_uuid}")
     except Exception as e:
@@ -200,6 +205,7 @@ def get_site_uris(site_name):
     try:
         discover_api = DiscoverApi()
         response = discover_api.discover_lookup_name_get(site_name, search="metadata", type="/sitename")
+        logging.debug(f"SENSE discover lookup for {site_name}: {json.dumps(response, default=str)}")
         if not _good_response(response) or not response["results"]:
             raise ValueError(f"Discover query failed for {site_name}")
         matched_results = [result for result in response["results"] if site_name in result["name/tag/value"]]
@@ -231,6 +237,7 @@ def get_site_info(root_uri):
     try:
         discover_api = DiscoverApi()
         site_info = discover_api.discover_domain_id_get(root_uri)
+        logging.debug(f"SENSE domain info for {root_uri}: {json.dumps(site_info, default=str)}")
         if not _good_response(site_info):
             raise ValueError(f"Site Info Query Failed for {root_uri}")
         return site_info
@@ -306,12 +313,13 @@ def get_endpoints_for_site(sense_uri, site_name):
             "required": "true"
         }
         
+        logging.debug(f"SENSE manifest request for {sense_uri}: {json.dumps(manifest_json)}")
         response = workflow_api.manifest_create(json.dumps(manifest_json))
+        logging.debug(f"SENSE manifest response for {sense_uri}: {json.dumps(response, default=str)}")
         if not response or "jsonTemplate" not in response:
             raise ValueError(f"Invalid response from SENSE manifest creation: {response}")
             
         metadata = json.loads(response["jsonTemplate"])
-        logging.debug(f"Got metadata response for {sense_uri}")
         
         if "Metadata" not in metadata:
             logging.warning(f"No Metadata field in response for {sense_uri}")
@@ -426,7 +434,7 @@ def _get_or_create_site(site_name, site_objs, session, config_get_func):
         logging.debug(f"Site {site_name} already exists in database")
         return site_exists
     
-    logging.debug(f"Site {site_name} not found in database, adding...")
+    logging.info(f"Site {site_name} not found in database, adding...")
     try:
         full_uri, root_uri = get_site_uris(site_name)
         site_info = get_site_info(root_uri)
@@ -444,7 +452,7 @@ def _get_or_create_site(site_name, site_objs, session, config_get_func):
             mesh = Mesh(site1=site_obj, site2=site_, vlan_range=vlan_range, link_capacity_mbps=link_capacity)
             mesh.save(session=session)
 
-        logging.debug(f"Site {site_name} added to database")
+        logging.info(f"Site {site_name} added to database")
         return site_
     except Exception as e:
         logging.error(f"Error occurred while adding site {site_name}: {str(e)}")
