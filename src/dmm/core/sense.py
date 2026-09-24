@@ -359,6 +359,16 @@ def is_modify_failed(status):
     """Check if instance modification has failed."""
     return status == SenseCircuitStatus.MODIFY_FAILED.value
 
+def is_cancel_failed(status):
+    """Check if a SENSE circuit cancel attempt has failed.
+
+    SENSE-O emits CANCEL - FAILED when an internal error occurs during
+    teardown.  The correct recovery is a force-cancel retry:
+    cancel_link() automatically sets force=true whenever 'READY' is absent
+    from the status string, so no extra logic is needed at the call site.
+    """
+    return status == SenseCircuitStatus.CANCEL_FAILED.value
+
 def is_ready_for_modify(status):
     """Check if instance is in a state that can be modified."""
     return status in {

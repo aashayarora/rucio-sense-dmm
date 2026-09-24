@@ -37,6 +37,7 @@ class SenseCircuitStatus(str, Enum):
     CANCEL_COMMITTING  = "CANCEL - COMMITTING"
     CANCEL_COMMITTED   = "CANCEL - COMMITTED"
     CANCEL_READY       = "CANCEL - READY"
+    CANCEL_FAILED      = "CANCEL - FAILED"
 
 class Request(ModelBase, table=True):
     rule_id: str = Field(primary_key=True)
