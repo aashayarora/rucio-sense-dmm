@@ -29,6 +29,8 @@ key=/opt/certs/key.pem
 monit_host=https://monit-grafana.cern.ch
 monit_auth_token=
 default_num_streams=20
+# Attempts at removing a request's link/SE config before leaving it in FTS
+max_delete_retries=3
 
 [rucio]
 max_retries=1

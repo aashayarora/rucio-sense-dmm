@@ -586,6 +586,7 @@ _SENSE_STATE_RESET = {
     "sense_affiliated": False,
     "sense_provisioned_at": None,
     "sense_retries": 0,
+    "fts_delete_retries": 0,
     "allocated_bandwidth_mbps": None,
     "available_bandwidth_mbps": None,
     "previous_bandwidth_mbps": None,

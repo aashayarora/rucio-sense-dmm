@@ -67,6 +67,7 @@ class Request(ModelBase, table=True):
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_streams_current: Optional[int] = Field(default=0)
     fts_streams_desired: Optional[int] = Field(default=None)
+    fts_delete_retries: Optional[int] = Field(default=0)
     sense_provisioned_at: Optional[datetime] = Field(default=None)
     rucio_finished_at: Optional[datetime] = Field(default=None)
     prometheus_throughput: Optional[float] = Field(default=None)
@@ -330,6 +331,11 @@ class Request(ModelBase, table=True):
         if desired is not None:
             logging.info(f"REQUEST UPDATE: {self.rule_id} -> fts_streams_desired={desired}")
             self.fts_streams_desired = desired
+        self.save(session)
+
+    def increment_fts_delete_retries(self, session=None):
+        self.fts_delete_retries = (self.fts_delete_retries or 0) + 1
+        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> fts_delete_retries={self.fts_delete_retries}")
         self.save(session)
 
     def set_prometheus_metrics(self, throughput: float = None, bytes_transferred: float = None, session=None):

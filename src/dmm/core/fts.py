@@ -37,17 +37,18 @@ class FTSClient:
             logging.error(f"Error while modifying FTS config for {endpoint}: {e}", exc_info=True)
             return False
     
-    def _send_delete(self, endpoint):
-        logging.debug(f"FTS DELETE {self.fts_host}{endpoint}")
+    def _send_delete(self, endpoint, params=None):
+        logging.debug(f"FTS DELETE {self.fts_host}{endpoint} params={params}")
         try:
             response = requests.delete(
                 self.fts_host + endpoint,
+                params=params,
                 headers=self.headers,
                 cert=self.cert,
                 verify=self.capath,
                 timeout=15,
             )
-            logging.debug(f"FTS DELETE {endpoint} response {response.status_code}: {response.text}")
+            logging.debug(f"FTS DELETE {endpoint} params={params} response {response.status_code}: {response.text}")
             success = response.status_code in [200, 201, 204]
             if not success:
                 logging.warning(f"FTS deletion returned status {response.status_code}: {response.text}")
@@ -120,8 +121,10 @@ def modify_link_config(src_endpoint, dst_endpoint, max_active, min_active):
 def delete_link_config(src_endpoint, dst_endpoint):
     client = FTSClient()
     src_url, dst_url = get_endpoint_urls(src_endpoint, dst_endpoint)
+    # Encoded twice: the httpd in front of FTS returns 404 for any %2F in the
+    # path, and FTS unquotes the name itself.
     link_name = urllib.parse.quote("-".join([src_url, dst_url]), safe="")
-    return client._send_delete(f"/config/links/{link_name}")
+    return client._send_delete(f"/config/links/{urllib.parse.quote(link_name, safe='')}")
 
 
 def modify_se_config(src_endpoint, dst_endpoint, max_inbound, max_outbound):
@@ -134,13 +137,11 @@ def modify_se_config(src_endpoint, dst_endpoint, max_inbound, max_outbound):
 def delete_se_config(src_endpoint, dst_endpoint):
     client = FTSClient()
     src_url, dst_url = get_endpoint_urls(src_endpoint, dst_endpoint)
-    
-    src_encoded = urllib.parse.quote(src_url, safe="")
-    dst_encoded = urllib.parse.quote(dst_url, safe="")
-    
-    success_src = client._send_delete(f"/config/se/{src_encoded}")
-    success_dst = client._send_delete(f"/config/se/{dst_encoded}")
-    
+
+    # FTS takes the SE as a query parameter, not a path segment.
+    success_src = client._send_delete("/config/se", params={"se": src_url})
+    success_dst = client._send_delete("/config/se", params={"se": dst_url})
+
     return success_src and success_dst
 
 

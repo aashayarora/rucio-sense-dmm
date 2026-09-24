@@ -2,6 +2,7 @@ import logging
 
 from dmm.models.request import Request, RequestStatus
 from dmm.db.session import databased
+from dmm.core.config import config_get_int
 
 from dmm.daemons.base import DaemonBase
 from dmm.core.fts import modify_fts_config, delete_fts_config
@@ -50,6 +51,18 @@ class FTSModifierDaemon(DaemonBase):
                 )
                 req.set_fts_streams(current=0, session=session)
                 return
+            # A config left in FTS does no harm, so after a few failed removals stop
+            # asking. fts_streams_current stays as-is: the cap really is still there.
+            max_retries = config_get_int("fts", "max_delete_retries", default=3)
+            if (req.fts_delete_retries or 0) >= max_retries:
+                return
             logging.info(f"Deleting FTS limits for request {req.rule_id}")
             if delete_fts_config(req.src_endpoint, req.dst_endpoint):
                 req.set_fts_streams(current=0, session=session)
+                return
+            req.increment_fts_delete_retries(session=session)
+            if req.fts_delete_retries >= max_retries:
+                logging.warning(
+                    f"Giving up on removing FTS config for request {req.rule_id} after "
+                    f"{req.fts_delete_retries} failed attempts; it stays in FTS"
+                )
