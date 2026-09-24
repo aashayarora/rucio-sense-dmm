@@ -11,6 +11,7 @@ from dmm.core.sense import (
     cancel_link,
     get_instance_status,
     is_being_cancelled,
+    is_cancel_failed,
     is_cancel_ready,
     is_create_compiled,
     is_ready_for_cancel
@@ -96,6 +97,34 @@ class SENSECancellerDaemon(DaemonBase):
                         f"Circuit {req.sense_uuid} is already being cancelled on SENSE side "
                         f"(status={live_status}). Waiting for CANCEL-READY."
                     )
+                    continue
+
+                if is_cancel_failed(live_status):
+                    # SENSE-O failed to complete the cancel.
+                    # Because "READY" is not in the status string, cancel_link() will automatically
+                    # set force=true — which is the correct SENSE-O API call to break the
+                    # circuit out of this state.  If the retry itself fails (e.g. the 503
+                    # is still ongoing) we log the error and leave the request in FINISHED
+                    # so the next daemon cycle tries again.
+                    logging.warning(
+                        f"Circuit {req.sense_uuid} is in CANCEL - FAILED for request "
+                        f"{req.rule_id} (possible transient upstream error). "
+                        "Retrying with force cancel."
+                    )
+                    try:
+                        cancel_link(req.sense_uuid, live_status)  # force=true, "READY" not in status
+                        release_endpoints_and_addresses(req, session)
+                        req.set_status(status=RequestStatus.CANCELED, session=session)
+                        logging.info(
+                            f"Force-cancel succeeded for CANCEL-FAILED circuit "
+                            f"{req.sense_uuid} ({req.rule_id})"
+                        )
+                    except Exception as force_err:
+                        logging.error(
+                            f"Force-cancel of CANCEL-FAILED circuit {req.sense_uuid} "
+                            f"for {req.rule_id} failed: {force_err} — will retry next cycle",
+                            exc_info=True,
+                        )
                     continue
 
                 if is_create_compiled(live_status):
