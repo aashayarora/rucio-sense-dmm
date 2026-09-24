@@ -38,6 +38,7 @@ class SenseCircuitStatus(str, Enum):
     CANCEL_COMMITTING  = "CANCEL - COMMITTING"
     CANCEL_COMMITTED   = "CANCEL - COMMITTED"
     CANCEL_READY       = "CANCEL - READY"
+    CANCEL_FAILED      = "CANCEL - FAILED"
 
 class TransferVerdict(str, Enum):
     """
