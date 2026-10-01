@@ -9,7 +9,10 @@ from dmm.daemons.base import DaemonBase
 from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
 from dmm.db.session import databased
+from dmm.core.config import config_get_float
 from dmm.core.sense import is_circuit_active, is_being_provisioned
+
+_FINISHED = (RequestStatus.FINISHED_R, RequestStatus.FINISHED)
 
 class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -45,6 +48,9 @@ class DeciderDaemon(DaemonBase):
         request is cancelled or taken over. This way active requests get readjusted
         exactly once — when the finished circuit's final disposition is known — rather
         than on every intermediate step (throttle to 1G, then cancel).
+
+        The reservation only lasts while a takeover is still possible: see
+        _holds_reservation.
         """
         multi_graph = nx.MultiGraph()
         reqs = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.DECIDED, RequestStatus.STALE, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.FINISHED_R, RequestStatus.FINISHED], session=session) # get all requests which would affect the decision (i.e. don't consider requests that are in CANCELLED or FAILED state)
@@ -58,7 +64,13 @@ class DeciderDaemon(DaemonBase):
             if link_capacity_mbps is None:
                 logging.error(f"No link capacity found for {req.src_site.name}-{req.dst_site.name}, excluding request {req.rule_id} from optimization")
                 continue
-            is_fixed = req.transfer_status in (RequestStatus.FINISHED_R, RequestStatus.FINISHED)
+            is_fixed = req.transfer_status in _FINISHED
+            if is_fixed and not self._holds_reservation(req):
+                logging.debug(
+                    f"Finished request {req.rule_id} no longer reserves capacity: "
+                    f"circuit {req.sense_uuid} is {req.sense_circuit_status}"
+                )
+                continue
             self._add_site_node(multi_graph, req.src_site.name, link_capacity_mbps)
             self._add_site_node(multi_graph, req.dst_site.name, link_capacity_mbps)
             multi_graph.add_edge(
@@ -71,6 +83,21 @@ class DeciderDaemon(DaemonBase):
                 fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
             )
         return multi_graph
+
+    @staticmethod
+    def _holds_reservation(req) -> bool:
+        """
+        Whether a finished request still keeps its capacity reserved for a takeover.
+
+        Only while it has a circuit that is up, or on its way back up (a throttle in
+        flight). Once SENSE is cancelling the circuit - or has failed to - the
+        allocator will never reuse it, and holding its capacity starves the live
+        requests for as long as the cancel keeps failing.
+        """
+        return bool(req.sense_uuid) and (
+            is_circuit_active(req.sense_circuit_status)
+            or is_being_provisioned(req.sense_circuit_status)
+        )
 
     @staticmethod
     def _add_site_node(graph, site_name, link_capacity_mbps) -> None:
@@ -147,25 +174,35 @@ class DeciderDaemon(DaemonBase):
         Optimize the bandwidth allocation using linear programming.
         Binary-searches over the minimum per-edge lower bound to find the highest
         feasible floor — O(log(capacity/precision)) LP solves instead of O(capacity/precision).
+
+        Only edges with a live request (priority > 0) take part. An edge left holding
+        nothing but finished reservations is pinned to 0: nobody can be given its
+        bandwidth, and flooring it would take that share away from the live edges
+        sharing its sites.
         """
         n_edges = len(edges)
         precision_mbps = 5
+        live = c < 0
+
+        def floored(floor):
+            return [(floor, None) if live[i] else (0, 0) for i in range(n_edges)]
 
         # Verify a solution exists with lower_bound=0 before searching.
-        base_bounds = [(0, None)] * n_edges
-        base_result = linprog(c, A_ub=A, b_ub=b, bounds=base_bounds, method='highs')
+        base_result = linprog(c, A_ub=A, b_ub=b, bounds=floored(0), method='highs')
         if not base_result.success:
             raise ValueError("No feasible solution found for the optimization problem.")
 
         optim_result = base_result
+        if not live.any():
+            return optim_result.x
 
-        # The highest any single edge can be floored is the minimum capacity constraint.
+        # The highest any live edge can be floored is the tightest constraint it is in.
         lo = 0
-        hi = int(np.min(b))
+        hi = int(np.min(b[(A[:, live] != 0).any(axis=1)]))
 
         while hi - lo > precision_mbps:
             mid = (lo + hi) / 2
-            bounds = [(mid, None)] * n_edges
+            bounds = floored(mid)
             result = linprog(c, A_ub=A, b_ub=b, bounds=bounds, method='highs')
             if result.success:
                 lo = mid
@@ -226,6 +263,7 @@ class DeciderDaemon(DaemonBase):
 
         """
         reqs_provisioned = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.PROVISIONED, RequestStatus.DECIDED], session=session)
+        min_upward_step = config_get_float("decider", "min_upward_modify_fraction", default=0.1, constraint="nonneg")
         for req in reqs_provisioned:
             allocated_bandwidth = None  # Initialize to prevent NameError
             req_u = None  # source-node name on the multi_graph (needed for cap logic)
@@ -257,6 +295,7 @@ class DeciderDaemon(DaemonBase):
                         or (r.src_site_ == req.dst_site_ and r.dst_site_ == req.src_site_)
                     )
                     and r.sense_uuid is not None
+                    and (r.transfer_status not in _FINISHED or self._holds_reservation(r))
                 )
                 capped = int(min(allocated_bandwidth, link_capacity - reserved_by_others))
                 if capped != allocated_bandwidth:
@@ -277,6 +316,17 @@ class DeciderDaemon(DaemonBase):
             if req.transfer_status == RequestStatus.DECIDED and not circuit_committed:
                 req.set_allocated_bandwidth(allocated_bandwidth, session=session)
                 logging.info(f"Updated decided bandwidth for not-yet-provisioned request {req.rule_id}: {allocated_bandwidth}")
+                continue
+
+            # Every change to a committed circuit costs a SENSE modify, a minute or so
+            # of STALE. Small increases aren't worth that; decreases always go through,
+            # since skipping one leaves the link oversubscribed once others grow into it.
+            current = req.allocated_bandwidth_mbps or 0
+            if current > 0 and current < allocated_bandwidth < current * (1 + min_upward_step):
+                logging.debug(
+                    f"Skipping upward change for {req.rule_id}: {current} → {allocated_bandwidth} Mbps "
+                    f"is below the {min_upward_step:.0%} minimum step"
+                )
                 continue
 
             req.set_previous_bandwidth(req.allocated_bandwidth_mbps, session=session)
