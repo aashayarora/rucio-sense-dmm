@@ -1,4 +1,3 @@
-import ipaddress
 import json
 import requests
 import logging
@@ -6,14 +5,6 @@ import logging
 from dmm.core.config import config_get
 
 # Helper functions
-
-# node_exporter labels that together pin a series down to a single interface
-# Not every deployment carries all of them, so only the ones actually present on
-# a series are used - a label pinned to the string "None" matches nothing.
-_INTERFACE_LABELS = ("device", "instance", "job", "sitename")
-
-# How many leading hextets the PromQL prefilter is willing to anchor on.
-_MAX_ANCHORED_HEXTETS = 4
 
 
 class PrometheusNotConfigured(RuntimeError):
@@ -56,103 +47,83 @@ class PrometheusUtils:
             raise
 
     @staticmethod
-    def get_val_from_response(response):
-        try:
-            return response["data"]["result"][0]["value"][1]
-        except (KeyError, IndexError, TypeError) as e:
-            raise ValueError(f"Invalid Prometheus response format: {response}") from e
-
-    @staticmethod
     def _escape_label_value(value) -> str:
         return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
-    @classmethod
-    def selector_to_promql(cls, selector) -> str:
-        return ",".join(f'{label}="{cls._escape_label_value(value)}"' for label, value in selector)
-
-    @staticmethod
-    def _prefilter_regex(network) -> str:
+    def get_circuit_samples(self, site, vlan, lookback_seconds, at_time=None):
         """
-        Cheap server-side filter for node_network_address_info.
+        Raw octet counters for one circuit VLAN on a site's switches.
 
-        Only the leading non-zero hextets are safe to anchor on: RFC 5952 lets a run
-        of zero hextets collapse to "::", so anything at or after the first zero
-        hextet may simply not appear in the text form. Exact membership is decided
-        in get_interfaces() with ipaddress - this only keeps the response small.
+        SiteRM scrapes every switch it manages over SNMP and exports each VLAN
+        interface as interface_statistics{Key="ifHCInOctets"|"ifHCOutOctets"}. A
+        circuit has a VLAN to itself, so unlike a host interface this counts the
+        circuit's traffic and nothing else. Every switch at the site that reports
+        the VLAN is returned; which direction carries the data depends on which end
+        of the circuit the site is.
+
+        Returns {(hostname, ifDescr, Key): [(timestamp, bytes), ...]} with samples
+        oldest first - sample timestamps, not the time of this call, because SiteRM
+        scrapes on its own schedule - or None when Prometheus refuses the query.
         """
-        hextets = network.network_address.exploded.split(":")
-        anchored = []
-        for hextet in hextets[: min(network.prefixlen // 16, _MAX_ANCHORED_HEXTETS)]:
-            if int(hextet, 16) == 0:
-                break
-            anchored.append(f"{int(hextet, 16):x}")
-        if not anchored:
-            return ".*"
-        return "(?i)" + ":".join(anchored) + ":.*"
-
-    def get_interfaces(self, ipv6, at_time=None) -> list:
-        """
-        Every node_exporter interface whose address falls inside the ipv6 network.
-
-        Returns one label selector per interface - a tuple of (label, value) pairs
-        built only from the labels the series actually carries.
-
-        at_time resolves the interfaces as they were at a past instant, which is what
-        an audit of a completed transfer needs: endpoints are freed and handed to the
-        next request, so asking "now" would answer for whoever holds the block today.
-        """
-        try:
-            network = ipaddress.IPv6Network(ipv6, strict=False)
-        except ValueError:
-            logging.error(f"Cannot monitor {ipv6!r}: not a valid IPv6 network")
-            return []
-
-        query = f'node_network_address_info{{address=~"{self._prefilter_regex(network)}"}}'
-        params = {"query": query}
+        selector = (
+            f'interface_statistics{{sitename="{self._escape_label_value(site)}",'
+            f'ifDescr=~"(?i)vlan ?{int(vlan)}",Key=~"ifHC(In|Out)Octets"}}'
+        )
+        params = {"query": f"{selector}[{max(int(lookback_seconds), 1)}s]"}
         if at_time is not None:
             params["time"] = at_time
         response = self.submit_query(params)
         if response.get("status") != "success":
-            logging.warning(f"Interface lookup for {ipv6} failed: {response.get('error', response.get('status'))}")
-            return []
+            logging.warning(f"Counter query for VLAN {vlan} at {site} failed: {response.get('error', response.get('status'))}")
+            return None
 
-        interfaces = []
-        seen = set()
-        for series in response.get("data", {}).get("result", []):
-            labels = series.get("metric", {}) if isinstance(series, dict) else {}
-            address = labels.get("address")
-            if not address:
-                continue
-            try:
-                if ipaddress.ip_address(address) not in network:
+        series = {}
+        for result in response.get("data", {}).get("result", []):
+            labels = result.get("metric", {})
+            key = (labels.get("hostname"), labels.get("ifDescr"), labels.get("Key"))
+            samples = []
+            for timestamp, value in result.get("values", []):
+                try:
+                    samples.append((float(timestamp), float(value)))
+                except (TypeError, ValueError):
                     continue
-            except ValueError:
-                continue
-            selector = tuple((label, labels[label]) for label in _INTERFACE_LABELS if labels.get(label))
-            if not selector or selector in seen:
-                continue
-            seen.add(selector)
-            interfaces.append(selector)
+            if samples:
+                series[key] = sorted(samples)
+        return series
 
-        if not interfaces:
-            logging.warning(f"No node_exporter interface has an address inside {ipv6}")
-        return interfaces
 
-    def get_transmit_bytes(self, selector, at_time):
-        """
-        node_network_transmit_bytes_total for one interface at at_time, or None when
-        Prometheus holds no sample for it.
-        """
-        metric = f"node_network_transmit_bytes_total{{{self.selector_to_promql(selector)}}}"
-        response = self.submit_query({"query": metric, "time": at_time})
-        if response.get("status") != "success" or not response.get("data", {}).get("result"):
-            logging.warning(f"Query {metric} returned no data")
-            return None
-        try:
-            return float(self.get_val_from_response(response))
-        except (ValueError, TypeError) as e:
-            logging.error(f"Could not read a counter value out of {metric}: {e}")
-            return None
+def counter_increase(samples):
+    """
+    Growth of a counter across consecutive samples.
+
+    A drop means the counter restarted (switch reboot, SiteRM reset), so the value
+    after it counts from zero - the same rule PromQL's increase() uses, without
+    its extrapolation past the first and last sample.
+    """
+    total = 0.0
+    for (_, previous), (_, current) in zip(samples, samples[1:]):
+        total += current - previous if current >= previous else current
+    return total
+
+
+def counter_rate_mbps(samples):
+    """Average rate between the first and last sample in decimal Mbps, or None."""
+    if len(samples) < 2:
+        return None
+    elapsed = samples[-1][0] - samples[0][0]
+    if elapsed <= 0:
+        return None
+    # Counters are bytes; bandwidth everywhere else in DMM is decimal Mbps.
+    return round(counter_increase(samples) * 8 / 1e6 / elapsed, 2)
+
+
+def circuit_ends(req):
+    """(site name, VLAN) for each end of the request's circuit whose VLAN is known."""
+    ends = []
+    for site, vlan in ((req.src_site, req.src_vlan), (req.dst_site, req.dst_vlan)):
+        if site is not None and vlan is not None:
+            ends.append((site.name, int(vlan)))
+    return ends
 
 
 # Per-file fields pulled from the FTS monit index for the transfer audit.

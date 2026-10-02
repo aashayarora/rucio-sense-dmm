@@ -63,7 +63,9 @@ class Request(ModelBase, table=True):
     previous_bandwidth_mbps: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
     sense_src_uri: Optional[str] = Field(default=None)  
-    sense_dst_uri: Optional[str] = Field(default=None)  
+    sense_dst_uri: Optional[str] = Field(default=None)
+    src_vlan: Optional[int] = Field(default=None)
+    dst_vlan: Optional[int] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None, index=True)
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_streams_current: Optional[int] = Field(default=0)
@@ -296,7 +298,14 @@ class Request(ModelBase, table=True):
         self.sense_src_uri = src_uri
         self.sense_dst_uri = dst_uri
         self.save(session)
-    
+
+    def set_circuit_vlans(self, src_vlan: Optional[int], dst_vlan: Optional[int], session=None):
+        if (src_vlan, dst_vlan) != (self.src_vlan, self.dst_vlan):
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit vlans src={src_vlan}, dst={dst_vlan}")
+        self.src_vlan = src_vlan
+        self.dst_vlan = dst_vlan
+        self.save(session)
+
     def set_allocated_bandwidth(self, bandwidth_mbps: float, session=None):
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> allocated_bandwidth={bandwidth_mbps} Mbps")
         self.allocated_bandwidth_mbps = bandwidth_mbps

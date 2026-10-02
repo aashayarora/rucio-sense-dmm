@@ -92,6 +92,7 @@ def request_to_dict(req, detail: bool = True) -> dict:
     if detail:
         data["sense_src_uri"] = req.sense_src_uri
         data["sense_dst_uri"] = req.sense_dst_uri
+        data["circuit_vlans"] = {"src": req.src_vlan, "dst": req.dst_vlan}
         data["sense_alloc_rule_id"] = req.sense_alloc_rule_id
         data["src_pool_site"] = req.src_pool_site
         data["dst_pool_site"] = req.dst_pool_site

@@ -10,6 +10,7 @@ from dmm.core.config import config_get
 from dmm.core.utils import is_sync_timeout
 from dmm.core.sense import (
     provision_link,
+    parse_circuit_vlans,
     is_create_ready,
     is_create_compiled,
     is_being_provisioned,
@@ -83,7 +84,7 @@ class SENSEProvisionerDaemon(DaemonBase):
                     logging.error(f"No VLAN range found for {req.rule_id}")
                     continue
                     
-                provision_link(
+                response = provision_link(
                     sense_uuid=req.sense_uuid,
                     profile_uuid=self.profile_uuid,
                     bandwidth_mbps=req.allocated_bandwidth_mbps,
@@ -94,6 +95,15 @@ class SENSEProvisionerDaemon(DaemonBase):
                     vlan_range=vlan_range,
                     rule_id=req.rule_id
                 )
+                # Always overwrite: a VLAN left over from an earlier circuit on this
+                # request would have monitoring read someone else's traffic.
+                src_vlan, dst_vlan = parse_circuit_vlans(
+                    response, req.sense_src_uri, req.sense_dst_uri,
+                    req.src_site.sense_uri, req.dst_site.sense_uri,
+                )
+                if src_vlan is None and dst_vlan is None:
+                    logging.warning(f"No circuit VLAN in the provision response for {req.rule_id}, it will not be monitored")
+                req.set_circuit_vlans(src_vlan, dst_vlan, session=session)
                 req.clear_failure_reason(session=session)
                 req.set_status(status=RequestStatus.PROVISIONED, session=session)
                 logging.info(f"Successfully provisioned request {req.rule_id}")
@@ -103,6 +113,8 @@ class SENSEProvisionerDaemon(DaemonBase):
                         f"Provision for {req.rule_id} timed out (504); treating as in-flight, "
                         "marking PROVISIONED and deferring to handler status polling"
                     )
+                    # No response, so no VLAN until a later modify reports one.
+                    req.set_circuit_vlans(None, None, session=session)
                     req.set_status(status=RequestStatus.PROVISIONED, session=session)
                 else:
                     logging.error(f"Failed to provision link for {req.rule_id}: {e}", exc_info=True)

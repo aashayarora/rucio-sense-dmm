@@ -11,6 +11,7 @@ from dmm.core.config import config_get, config_get_int
 from dmm.core.utils import is_sync_timeout
 from dmm.core.sense import (
     modify_link,
+    parse_circuit_vlans,
     cancel_link,
     delete_instance,
     get_instance_status,
@@ -181,6 +182,8 @@ class SENSEModifierDaemon(DaemonBase):
                         "sense_uuid": None,
                         "sense_src_uri": None,
                         "sense_dst_uri": None,
+                        "src_vlan": None,
+                        "dst_vlan": None,
                         "sense_circuit_status": None,
                         "sense_affiliated": False,
                         "sense_provisioned_at": None,
@@ -223,6 +226,8 @@ class SENSEModifierDaemon(DaemonBase):
                         "sense_uuid": None,
                         "sense_src_uri": None,
                         "sense_dst_uri": None,
+                        "src_vlan": None,
+                        "dst_vlan": None,
                         "sense_circuit_status": None,
                         "sense_affiliated": False,
                         "sense_provisioned_at": None,
@@ -240,7 +245,7 @@ class SENSEModifierDaemon(DaemonBase):
                     logging.error(f"No VLAN range found for {req.rule_id}")
                     continue
                     
-                modify_link(
+                response = modify_link(
                     sense_uuid=req.sense_uuid,
                     profile_uuid=self.profile_uuid,
                     bandwidth_mbps=req.allocated_bandwidth_mbps,
@@ -251,6 +256,18 @@ class SENSEModifierDaemon(DaemonBase):
                     vlan_range=vlan_range,
                     rule_id=req.rule_id
                 )
+                # A modify recompiles the circuit too. Only overwrite what it reports,
+                # so a response without a model keeps the VLANs from provisioning.
+                src_vlan, dst_vlan = parse_circuit_vlans(
+                    response, req.sense_src_uri, req.sense_dst_uri,
+                    req.src_site.sense_uri, req.dst_site.sense_uri,
+                )
+                if src_vlan is not None or dst_vlan is not None:
+                    req.set_circuit_vlans(
+                        src_vlan if src_vlan is not None else req.src_vlan,
+                        dst_vlan if dst_vlan is not None else req.dst_vlan,
+                        session=session,
+                    )
 
                 req.set_sense_circuit_status(
                     status=SenseCircuitStatus.MODIFY_COMMITTING.value, session=session

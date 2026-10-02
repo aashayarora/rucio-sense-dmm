@@ -10,6 +10,7 @@ from dmm.core.config import config_get_float, config_get_int
 from dmm.core.monit import (
     FTSMonitUtils, FTSNotConfigured,
     PrometheusUtils, PrometheusNotConfigured,
+    circuit_ends, counter_increase,
 )
 
 # A rule is worth auditing once Rucio has finished with it. FAILED and NOT_SENSE
@@ -28,16 +29,16 @@ class TransferAuditDaemon(DaemonBase):
     Cross-checks a completed rule against the circuit that was provisioned for it.
 
     Two independent sources: FTS knows which files succeeded and which failed, and
-    node_exporter knows how many bytes actually crossed the source endpoint while
-    the circuit was up. Agreement means the transfer went as planned; the
+    the site switch's counters for the circuit's own VLAN know how many bytes the
+    circuit actually carried. Agreement means the transfer went as planned; the
     interesting cases are the disagreements.
 
-    One caveat shapes the whole comparison: node_network_transmit_bytes_total counts
-    an entire interface, and an interface can carry more than one request's traffic.
-    The wire figure is therefore an upper bound on what this rule moved, never an
-    exact attribution. Only one volume conclusion survives that: if the upper bound
-    is below what FTS says was transferred, the data cannot have taken this circuit.
-    Wire above FTS says nothing at all, so it is never treated as a fault.
+    The counters are sampled, so the wire figure is read from the samples nearest
+    each edge of the circuit window and filled in across the gap. Only one volume
+    conclusion is drawn from it: if the circuit carried less than FTS says was
+    transferred, the data cannot have taken this circuit. Wire above FTS - retries,
+    other traffic routed onto the circuit - says nothing at all, so it is never
+    treated as a fault.
     """
 
     def __init__(self, frequency, **kwargs):
@@ -60,8 +61,12 @@ class TransferAuditDaemon(DaemonBase):
         self.audit_max_age_seconds = config_get_int("monit", "audit_max_age_seconds", default=604800, constraint="pos")
         self.volume_tolerance = config_get_float("monit", "audit_volume_tolerance", default=0.1, constraint="nonneg")
         self.fail_threshold = config_get_float("monit", "audit_fail_threshold", default=0.5, constraint="nonneg")
-        # Auditing is all external HTTP - a big FTS query plus two Prometheus reads
-        # per interface - and it runs holding the daemon lock every other daemon
+        # How far from each edge of the circuit window a counter sample may be and
+        # still count as covering it. SiteRM scrapes every 30s, so this allows for
+        # a few missed scrapes.
+        self.edge_seconds = config_get_int("monit", "audit_edge_seconds", default=120, constraint="nonneg")
+        # Auditing is all external HTTP - a big FTS query plus a Prometheus read per
+        # circuit end - and it runs holding the daemon lock every other daemon
         # shares. Capping the batch keeps one cycle from stalling the rest of DMM;
         # the backlog just drains over the following cycles.
         self.batch_size = config_get_int("monit", "audit_batch_size", default=5, constraint="pos")
@@ -174,34 +179,55 @@ class TransferAuditDaemon(DaemonBase):
 
     def _wire_bytes(self, req, window):
         """
-        Bytes transmitted on the source endpoint's interfaces over the circuit window.
+        Bytes the circuit's VLAN carried over the circuit window.
 
-        None whenever the figure would be a guess: no Prometheus, no interfaces at
-        the time, a missing sample at either edge, or a counter reset mid-window.
+        Takes the busiest counter across both ends and every switch reporting the
+        VLAN. None whenever the figure would be a guess: no Prometheus, no VLAN
+        recorded, or no counter sampled from the start of the window to its end.
         """
         if self.prometheus is None or window is None:
             return None
-        if not req.src_endpoint or not req.src_endpoint.ip_range:
+        ends = circuit_ends(req)
+        if not ends:
             return None
 
         start, end = window
-        interfaces = self.prometheus.get_interfaces(req.src_endpoint.ip_range, at_time=start)
-        if not interfaces:
-            logging.warning(f"No interfaces for {req.src_endpoint.ip_range} at the time {req.rule_id} ran")
+        lookback = end - start + 2 * self.edge_seconds
+        carried = None
+        for site, vlan in ends:
+            series = self.prometheus.get_circuit_samples(site, vlan, lookback, at_time=end + self.edge_seconds)
+            for samples in (series or {}).values():
+                increase = self._increase_over(samples, start, end)
+                if increase is not None:
+                    carried = increase if carried is None else max(carried, increase)
+
+        if carried is None:
+            logging.warning(f"No counter for VLANs {ends} covers {req.rule_id}'s circuit window")
+        return carried
+
+    def _increase_over(self, samples, start, end):
+        """
+        How much a counter grew across [start, end], or None if its samples don't
+        reach both edges.
+
+        Samples up to edge_seconds outside the window count. A gap between an edge
+        and the nearest sample inside the window is filled at the rate of the
+        adjacent interval, as PromQL's increase() does - otherwise traffic in the
+        first scrape interval after provisioning would go missing and a short
+        transfer would read as having bypassed its circuit.
+        """
+        inside = [s for s in samples if start - self.edge_seconds <= s[0] <= end + self.edge_seconds]
+        if len(inside) < 2 or inside[0][0] > start + self.edge_seconds or inside[-1][0] < end - self.edge_seconds:
             return None
 
-        total = 0.0
-        for selector in interfaces:
-            at_start = self.prometheus.get_transmit_bytes(selector, start)
-            at_end = self.prometheus.get_transmit_bytes(selector, end)
-            if at_start is None or at_end is None:
-                logging.warning(f"Prometheus has no counter at a window edge for {req.rule_id}")
-                return None
-            if at_end < at_start:
-                logging.warning(f"Counter reset inside {req.rule_id}'s window, wire volume unusable")
-                return None
-            total += at_end - at_start
-        return total
+        increase = counter_increase(inside)
+        (t0, v0), (t1, v1) = inside[0], inside[1]
+        if t0 > start and t1 > t0:
+            increase += max(v1 - v0, 0.0) / (t1 - t0) * (t0 - start)
+        (t0, v0), (t1, v1) = inside[-2], inside[-1]
+        if t1 < end and t1 > t0:
+            increase += max(v1 - v0, 0.0) / (t1 - t0) * (end - t1)
+        return increase
 
     def _verdict(self, audit, fts, wire_bytes):
         total = fts["fts_files_total"]

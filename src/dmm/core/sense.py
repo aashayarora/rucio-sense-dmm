@@ -5,7 +5,9 @@ extracted from the SENSE daemons for better separation of concerns.
 """
 import logging
 import json
+import html
 import ipaddress
+import re
 
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
@@ -196,6 +198,48 @@ def _match_uris_to_endpoints(extract_results, src_ip_range, dst_ip_range):
     dst_uri = (extract_results[1] or {}).get("ipv6_subnet_uri")
     return src_uri, dst_uri
 
+# A circuit's port on a switch, in the model delta SENSE-O returns when it compiles:
+#   urn:ogf:network:<domain>:<switch>:<port>:conn+<uuid>:...:vlanport+<tag>
+_VLANPORT = re.compile(r"(urn:ogf:network:[^\s<>\"]+?):vlanport\+(\d+)")
+
+
+def _vlan_near(ports, prefix):
+    """The single VLAN tag on ports under prefix, or None if there are none or several."""
+    tags = {tag for uri, tag in ports if uri.startswith(prefix + ":")}
+    if len(tags) > 1:
+        logging.warning(f"Circuit has several VLANs under {prefix}: {sorted(tags)}, not picking one")
+        return None
+    return int(tags.pop()) if tags else None
+
+
+def parse_circuit_vlans(response, src_uri, dst_uri, src_site_uri=None, dst_site_uri=None):
+    """
+    The circuit's VLAN tag at each end, from the model in a provision or modify response.
+
+    Staging compiles a throwaway candidate: SENSE-O picks the VLAN again when the
+    provisioning intent compiles, so only a provision or modify response describes
+    the circuit that actually carries traffic. Tags can also differ between the two
+    ends when a network in between translates them.
+
+    Each end is looked up on the switch its subnet URI hangs off
+    (urn:...:dellos10_s0:service+rst-ipv6:...), falling back to the whole site
+    domain. Returns (src_vlan, dst_vlan); either is None when the model doesn't say.
+    """
+    model = response.get("model") if isinstance(response, dict) else None
+    if not model:
+        return None, None
+    ports = _VLANPORT.findall(html.unescape(model))
+
+    vlans = []
+    for subnet_uri, site_uri in ((src_uri, src_site_uri), (dst_uri, dst_site_uri)):
+        vlan = None
+        if subnet_uri and ":service+" in subnet_uri:
+            vlan = _vlan_near(ports, subnet_uri.split(":service+", 1)[0])
+        if vlan is None and site_uri:
+            vlan = _vlan_near(ports, site_uri)
+        vlans.append(vlan)
+    return tuple(vlans)
+
 def provision_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site, 
                    src_ip_range, dst_ip_range, vlan_range, rule_id):
     """
@@ -297,7 +341,7 @@ def modify_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site,
         logging.debug(f"SENSE modify intent for {rule_id} on {sense_uuid}: {json.dumps(intent)}")
         response = workflow_api.instance_modify(json.dumps(intent), sync="true")
         logging.debug(f"SENSE modify response for {rule_id}: {json.dumps(response, default=str)}")
-        return True
+        return response
     except Exception as e:
         logging.error(f"Failed to modify request {rule_id}: {e}")
         raise

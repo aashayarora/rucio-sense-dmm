@@ -86,6 +86,8 @@ class AllocatorDaemon(DaemonBase):
                 reused_dst_endpoint = req_fin.dst_endpoint if same_direction else req_fin.src_endpoint
                 reused_src_uri = req_fin.sense_src_uri if same_direction else req_fin.sense_dst_uri
                 reused_dst_uri = req_fin.sense_dst_uri if same_direction else req_fin.sense_src_uri
+                reused_src_vlan = req_fin.src_vlan if same_direction else req_fin.dst_vlan
+                reused_dst_vlan = req_fin.dst_vlan if same_direction else req_fin.src_vlan
 
                 logging.info(
                     f"Request {new_request.rule_id} found a live circuit from FINISHED request "
@@ -105,6 +107,8 @@ class AllocatorDaemon(DaemonBase):
                     "sense_uuid": req_fin.sense_uuid,
                     "sense_src_uri": reused_src_uri,
                     "sense_dst_uri": reused_dst_uri,
+                    "src_vlan": reused_src_vlan,
+                    "dst_vlan": reused_dst_vlan,
                     "allocated_bandwidth_mbps": inherited_bandwidth,
                     "available_bandwidth_mbps": req_fin.available_bandwidth_mbps,
                     "sense_circuit_status": req_fin.sense_circuit_status,

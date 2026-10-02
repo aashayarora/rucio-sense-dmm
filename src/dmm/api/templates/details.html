@@ -119,6 +119,7 @@
                     <div class="details-row"><span class="details-label">SENSE UUID:</span><span class="details-value">{{ data.sense_uuid if data.sense_uuid else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">SENSE Source URI:</span><span class="details-value">{{ data.sense_src_uri if data.sense_src_uri else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">SENSE Destination URI:</span><span class="details-value">{{ data.sense_dst_uri if data.sense_dst_uri else '—' }}</span></div>
+                    <div class="details-row"><span class="details-label">Circuit VLANs:</span><span class="details-value">{{ data.src_vlan if data.src_vlan is not none else '—' }} → {{ data.dst_vlan if data.dst_vlan is not none else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">FTS Streams Current:</span><span class="details-value">{{ data.fts_streams_current if data.fts_streams_current is not none else '—' }}</span></div>
                     <div class="details-row"><span class="details-label">FTS Streams Desired:</span><span class="details-value">{{ data.fts_streams_desired if data.fts_streams_desired is not none else '—' }}</span></div>
                 </div>

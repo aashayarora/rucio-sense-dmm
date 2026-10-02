@@ -582,6 +582,8 @@ _SENSE_STATE_RESET = {
     "sense_uuid": None,
     "sense_src_uri": None,
     "sense_dst_uri": None,
+    "src_vlan": None,
+    "dst_vlan": None,
     "sense_circuit_status": None,
     "sense_affiliated": False,
     "sense_provisioned_at": None,
