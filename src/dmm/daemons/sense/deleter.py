@@ -5,7 +5,8 @@ from dmm.daemons.base import DaemonBase
 from dmm.db.session import databased
 from dmm.models.request import Request, RequestStatus
 
-from dmm.core.sense import delete_instance, is_cancel_ready
+from dmm.core.recovery import retry_cancel
+from dmm.core.sense import delete_instance, is_cancel_failed, is_cancel_ready, is_create_compiled
 
 class SENSEDeleterDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -28,8 +29,21 @@ class SENSEDeleterDaemon(DaemonBase):
                 
             try:
                 status = req.sense_circuit_status
-                
-                if status and not is_cancel_ready(status):
+
+                if status == "UNKNOWN":
+                    logging.info(f"SENSE instance {req.sense_uuid} of {req.rule_id} is already gone, marking as DELETED")
+                    req.set_status(status=RequestStatus.DELETED, session=session)
+                    continue
+
+                if is_cancel_failed(status):
+                    # The cancel was accepted, then failed upstream. Endpoints are
+                    # already released, so only the cancel is retried here.
+                    retry_cancel(req, status, session)
+                    continue
+
+                # The canceller lets a circuit that was never committed through
+                # without a cancel call; it will never reach CANCEL - READY.
+                if status and not (is_cancel_ready(status) or is_create_compiled(status)):
                     logging.debug(f"Request {req.sense_uuid} not in cancel-ready status (current: {status}), will try to delete again later")
                     continue
                     

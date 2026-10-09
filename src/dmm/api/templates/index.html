@@ -75,7 +75,7 @@
                     data-search="{{ req.rule_id }} {{ src_site }} {{ dst_site }} {{ src_rse }} {{ dst_rse }} {{ req.src_endpoint.hostname if req.src_endpoint else '' }} {{ req.dst_endpoint.hostname if req.dst_endpoint else '' }}">
                     <td title="{{ req.rule_id }}">{{ req.rule_id }}</td>
                     <td>
-                        <span class="status-badge {% if status in ['PROVISIONED', 'FINISHED_R', 'FINISHED', 'DELETED'] %}status-good{% elif status in ['FAILED', 'CANCELED'] %}status-bad{% else %}status-warn{% endif %}">{{ status }}</span>
+                        <span class="status-badge {% if status in ['PROVISIONED', 'FINISHED', 'DELETED'] %}status-good{% elif status in ['FAILED', 'CANCELED'] %}status-bad{% else %}status-warn{% endif %}">{{ status }}</span>
                     </td>
                     <td>
                         {% if circuit %}
@@ -107,7 +107,7 @@
         const GROUPS = {
             active: ["PROVISIONED"],
             progress: ["INIT", "ALLOCATED", "RETRY", "STAGED", "DECIDED", "STALE", "MODIFIED"],
-            finished: ["FINISHED_R", "FINISHED", "CANCELED", "DELETED"],
+            finished: ["FINISHED", "CANCELED", "DELETED"],
             failed: ["FAILED"],
         };
 

@@ -53,6 +53,26 @@ def sync_columns(engine):
                 logging.warning(f"Could not add {table.name}.{column.name}: {e}")
 
 
+def retire_finished_r(engine):
+    """
+    Move requests left in the retired FINISHED_R status on to FINISHED.
+
+    FINISHED_R held a finished request for a throttle to 1G before the cancel; the
+    throttle is gone and FINISHED now covers the reuse window. A request still in
+    FINISHED_R would otherwise be picked up by no daemon at all.
+    """
+    try:
+        with engine.begin() as connection:
+            moved = connection.execute(text(
+                "UPDATE request SET transfer_status = 'FINISHED' WHERE transfer_status = 'FINISHED_R'"
+            )).rowcount
+        if moved:
+            logging.warning(f"Moved {moved} request(s) from the retired FINISHED_R status to FINISHED")
+    except SQLAlchemyError as e:
+        logging.error(f"Could not move FINISHED_R requests to FINISHED: {e}")
+
+
 engine = get_engine()
 SQLModel.metadata.create_all(engine)
 sync_columns(engine)
+retire_finished_r(engine)

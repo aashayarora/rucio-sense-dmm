@@ -19,8 +19,7 @@ class RequestStatus(str, Enum):
     PROVISIONED = "PROVISIONED" # SENSE circuit active at allocated bandwidth
     STALE       = "STALE"       # Bandwidth needs to change (re-optimization result)
     MODIFIED    = "MODIFIED"    # Rucio rule priority changed, triggers re-optimization
-    FINISHED_R  = "FINISHED_R"  # Rucio rule done, circuit still live (keep-alive / reuse window)
-    FINISHED    = "FINISHED"    # Circuit throttled to 1G, ready for cancellation
+    FINISHED    = "FINISHED"    # Rucio rule done; circuit kept for sense_keep_alive_seconds for reuse, then cancelled
     CANCELED    = "CANCELED"    # SENSE circuit cancelled, endpoints freed
     DELETED     = "DELETED"     # SENSE instance deleted, record fully retired
 
@@ -39,18 +38,6 @@ class SenseCircuitStatus(str, Enum):
     CANCEL_COMMITTED   = "CANCEL - COMMITTED"
     CANCEL_READY       = "CANCEL - READY"
     CANCEL_FAILED      = "CANCEL - FAILED"
-
-class TransferVerdict(str, Enum):
-    """
-    Outcome of the post-transfer audit: what FTS says moved, checked against what
-    the circuit actually carried.
-    """
-    OK       = "OK"        # every FTS transfer finished, wire volume consistent
-    DEGRADED = "DEGRADED"  # some files failed, or the volume doesn't add up
-    FAILED   = "FAILED"    # most or all files failed
-    BYPASSED = "BYPASSED"  # files moved, but not over the circuit we provisioned
-    UNKNOWN  = "UNKNOWN"   # not enough data from FTS or Prometheus to judge
-
 
 class Request(ModelBase, table=True):
     rule_id: str = Field(primary_key=True)
@@ -76,12 +63,24 @@ class Request(ModelBase, table=True):
     prometheus_throughput: Optional[float] = Field(default=None)
     prometheus_bytes: Optional[float] = Field(default=None)
     health: Optional[str] = Field(default=None)
+    # What the health verdict came from: "circuit" (the VLAN's switch counters) or
+    # "fts" (the rule's FTS jobs, when the circuit can't be measured).
+    health_source: Optional[str] = Field(default=None)
     sense_retries: Optional[int] = Field(default=0)
+    sense_status_since: Optional[datetime] = Field(default=None)
+    sense_verify_sent_at: Optional[datetime] = Field(default=None)
+    sense_next_attempt_at: Optional[datetime] = Field(default=None)
+    sense_cancel_retries: Optional[int] = Field(default=0)
+    sense_hard_modifies: Optional[int] = Field(default=0)
+    sense_escalation: Optional[str] = Field(default=None)
+    sense_escalated_at: Optional[datetime] = Field(default=None)
     sense_alloc_rule_id: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
     failed_at: Optional[datetime] = Field(default=None)
-    transfer_verdict: Optional[str] = Field(default=None, index=True)
-    transfer_audit: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # FTS jobs found for the rule, job id -> what the last look at it said; and the
+    # roll-up of all of them. Written by FTSMonitorDaemon.
+    fts_jobs: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    fts_summary: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # Site names as Rucio sent them. Several logical sites can map to one
     # physical site (T2_US_UCSD_Blackhole -> T2_US_UCSD); src_site_/dst_site_
@@ -195,32 +194,6 @@ class Request(ModelBase, table=True):
         return session.exec(statement).first()
 
     @classmethod
-    def get_pending_audit(cls, statuses: List[str], finished_before, finished_after, limit=None, session=None, use_lock: bool = True):
-        """
-        Finished SENSE requests that haven't been audited yet.
-
-        finished_before keeps the audit off transfers whose FTS records may not have
-        been indexed in CERN monit yet - querying too early reads as "no transfers".
-        finished_after skips rules older than the monitoring backends retain, which
-        also bounds how long a rule that never gets records is retried.
-        """
-        logging.debug(f"REQUEST QUERY: pending audit, statuses={statuses}, finished in ({finished_after}, {finished_before})")
-        statement = select(cls).where(
-            cls.transfer_verdict.is_(None),
-            cls.transfer_status.in_(statuses),
-            cls.rucio_finished_at.is_not(None),
-            cls.rucio_finished_at < finished_before,
-            cls.rucio_finished_at > finished_after,
-        ).order_by(cls.rucio_finished_at)
-        # Limit in SQL, not after the fact: with_for_update() locks every row the
-        # statement returns, and a backlog shouldn't be held for a whole cycle.
-        if limit:
-            statement = statement.limit(limit)
-        if use_lock:
-            statement = statement.with_for_update()
-        return list(session.exec(statement).all())
-
-    @classmethod
     def get_stale_health(cls, active_statuses: List[str], session=None, use_lock: bool = True):
         """
         Requests still carrying a health verdict that nothing updates any more -
@@ -234,7 +207,7 @@ class Request(ModelBase, table=True):
         if use_lock:
             statement = statement.with_for_update()
         return list(session.exec(statement).all())
-    
+
     # Failure reasons can be long (tracebacks, SENSE error blobs); cap what we persist.
     FAILURE_REASON_MAX_LEN: ClassVar[int] = 2000
 
@@ -331,8 +304,25 @@ class Request(ModelBase, table=True):
         # Called with the polled status every handler cycle; only a change is news.
         if status != self.sense_circuit_status:
             logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit_status={status} (was {self.sense_circuit_status})")
+            self.sense_status_since = utcnow()
+            self.sense_verify_sent_at = None
+            # A new status supersedes an escalation about the old one, e.g. an
+            # admin fixed the circuit. A failed request keeps its escalation.
+            if self.sense_escalation and self.transfer_status != RequestStatus.FAILED:
+                logging.info(f"REQUEST UPDATE: {self.rule_id} -> clearing escalation {self.sense_escalation}")
+                self.sense_escalation = None
+                self.sense_escalated_at = None
+        elif self.sense_status_since is None:
+            self.sense_status_since = utcnow()
         self.sense_circuit_status = status
         self.save(session)
+
+    def set_escalation(self, escalation: str, session=None):
+        if escalation != self.sense_escalation:
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> escalation={escalation}")
+            self.sense_escalation = escalation
+            self.sense_escalated_at = utcnow()
+            self.save(session)
     
     def set_fts_streams(self, current: int = None, desired: int = None, session=None):
         if current is not None:
@@ -355,14 +345,15 @@ class Request(ModelBase, table=True):
             self.prometheus_bytes = bytes_transferred
         self.save(session)
 
-    def set_health(self, health: str, session=None):
+    def set_health(self, health: str, source: str = None, session=None):
         self.health = health
+        self.health_source = source if health is not None else None
         self.save(session)
 
-    def set_transfer_audit(self, verdict: str, audit: dict, session=None):
-        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> transfer_verdict={verdict}")
-        # Store the plain value: a str-mixin Enum renders as "TransferVerdict.OK"
-        # through str(), which is what the metrics labels would pick up.
-        self.transfer_verdict = getattr(verdict, "value", verdict)
-        self.transfer_audit = audit
+    def set_fts_monitoring(self, jobs: dict, summary: dict, session=None):
+        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> fts jobs={len(jobs)}, files={summary.get('files')}")
+        # New objects rather than edits in place: the JSON columns only notice
+        # being reassigned.
+        self.fts_jobs = jobs
+        self.fts_summary = summary
         self.save(session)

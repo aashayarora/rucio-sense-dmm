@@ -1,268 +1,270 @@
 <!-- details.html -->
+{%- macro bytes(v) -%}
+{%- if v is none -%}—
+{%- elif v >= 1e12 -%}{{ '%.2f' % (v / 1e12) }} TB
+{%- elif v >= 1e9 -%}{{ '%.2f' % (v / 1e9) }} GB
+{%- elif v >= 1e6 -%}{{ '%.1f' % (v / 1e6) }} MB
+{%- else -%}{{ v | int }} B
+{%- endif -%}
+{%- endmacro -%}
+{%- macro rate(mbps) -%}
+{%- if mbps is none -%}—
+{%- elif mbps >= 1000 -%}{{ '%.2f' % (mbps / 1000) }} Gbps
+{%- else -%}{{ '%.0f' % mbps }} Mbps
+{%- endif -%}
+{%- endmacro -%}
+{%- macro ts(v) -%}
+{%- if not v -%}—
+{%- elif v is string -%}{{ v[:19] | replace('T', ' ') }} UTC
+{%- else -%}{{ v.strftime('%Y-%m-%d %H:%M:%S') }} UTC
+{%- endif -%}
+{%- endmacro -%}
+{%- macro status_class(status) -%}
+{%- if status in ['PROVISIONED', 'FINISHED', 'DELETED'] -%}status-good
+{%- elif status in ['FAILED', 'CANCELED'] -%}status-bad
+{%- else -%}status-warn
+{%- endif -%}
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Movement Manager - Rule Details</title>
+    <title>Data Movement Manager - Rule {{ data.rule_id[:8] if data else 'not found' }}</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <header>
-        <h1>Rule Details</h1>
+        <h1>Data Movement Manager</h1>
     </header>
     <nav>
         <a href="/">Home</a>
         <a href="/sites">Sites</a>
         <a href="/logs" target="_blank" rel="noopener">Logs</a>
     </nav>
-    <div class="container">
-        <div class="card details-card">
-            {% if data %}
-            {% set transfer_status = data.transfer_status if data.transfer_status else 'UNKNOWN' %}
-            {% set circuit_status = data.sense_circuit_status if data.sense_circuit_status else 'UNKNOWN' %}
-            {% set health_status = data.health if data.health is not none else 'UNKNOWN' %}
+    <main class="container rule-page">
+        <a class="back-link" href="/">&larr; All requests</a>
 
-            <h2>{{ data.rule_id }}</h2>
+        {% if data %}
+        {% set transfer_status = data.transfer_status or 'UNKNOWN' %}
+        {% set circuit_status = data.sense_circuit_status or 'UNKNOWN' %}
+        {% set fts = data.fts_summary or {} %}
+        {% set fts_files = fts.get('files') or {} %}
+        {% set fts_total = fts_files.values() | sum %}
+        {% set fts_done = fts_files.get('FINISHED', 0) %}
+        {% set fts_failed = fts_files.get('FAILED', 0) %}
+        {% set fts_bytes = fts.get('bytes') or 0 %}
+        {% set fts_bytes_done = fts.get('bytes_done') or 0 %}
+        {% if fts_bytes %}{% set progress = (100 * fts_bytes_done / fts_bytes) %}
+        {% elif fts_total %}{% set progress = (100 * fts_done / fts_total) %}
+        {% else %}{% set progress = none %}{% endif %}
+        {% set src_name = data.src_site.name if data.src_site else '—' %}
+        {% set dst_name = data.dst_site.name if data.dst_site else '—' %}
 
-            {% if data.failure_reason %}
-            <div class="failure-banner">
-                <div class="failure-label">
-                    {% if transfer_status == 'FAILED' %}Failure Reason{% else %}Last Error (retrying){% endif %}
-                    {% if data.failed_at %}<span class="failure-time">— {{ data.failed_at }}</span>{% endif %}
-                </div>
-                <pre class="failure-text">{{ data.failure_reason }}</pre>
-            </div>
-            {% endif %}
-
-            <div class="details-grid">
-                <div class="summary-box">
-                    <div class="summary-label">Transfer Status</div>
-                    <div>
-                        <span class="status-badge {% if transfer_status in ['PROVISIONED', 'FINISHED_R', 'FINISHED', 'DELETED'] %}status-good{% elif transfer_status in ['FAILED', 'CANCELED'] %}status-bad{% else %}status-warn{% endif %}">
-                            {{ transfer_status }}
-                        </span>
-                    </div>
-                </div>
-                <div class="summary-box">
-                    <div class="summary-label">SENSE Circuit State</div>
-                    <div>
-                        <span class="status-badge {% if 'READY' in circuit_status %}status-good{% elif 'FAILED' in circuit_status %}status-bad{% else %}status-warn{% endif %}">
-                            {{ circuit_status }}
-                        </span>
-                    </div>
-                </div>
-                <div class="summary-box">
-                    <div class="summary-label">Retry Count</div>
-                    <div class="summary-value">{{ data.sense_retries if data.sense_retries is not none else 0 }}</div>
-                </div>
-                <div class="summary-box">
-                    <div class="summary-label">Transfer Audit</div>
-                    <div>
-                        {% if data.transfer_verdict %}
-                        <span class="status-badge {% if data.transfer_verdict == 'OK' %}status-good{% elif data.transfer_verdict in ['FAILED', 'BYPASSED'] %}status-bad{% else %}status-warn{% endif %}">
-                            {{ data.transfer_verdict }}
-                        </span>
-                        {% else %}
-                        <span class="status-badge status-warn">PENDING</span>
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="summary-box">
-                    <div class="summary-label">Health</div>
-                    <div>
-                        <span class="status-badge {% if health_status == '1' %}status-good{% elif health_status == '0' %}status-bad{% else %}status-warn{% endif %}">
-                            {% if health_status == '1' %}HEALTHY{% elif health_status == '0' %}UNHEALTHY{% else %}{{ health_status }}{% endif %}
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="details-sections">
-                <div class="details-section">
-                    <h3>Lifecycle</h3>
-                    <div class="details-row"><span class="details-label">Current Phase:</span>
-                        <span class="details-value">
-                            {% if transfer_status in ['INIT', 'ALLOCATED', 'RETRY'] %}
-                                Preparing / Staging
-                            {% elif transfer_status in ['STAGED', 'DECIDED', 'STALE', 'MODIFIED'] %}
-                                Provisioning / Bandwidth Decision
-                            {% elif transfer_status in ['PROVISIONED', 'FINISHED_R', 'FINISHED'] %}
-                                Active / Finalizing
-                            {% elif transfer_status in ['CANCELED', 'DELETED'] %}
-                                Closed
-                            {% elif transfer_status == 'FAILED' %}
-                                Failed
-                            {% else %}
-                                Unknown
-                            {% endif %}
-                        </span>
-                    </div>
-                    <div class="details-row"><span class="details-label">Priority:</span><span class="details-value">{{ data.priority if data.priority is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Modified Priority:</span><span class="details-value">{{ data.modified_priority if data.modified_priority is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Retries:</span><span class="details-value">{{ data.sense_retries if data.sense_retries is not none else 0 }}</span></div>
-                    <div class="details-row"><span class="details-label">Sense Affiliated:</span><span class="details-value">{{ 'Yes' if data.sense_affiliated else 'No' }}</span></div>
-                </div>
-
-                <div class="details-section">
-                    <h3>Path & Endpoints</h3>
-                    <div class="details-row"><span class="details-label">Source Site:</span><span class="details-value">{{ data.src_site.name if data.src_site else '—' }}{% if data.src_logical_site and data.src_site and data.src_logical_site != data.src_site.name %} <span class="muted">(RSE: {{ data.src_logical_site }})</span>{% endif %}</span></div>
-                    <div class="details-row"><span class="details-label">Source Hostname:</span><span class="details-value">{{ data.src_endpoint.hostname if data.src_endpoint else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Source IPv6 Range:</span><span class="details-value">{{ data.src_endpoint.ip_range if data.src_endpoint else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Destination Site:</span><span class="details-value">{{ data.dst_site.name if data.dst_site else '—' }}{% if data.dst_logical_site and data.dst_site and data.dst_logical_site != data.dst_site.name %} <span class="muted">(RSE: {{ data.dst_logical_site }})</span>{% endif %}</span></div>
-                    <div class="details-row"><span class="details-label">Destination Hostname:</span><span class="details-value">{{ data.dst_endpoint.hostname if data.dst_endpoint else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Destination IPv6 Range:</span><span class="details-value">{{ data.dst_endpoint.ip_range if data.dst_endpoint else '—' }}</span></div>
-                </div>
-
-                <div class="details-section">
-                    <h3>SENSE & FTS</h3>
-                    <div class="details-row"><span class="details-label">SENSE UUID:</span><span class="details-value">{{ data.sense_uuid if data.sense_uuid else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">SENSE Source URI:</span><span class="details-value">{{ data.sense_src_uri if data.sense_src_uri else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">SENSE Destination URI:</span><span class="details-value">{{ data.sense_dst_uri if data.sense_dst_uri else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Circuit VLANs:</span><span class="details-value">{{ data.src_vlan if data.src_vlan is not none else '—' }} → {{ data.dst_vlan if data.dst_vlan is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">FTS Streams Current:</span><span class="details-value">{{ data.fts_streams_current if data.fts_streams_current is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">FTS Streams Desired:</span><span class="details-value">{{ data.fts_streams_desired if data.fts_streams_desired is not none else '—' }}</span></div>
-                </div>
-
-                <div class="details-section">
-                    <h3>Bandwidth & Metrics</h3>
-                    <div class="details-row"><span class="details-label">Rule Size (GB):</span><span class="details-value">{{ (data.rule_size / 1024 / 1024 / 1024) | round(2) if data.rule_size is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Allocated Bandwidth (Gbps):</span><span class="details-value">{{ (data.allocated_bandwidth_mbps / 1000) | round(2) if data.allocated_bandwidth_mbps is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Available Bandwidth (Gbps):</span><span class="details-value">{{ (data.available_bandwidth_mbps / 1000) | round(2) if data.available_bandwidth_mbps is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Previous Bandwidth (Gbps):</span><span class="details-value">{{ (data.previous_bandwidth_mbps / 1000) | round(2) if data.previous_bandwidth_mbps is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Throughput (Gbps):</span><span class="details-value">{{ (data.prometheus_throughput / 1000) | round(3) if data.prometheus_throughput is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Utilization:</span>
-                        <span class="details-value">
-                            {% if utilization %}{{ utilization.percent }}% <span class="status-badge {{ utilization.css }}">{{ utilization.label }}</span>{% else %}—{% endif %}
-                        </span>
-                    </div>
-                    <div class="details-row"><span class="details-label">Prometheus Bytes:</span><span class="details-value">{{ data.prometheus_bytes if data.prometheus_bytes is not none else '—' }}</span></div>
-                </div>
-
-                {% if data.transfer_audit %}
-                {% set audit = data.transfer_audit %}
-                <div class="details-section">
-                    <h3>Transfer Audit</h3>
-                    <div class="details-row"><span class="details-label">Verdict:</span><span class="details-value">{{ data.transfer_verdict }}</span></div>
-                    <div class="details-row"><span class="details-label">Summary:</span><span class="details-value">{{ audit.summary }}</span></div>
-                    <div class="details-row"><span class="details-label">FTS Files:</span><span class="details-value">{{ audit.fts_files_succeeded if audit.fts_files_succeeded is not none else '—' }} ok / {{ audit.fts_files_failed if audit.fts_files_failed is not none else '—' }} failed of {{ audit.fts_files_total if audit.fts_files_total is not none else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">FTS Volume (GB):</span><span class="details-value">{{ (audit.fts_bytes_in_window / 1e9) | round(2) if audit.fts_bytes_in_window is not none else '—' }}</span></div>
-                    {% if audit.fts_bytes_outside_window %}
-                    <div class="details-row"><span class="details-label">Moved Outside Circuit (GB):</span><span class="details-value">{{ (audit.fts_bytes_outside_window / 1e9) | round(2) }}</span></div>
+        <section class="rule-head">
+            <div class="rule-head-main">
+                <div class="eyebrow">Rucio rule</div>
+                <h2 class="rule-id mono">{{ data.rule_id }}</h2>
+                <div class="route">
+                    <span>{{ src_name }}</span><span class="route-arrow" aria-hidden="true">&rarr;</span><span>{{ dst_name }}</span>
+                    {% if (data.src_logical_site and data.src_logical_site != src_name) or (data.dst_logical_site and data.dst_logical_site != dst_name) %}
+                    <span class="muted">RSEs {{ data.src_logical_site or src_name }} &rarr; {{ data.dst_logical_site or dst_name }}</span>
                     {% endif %}
-                    <div class="details-row"><span class="details-label">Circuit Carried (GB):</span><span class="details-value">{{ (audit.wire_bytes / 1e9) | round(2) if audit.wire_bytes is not none else '—' }}</span></div>
-                    {% if audit.fts_error_categories %}
-                    <div class="details-row"><span class="details-label">FTS Errors:</span><span class="details-value">{% for category, count in audit.fts_error_categories.items() %}{{ category }} ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}</span></div>
-                    {% endif %}
-                    {% if audit.note %}
-                    <div class="details-row"><span class="details-label">Note:</span><span class="details-value">{{ audit.note }}</span></div>
-                    {% endif %}
-                    <div class="details-row"><span class="details-label">Audited At:</span><span class="details-value">{{ audit.audited_at }}</span></div>
-                </div>
-                {% endif %}
-
-                <div class="details-section">
-                    <h3>Timestamps</h3>
-                    <div class="details-row"><span class="details-label">Created:</span><span class="details-value">{{ data.created_at if data.created_at else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Updated:</span><span class="details-value">{{ data.updated_at if data.updated_at else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">SENSE Provisioned At:</span><span class="details-value">{{ data.sense_provisioned_at if data.sense_provisioned_at else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Rucio Finished At:</span><span class="details-value">{{ data.rucio_finished_at if data.rucio_finished_at else '—' }}</span></div>
-                    <div class="details-row"><span class="details-label">Failed At:</span><span class="details-value">{{ data.failed_at if data.failed_at else '—' }}</span></div>
                 </div>
             </div>
-
-            {% if auth_enabled %}
-            <div class="details-row details-actions">
-                <p>Operator actions require a bearer token; use the API.</p>
+            <div class="rule-head-badges">
+                <div class="badge-group"><span class="badge-caption">Request</span><span class="status-badge {{ status_class(transfer_status) }}">{{ transfer_status }}</span></div>
+                <div class="badge-group"><span class="badge-caption">Circuit</span><span class="status-badge {% if 'READY' in circuit_status %}status-good{% elif 'FAILED' in circuit_status %}status-bad{% else %}status-warn{% endif %}">{{ circuit_status }}</span></div>
             </div>
-            {% else %}
-            <div class="details-row details-actions">
-                <button type="button" onclick="markAsFinished('{{ data.rule_id }}')">Mark as Finished</button>
-                <button type="button" onclick="updateFtsLimit('{{ data.rule_id }}')">Update FTS Limit</button>
-                <button type="button" onclick="reInitializeSense('{{ data.rule_id }}')">Re-Initialize SENSE</button>
-                <button type="button" onclick="reInitializeRequest('{{ data.rule_id }}')">Re-Initialize Request</button>
+        </section>
+
+        {% if data.failure_reason %}
+        <div class="alert alert-error" role="alert">
+            <div class="alert-title">
+                {% if transfer_status == 'FAILED' %}Request failed{% else %}Last error &mdash; retrying{% endif %}
+                {% if data.failed_at %}<span class="alert-time">{{ ts(data.failed_at) }}</span>{% endif %}
             </div>
-            {% endif %}
-            {% else %}
-            <h2>Request not found</h2>
-            <p>No details are available for this rule.</p>
-            {% endif %}
-
-            <script>
-                function markAsFinished(ruleId) {
-                    fetch('/mark_finished', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ rule_id: ruleId })
-                    })
-                    .then(response => response.text())
-                    .then(data => alert(data))
-                    .catch(error => {
-                        console.error('Error:', error);
-                        alert("Failed to mark rule as finished.");
-                    });
-                }
-
-                function updateFtsLimit(ruleId) {
-                    const limit = prompt("Enter new FTS limit:");
-                    if (limit !== null) {
-                        const parsedLimit = Number.parseInt(limit, 10);
-                        if (!Number.isInteger(parsedLimit) || parsedLimit < 0) {
-                            alert("FTS limit must be a non-negative integer.");
-                            return;
-                        }
-                        fetch('/update_fts_limit', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ rule_id: ruleId, limit: parsedLimit })
-                        })
-                        .then(response => response.text())
-                        .then(data => alert(data))
-                        .catch(error => {
-                            console.error('Error:', error);
-                            alert("Failed to update FTS limit.");
-                        });
-                    }
-                }
-
-                function reInitializeSense(ruleId) {
-                    fetch('/reinitialize_sense', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ rule_id: ruleId })
-                    })
-                    .then(response => response.text())
-                    .then(data => alert(data))
-                    .catch(error => {
-                        console.error('Error:', error);
-                        alert("Failed to re-initialize SENSE.");
-                    });
-                }
-
-                function reInitializeRequest(ruleId) {
-                    fetch('/reinitialize_request', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ rule_id: ruleId })
-                    })
-                    .then(response => response.text())
-                    .then(data => alert(data))
-                    .catch(error => {
-                        console.error('Error:', error);
-                        alert("Failed to re-initialize request.");
-                    });
-                }
-            </script>
+            <pre class="alert-body">{{ data.failure_reason }}</pre>
         </div>
-    </div>
+        {% endif %}
+        {% if data.sense_escalation %}
+        <div class="alert alert-warn" role="alert">
+            <div class="alert-title">Needs an administrator<span class="alert-time">{{ ts(data.sense_escalated_at) }}</span></div>
+            <div class="alert-body">SENSE recovery stopped retrying: <span class="mono">{{ data.sense_escalation }}</span></div>
+        </div>
+        {% endif %}
+
+        <section class="kpis">
+            <div class="kpi">
+                <div class="kpi-label">Health</div>
+                {% if data.health == '1' %}<div class="kpi-value kpi-good">Healthy</div>
+                {% elif data.health == '0' %}<div class="kpi-value kpi-bad">Unhealthy</div>
+                {% else %}<div class="kpi-value kpi-neutral">Not measured</div>{% endif %}
+                <div class="kpi-sub">
+                    {% if data.health_source == 'fts' %}From FTS progress &mdash; no switch counters for this circuit
+                    {% elif data.health_source == 'circuit' %}From the circuit's switch counters
+                    {% elif transfer_status == 'PROVISIONED' %}No measurement available yet
+                    {% else %}Measured only while the circuit is provisioned{% endif %}
+                </div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Allocated bandwidth</div>
+                <div class="kpi-value">{{ rate(data.allocated_bandwidth_mbps) }}</div>
+                <div class="kpi-sub">{% if data.available_bandwidth_mbps is not none %}{{ rate(data.available_bandwidth_mbps) }} available on the path{% else %}&nbsp;{% endif %}</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Circuit throughput</div>
+                <div class="kpi-value">{{ rate(data.prometheus_throughput) }}</div>
+                <div class="kpi-sub">
+                    {% if utilization %}{{ utilization.percent }}% of allocation <span class="status-badge {{ utilization.css }}">{{ utilization.label }}</span>
+                    {% elif data.prometheus_throughput is none %}Switch counters unavailable
+                    {% else %}&nbsp;{% endif %}
+                </div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Transfer progress</div>
+                <div class="kpi-value">{% if progress is not none %}{{ '%.0f' % progress }}%{% else %}—{% endif %}</div>
+                {% if progress is not none %}
+                <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ '%.0f' % progress }}"><div class="progress-fill{% if fts_failed %} has-failures{% endif %}" style="width: {{ '%.1f' % progress }}%"></div></div>
+                {% endif %}
+                <div class="kpi-sub">{% if fts_total %}{{ fts_done }} of {{ fts_total }} files{% if fts_failed %} &middot; <span class="text-bad">{{ fts_failed }} failed</span>{% endif %}{% else %}No FTS jobs found yet{% endif %}</div>
+            </div>
+        </section>
+
+        <section class="panels">
+            <article class="panel">
+                <h3>Transfers</h3>
+                {% if fts.get('jobs') %}
+                <dl class="facts">
+                    <dt>Files</dt>
+                    <dd class="chips">
+                        {% for state, count in fts_files | dictsort %}
+                        <span class="chip chip-{{ state | lower }}">{{ state | capitalize }} <strong>{{ count }}</strong></span>
+                        {% endfor %}
+                    </dd>
+                    <dt>Data delivered</dt><dd>{{ bytes(fts_bytes_done) }} of {{ bytes(fts_bytes) }}</dd>
+                    <dt>Delivery rate</dt><dd>{{ rate(fts.get('throughput_mbps')) }}</dd>
+                    <dt>FTS jobs</dt>
+                    <dd>{{ fts.get('jobs') }}{% set job_states = fts.get('job_states') or {} %}{% if job_states %} <span class="muted">&middot; {% for state, count in job_states | dictsort %}{{ count }} {{ state | lower }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</dd>
+                    <dt>Last delivery</dt><dd>{{ ts(fts.get('progress_at')) }}</dd>
+                    <dt>Last checked</dt>
+                    <dd>{{ ts(fts.get('checked_at')) }}{% if fts.get('complete') == false %} <span class="status-badge status-warn">Partial</span>{% endif %}</dd>
+                </dl>
+                <p class="panel-note">Delivery rate covers finished files only. Per-job detail is in the <a href="/api/requests/{{ data.rule_id }}">JSON API</a>.</p>
+                {% else %}
+                <p class="empty-note">No FTS jobs have been found for this rule yet. They appear once Rucio submits its transfers.</p>
+                {% endif %}
+            </article>
+
+            <article class="panel">
+                <h3>Circuit</h3>
+                <dl class="facts">
+                    <dt>SENSE instance</dt><dd class="mono">{{ data.sense_uuid or '—' }}</dd>
+                    <dt>VLANs</dt><dd>{{ data.src_vlan if data.src_vlan is not none else '—' }} &rarr; {{ data.dst_vlan if data.dst_vlan is not none else '—' }}</dd>
+                    <dt>Allocated</dt><dd>{{ rate(data.allocated_bandwidth_mbps) }}{% if data.previous_bandwidth_mbps is not none and data.previous_bandwidth_mbps != data.allocated_bandwidth_mbps %} <span class="muted">was {{ rate(data.previous_bandwidth_mbps) }}</span>{% endif %}</dd>
+                    <dt>Measured</dt><dd>{{ rate(data.prometheus_throughput) }}</dd>
+                    <dt>Carried</dt><dd>{{ bytes(data.prometheus_bytes) }}</dd>
+                    <dt>FTS streams</dt><dd>{{ data.fts_streams_current if data.fts_streams_current is not none else '—' }}{% if data.fts_streams_desired is not none and data.fts_streams_desired != data.fts_streams_current %} <span class="muted">target {{ data.fts_streams_desired }}</span>{% endif %}</dd>
+                </dl>
+            </article>
+
+            <article class="panel">
+                <h3>Path</h3>
+                <table class="path-table">
+                    <thead><tr><th></th><th>Source</th><th>Destination</th></tr></thead>
+                    <tbody>
+                        <tr><th scope="row">Site</th><td>{{ src_name }}</td><td>{{ dst_name }}</td></tr>
+                        <tr><th scope="row">Endpoint</th><td class="mono">{{ data.src_endpoint.hostname if data.src_endpoint else '—' }}</td><td class="mono">{{ data.dst_endpoint.hostname if data.dst_endpoint else '—' }}</td></tr>
+                        <tr><th scope="row">IPv6 range</th><td class="mono">{{ data.src_endpoint.ip_range if data.src_endpoint else '—' }}</td><td class="mono">{{ data.dst_endpoint.ip_range if data.dst_endpoint else '—' }}</td></tr>
+                    </tbody>
+                </table>
+            </article>
+
+            <article class="panel">
+                <h3>Lifecycle</h3>
+                <dl class="facts">
+                    <dt>Priority</dt><dd>{{ data.priority if data.priority is not none else '—' }}{% if data.modified_priority is not none and data.modified_priority != data.priority %} <span class="muted">overridden to {{ data.modified_priority }}</span>{% endif %}</dd>
+                    <dt>Rule size</dt><dd>{{ bytes(data.rule_size) }}</dd>
+                    <dt>SENSE retries</dt><dd>{{ data.sense_retries or 0 }}</dd>
+                    <dt>Created</dt><dd>{{ ts(data.created_at) }}</dd>
+                    <dt>Provisioned</dt><dd>{{ ts(data.sense_provisioned_at) }}</dd>
+                    <dt>Rucio finished</dt><dd>{{ ts(data.rucio_finished_at) }}</dd>
+                    <dt>Last updated</dt><dd>{{ ts(data.updated_at) }}</dd>
+                </dl>
+            </article>
+        </section>
+
+        <section class="panel actions-panel">
+            <h3>Operator actions</h3>
+            {% if auth_enabled %}
+            <p class="panel-note">These actions require a bearer token. Use the API.</p>
+            {% else %}
+            <div class="actions">
+                <button type="button" class="btn" data-action="mark_finished">Mark as finished</button>
+                <button type="button" class="btn" data-action="update_fts_limit">Update FTS limit&hellip;</button>
+                <span class="actions-sep" aria-hidden="true"></span>
+                <button type="button" class="btn btn-danger" data-action="reinitialize_sense">Re-initialize SENSE</button>
+                <button type="button" class="btn btn-danger" data-action="reinitialize_request">Re-initialize request</button>
+            </div>
+            <div id="action-result" class="action-result" role="status" aria-live="polite"></div>
+            {% endif %}
+        </section>
+
+        {% if not auth_enabled %}
+        <script>
+            const RULE_ID = {{ data.rule_id | tojson }};
+            const CONFIRM = {
+                reinitialize_sense: "Re-initialize SENSE for this rule? Its circuit will be rebuilt.",
+                reinitialize_request: "Re-initialize this request? It starts over from INIT.",
+                mark_finished: "Mark this rule as finished? Its circuit will be taken down.",
+            };
+
+            function showResult(text, ok) {
+                const box = document.getElementById('action-result');
+                box.textContent = text;
+                box.className = 'action-result ' + (ok ? 'is-ok' : 'is-error');
+            }
+
+            async function runAction(action) {
+                const body = { rule_id: RULE_ID };
+                if (action === 'update_fts_limit') {
+                    const input = prompt("New FTS limit (streams):");
+                    if (input === null) return;
+                    const limit = Number.parseInt(input, 10);
+                    if (!Number.isInteger(limit) || limit < 0) {
+                        showResult("The FTS limit must be a non-negative integer.", false);
+                        return;
+                    }
+                    body.limit = limit;
+                } else if (CONFIRM[action] && !confirm(CONFIRM[action])) {
+                    return;
+                }
+                try {
+                    const response = await fetch('/' + action, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    showResult(await response.text(), response.ok);
+                } catch (error) {
+                    console.error(error);
+                    showResult("Request failed: " + error.message, false);
+                }
+            }
+
+            document.querySelectorAll('[data-action]').forEach(button => {
+                button.addEventListener('click', () => runAction(button.dataset.action));
+            });
+        </script>
+        {% endif %}
+
+        {% else %}
+        <div class="empty-state">
+            <h2>Request not found</h2>
+            <p>DMM has no request for this rule.</p>
+        </div>
+        {% endif %}
+    </main>
     <footer>
         <p>&copy; Apache License, Version 2.0</p>
     </footer>

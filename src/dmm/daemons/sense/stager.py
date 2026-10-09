@@ -7,7 +7,7 @@ from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
 
 from dmm.core.config import config_get
-from dmm.core.sense import stage_link, parse_staging_response
+from dmm.core.sense import stage_link, parse_staging_response, delete_instance
 from dmm.core.utils import release_endpoints_and_addresses
 
 class SENSEStagerDaemon(DaemonBase):
@@ -31,7 +31,10 @@ class SENSEStagerDaemon(DaemonBase):
                     req.mark_failed(f"No VLAN range found between {req.src_site} and {req.dst_site}", session=session)
                     release_endpoints_and_addresses(req, session)
                     continue
-                    
+
+                if req.sense_uuid:
+                    self._discard_failed_instance(req, session)
+
                 response = stage_link(
                     profile_uuid=self.profile_uuid,
                     src_site=req.src_site,
@@ -55,11 +58,6 @@ class SENSEStagerDaemon(DaemonBase):
                 if not sense_uuid:
                     raise ValueError("No service_uuid in response")
 
-                # Guard: SENSE-O's total-block-maximum-bandwidth can return the full
-                # link capacity (not remaining available bandwidth) when the internal
-                # reservation table is stale or the API semantics change. Cap to the
-                # mesh link capacity so we never ask SENSE to provision more than the
-                # physical link supports.
                 link_cap = Mesh.get_link_capacity(req.src_site, req.dst_site, session=session)
                 if link_cap is not None:
                     if bandwidth_mbps > link_cap:
@@ -78,4 +76,21 @@ class SENSEStagerDaemon(DaemonBase):
 
             except Exception as e:
                 logging.error(f"Failed to stage link for {req.rule_id}, {e}, will try again")
+                failed_uuid = getattr(e, "sense_uuid", None)
+                if failed_uuid:
+                    req.set_sense_uuid(failed_uuid, session=session)
+                    req.update({"available_bandwidth_mbps": None}, session=session)
                 req.mark_retry(f"Staging failed: {e}", session=session)
+
+    @staticmethod
+    def _discard_failed_instance(req, session):
+        """Delete the instance a previous staging attempt failed on, before staging anew."""
+        try:
+            delete_instance(req.sense_uuid)
+        except Exception as e:
+            logging.error(
+                f"Failed to delete SENSE instance {req.sense_uuid} left by a failed staging "
+                f"of {req.rule_id}, it may need deleting by hand: {e}"
+            )
+        req.set_sense_uuid(None, session=session)
+        req.set_sense_circuit_status(None, session=session)

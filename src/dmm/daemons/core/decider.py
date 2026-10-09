@@ -12,8 +12,6 @@ from dmm.db.session import databased
 from dmm.core.config import config_get_float
 from dmm.core.sense import is_circuit_active, is_being_provisioned
 
-_FINISHED = (RequestStatus.FINISHED_R, RequestStatus.FINISHED)
-
 class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
@@ -42,18 +40,17 @@ class DeciderDaemon(DaemonBase):
         Build a network graph from the requests in the database.
         The link capacity is taken from the Mesh table.
 
-        FINISHED_R/FINISHED requests are kept in the graph as *fixed* reservations at
-        their allocated bandwidth: they don't compete in the priority split, but the
+        FINISHED requests are kept in the graph as *fixed* reservations at their
+        allocated bandwidth: they don't compete in the priority split, but the
         capacity they hold stays reserved (for a potential circuit takeover) until the
         request is cancelled or taken over. This way active requests get readjusted
-        exactly once — when the finished circuit's final disposition is known — rather
-        than on every intermediate step (throttle to 1G, then cancel).
+        exactly once — when the finished circuit's final disposition is known.
 
         The reservation only lasts while a takeover is still possible: see
         _holds_reservation.
         """
         multi_graph = nx.MultiGraph()
-        reqs = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.DECIDED, RequestStatus.STALE, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.FINISHED_R, RequestStatus.FINISHED], session=session) # get all requests which would affect the decision (i.e. don't consider requests that are in CANCELLED or FAILED state)
+        reqs = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.DECIDED, RequestStatus.STALE, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.FINISHED], session=session) # get all requests which would affect the decision (i.e. don't consider requests that are in CANCELLED or FAILED state)
         if reqs == []:
             return multi_graph
         for req in reqs:
@@ -64,7 +61,7 @@ class DeciderDaemon(DaemonBase):
             if link_capacity_mbps is None:
                 logging.error(f"No link capacity found for {req.src_site.name}-{req.dst_site.name}, excluding request {req.rule_id} from optimization")
                 continue
-            is_fixed = req.transfer_status in _FINISHED
+            is_fixed = req.transfer_status == RequestStatus.FINISHED
             if is_fixed and not self._holds_reservation(req):
                 logging.debug(
                     f"Finished request {req.rule_id} no longer reserves capacity: "
@@ -89,8 +86,8 @@ class DeciderDaemon(DaemonBase):
         """
         Whether a finished request still keeps its capacity reserved for a takeover.
 
-        Only while it has a circuit that is up, or on its way back up (a throttle in
-        flight). Once SENSE is cancelling the circuit - or has failed to - the
+        Only while it has a circuit that is up, or on its way up (a create or modify
+        still committing when the rule finished). Once SENSE is cancelling the circuit - or has failed to - the
         allocator will never reuse it, and holding its capacity starves the live
         requests for as long as the cancel keeps failing.
         """
@@ -281,13 +278,13 @@ class DeciderDaemon(DaemonBase):
                 link_capacity = multi_graph.nodes[req_u].get('link_capacity_mbps', allocated_bandwidth)
                 cotenant_statuses = [
                     RequestStatus.PROVISIONED, RequestStatus.STALE, RequestStatus.MODIFIED,
-                    RequestStatus.DECIDED, RequestStatus.FINISHED, RequestStatus.FINISHED_R,
+                    RequestStatus.DECIDED, RequestStatus.FINISHED,
                 ]
                 cotenant_reqs = Request.get_by_status(
                     statuses=cotenant_statuses, session=session, use_lock=False
                 )
                 reserved_by_others = sum(
-                    (r.allocated_bandwidth_mbps or 0)
+                    self._held_on_sense(r)
                     for r in cotenant_reqs
                     if r.rule_id != req.rule_id
                     and (
@@ -295,7 +292,7 @@ class DeciderDaemon(DaemonBase):
                         or (r.src_site_ == req.dst_site_ and r.dst_site_ == req.src_site_)
                     )
                     and r.sense_uuid is not None
-                    and (r.transfer_status not in _FINISHED or self._holds_reservation(r))
+                    and (r.transfer_status != RequestStatus.FINISHED or self._holds_reservation(r))
                 )
                 capped = int(min(allocated_bandwidth, link_capacity - reserved_by_others))
                 if capped != allocated_bandwidth:
@@ -332,7 +329,22 @@ class DeciderDaemon(DaemonBase):
             req.set_previous_bandwidth(req.allocated_bandwidth_mbps, session=session)
             req.set_allocated_bandwidth(allocated_bandwidth, session=session)
             logging.info(f"Modified bandwidth for request {req.rule_id}: {allocated_bandwidth}")
+            # The modifier counts this modify's failures in sense_retries, so it must
+            # not inherit the ones left over from creating the circuit.
+            req.update({"sense_retries": 0}, session=session)
             req.set_status(status=RequestStatus.STALE, session=session)
+
+    @staticmethod
+    def _held_on_sense(req) -> float:
+        """
+        Bandwidth a request's circuit holds on SENSE right now. A STALE request's
+        allocation is the target of a modify that has not gone through yet, so
+        until it does SENSE still holds the previous one if that is larger.
+        """
+        allocated = req.allocated_bandwidth_mbps or 0
+        if req.transfer_status == RequestStatus.STALE:
+            return max(allocated, req.previous_bandwidth_mbps or 0)
+        return allocated
 
     @staticmethod
     def _good_response(response):

@@ -28,14 +28,17 @@ class SENSEProvisionerDaemon(DaemonBase):
     @databased
     def run_once(self, session=None):
         # make sure there are no stale requests before provisioning any new ones
+        # An escalated one is waiting on an admin and must not stop everyone else.
         reqs_stale = Request.get_by_status(statuses=[RequestStatus.STALE], session=session)
-        if reqs_stale != []:
+        if any(not r.sense_escalation for r in reqs_stale):
             logging.debug("Stale requests exist, skipping provisioning")
             return
-            
+
         reqs_decided = Request.get_by_status(statuses=[RequestStatus.DECIDED], session=session)
         if reqs_decided == []:
             return
+        for r in reqs_stale:
+            logging.warning(f"Provisioning despite STALE request {r.rule_id}: it is escalated ({r.sense_escalation})")
             
         # Check which specific requests have provisioning in progress
         # Build a set of rule_ids that are currently being provisioned
@@ -73,6 +76,10 @@ class SENSEProvisionerDaemon(DaemonBase):
                         "marking as RETRY"
                     )
                     req.mark_retry(f"SENSE circuit {req.sense_uuid} in {status}", session=session)
+                    continue
+
+                if status == "UNKNOWN":
+                    req.mark_retry(f"SENSE instance {req.sense_uuid} is no longer known to SENSE-O", session=session)
                     continue
                     
                 if not is_create_compiled(status):

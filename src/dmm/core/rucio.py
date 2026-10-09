@@ -223,3 +223,61 @@ def is_sense_rule(rule):
     """
     activity = rule.get('activity')
     return activity and "sense" in activity.lower()
+
+# Rucio request states: SUBMITTED requests are in flight in FTS; DONE ones have
+# been archived to the request history.
+_LIVE_REQUEST_STATES = "S"
+_DONE_REQUEST_STATES = "D"
+_HISTORY_PAGE_SIZE = 100
+
+def get_fts_job_ids(client, src_rse, dst_rse, rule_id, history_pages=0):
+    """
+    FTS jobs carrying a rule's transfers between two RSEs.
+
+    Requests live in Rucio's requests table while FTS has them, and are archived
+    to the history once they finish. The live table is asked first; the history
+    only if that finds nothing and history_pages allows it. Both are queried per
+    RSE pair, not per rule, so the history is paged until the rule turns up, and
+    history_pages caps that - a busy pair's history is far longer than any one
+    rule's.
+
+    Args:
+        client: Rucio client instance
+        src_rse: Source RSE name, as Rucio knows it
+        dst_rse: Destination RSE name, as Rucio knows it
+        rule_id: The rule whose jobs to find
+        history_pages: Most history pages to read, 0 for none
+
+    Returns:
+        Dict of FTS job id to the FTS server it was submitted to (None if Rucio
+        didn't record one)
+    """
+    jobs = {}
+
+    def collect(records):
+        for rec in records:
+            if rec.get("rule_id") == rule_id and rec.get("external_id"):
+                jobs[rec["external_id"]] = rec.get("external_host")
+
+    try:
+        collect(client.list_requests(src_rse=src_rse, dst_rse=dst_rse, request_states=_LIVE_REQUEST_STATES))
+    except Exception as e:
+        logging.warning(f"Could not list live Rucio requests {src_rse} -> {dst_rse}: {e}")
+
+    if jobs:
+        return jobs
+
+    for page in range(history_pages):
+        try:
+            records = list(client.list_requests_history(
+                src_rse=src_rse, dst_rse=dst_rse, request_states=_DONE_REQUEST_STATES,
+                offset=page * _HISTORY_PAGE_SIZE, limit=_HISTORY_PAGE_SIZE,
+            ))
+        except Exception as e:
+            logging.warning(f"Could not list Rucio request history {src_rse} -> {dst_rse}: {e}")
+            break
+        collect(records)
+        if jobs or len(records) < _HISTORY_PAGE_SIZE:
+            break
+
+    return jobs

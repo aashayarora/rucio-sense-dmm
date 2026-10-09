@@ -56,6 +56,7 @@ def request_to_dict(req, detail: bool = True) -> dict:
         "sense_uuid": req.sense_uuid,
         "sense_affiliated": bool(req.sense_affiliated),
         "health": req.health,
+        "health_source": req.health_source,
         "sense_retries": req.sense_retries,
         "failure_reason": req.failure_reason,
         "priority": req.priority,
@@ -76,10 +77,13 @@ def request_to_dict(req, detail: bool = True) -> dict:
             "streams_current": req.fts_streams_current,
             "streams_desired": req.fts_streams_desired,
         },
+        # What the circuit's VLAN counters say it carried.
         "measured": {
             "throughput_mbps": req.prometheus_throughput,
             "bytes": req.prometheus_bytes,
         },
+        # Roll-up of the rule's FTS jobs; None until the monitor has found any.
+        "fts_transfers": req.fts_summary,
         "timestamps": {
             "created_at": _iso(req.created_at),
             "updated_at": _iso(req.updated_at),
@@ -93,6 +97,7 @@ def request_to_dict(req, detail: bool = True) -> dict:
         data["sense_src_uri"] = req.sense_src_uri
         data["sense_dst_uri"] = req.sense_dst_uri
         data["circuit_vlans"] = {"src": req.src_vlan, "dst": req.dst_vlan}
+        data["fts_jobs"] = req.fts_jobs
         data["sense_alloc_rule_id"] = req.sense_alloc_rule_id
         data["src_pool_site"] = req.src_pool_site
         data["dst_pool_site"] = req.dst_pool_site

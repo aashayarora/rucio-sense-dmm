@@ -28,7 +28,7 @@ class AllocatorDaemon(DaemonBase):
         if not reqs_init:
             return
 
-        # Track rule_ids of FINISHED/FINISHED_R requests already claimed this cycle
+        # Track rule_ids of FINISHED requests already claimed this cycle
         # so that two INIT requests for the same site pair don't both try to reuse
         # the same finished request.
         claimed_rule_ids = set()
@@ -40,10 +40,9 @@ class AllocatorDaemon(DaemonBase):
             self._allocate_new_endpoints(new_request, session)  # if not found, allocate new endpoints
 
     def _reuse_finished_request(self, new_request, session, claimed_rule_ids: set) -> bool:
-        reqs_finished = Request.get_by_status(statuses=[RequestStatus.FINISHED_R, RequestStatus.FINISHED], session=session)
-        # Prefer FINISHED_R circuits (still at full bandwidth) over FINISHED ones
-        # (already throttled to 1G, which forces an extra modify after takeover).
-        reqs_finished.sort(key=lambda r: 0 if r.transfer_status == RequestStatus.FINISHED_R else 1)
+        # A finished request's circuit stays up at its allocated bandwidth for
+        # sense_keep_alive_seconds before the canceller takes it down.
+        reqs_finished = Request.get_by_status(statuses=[RequestStatus.FINISHED], session=session)
         for req_fin in reqs_finished:
             if req_fin.rule_id in claimed_rule_ids:
                 continue
@@ -96,11 +95,6 @@ class AllocatorDaemon(DaemonBase):
 
                 inherited_alloc_rule_id = req_fin.sense_alloc_rule_id or req_fin.rule_id
 
-                if req_fin.transfer_status == RequestStatus.FINISHED:
-                    inherited_bandwidth = 1000
-                else:
-                    inherited_bandwidth = req_fin.allocated_bandwidth_mbps
-
                 new_request.update({
                     "src_endpoint": reused_src_endpoint,
                     "dst_endpoint": reused_dst_endpoint,
@@ -109,7 +103,7 @@ class AllocatorDaemon(DaemonBase):
                     "sense_dst_uri": reused_dst_uri,
                     "src_vlan": reused_src_vlan,
                     "dst_vlan": reused_dst_vlan,
-                    "allocated_bandwidth_mbps": inherited_bandwidth,
+                    "allocated_bandwidth_mbps": req_fin.allocated_bandwidth_mbps,
                     "available_bandwidth_mbps": req_fin.available_bandwidth_mbps,
                     "sense_circuit_status": req_fin.sense_circuit_status,
                     "sense_affiliated": req_fin.sense_affiliated,

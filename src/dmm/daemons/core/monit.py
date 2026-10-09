@@ -16,6 +16,13 @@ from dmm.core.monit import (
 HEALTH_OK = "1"
 HEALTH_BAD = "0"
 
+# Values of Request.health_source.
+SOURCE_CIRCUIT = "circuit"
+SOURCE_FTS = "fts"
+
+# FTS file states nothing more is moved in.
+_FTS_DONE_FILE_STATES = {"FINISHED", "FAILED", "CANCELED", "NOT_USED"}
+
 # Statuses whose health is kept up to date. Health on anything else is cleared, so
 # a verdict from an earlier PROVISIONED spell doesn't outlive the transfer.
 _MONITORED_STATUSES = [RequestStatus.PROVISIONED]
@@ -55,9 +62,15 @@ class MonitDaemon(DaemonBase):
     into a throughput figure and a health verdict.
 
     Health means one thing only: is traffic actually flowing on this circuit.
-    Anything that can't be measured - Prometheus unreachable, no VLAN recorded, no
-    counters for it yet, still inside the post-provisioning grace period - is left
-    unknown rather than reported as unhealthy.
+    Inside the post-provisioning grace period it is left unknown rather than
+    reported as unhealthy.
+
+    Not every site exports switch counters, and a circuit between two that don't
+    can't be measured at all. Then, and whenever else the counters give nothing to
+    go on - Prometheus refusing or not configured, no VLAN recorded - health falls
+    back to the rule's FTS jobs: data is moving if delivered bytes keep growing.
+    That is a weaker statement about the circuit, so health_source says which one
+    a verdict came from, and an FTS view that is stale or empty stays unknown.
 
     Rates come from the timestamps SiteRM put on its samples, not from when this
     daemon polls, so neither side's schedule skews them. A poll that finds nothing
@@ -86,6 +99,13 @@ class MonitDaemon(DaemonBase):
         # with FTS queue depth and scrape jitter, which is noise a health verdict
         # should not react to.
         self.window_seconds = config_get_int("monit", "throughput_window_seconds", default=300, constraint="pos")
+        # FTS fallback: pending files with no bytes delivered for this long is a
+        # stall. Files of several GB over shared streams take minutes each, so this
+        # is far longer than the circuit's own check.
+        self.fts_stall_seconds = config_get_int("monit", "health_fts_stall_seconds", default=1800, constraint="pos")
+        # An FTS summary older than this, or one FTS didn't fully answer, is not
+        # judged - an FTS or monitor outage must not read as stalled transfers.
+        self.fts_max_age_seconds = config_get_int("monit", "health_fts_max_age_seconds", default=600, constraint="pos")
 
         # rule_id -> {(site, vlan, hostname, ifDescr, Key): _Series}
         self._series = {}
@@ -104,6 +124,8 @@ class MonitDaemon(DaemonBase):
         self._clear_stale_health(session)
 
         if self.prometheus is None:
+            for req in reqs:
+                self._fall_back_to_fts(req, session)
             return
 
         now = datetime.now(timezone.utc).timestamp()
@@ -140,22 +162,22 @@ class MonitDaemon(DaemonBase):
     def _monitor(self, req, now, session=None):
         ends = circuit_ends(req)
         if not ends:
-            logging.warning(f"Request {req.rule_id} has no circuit VLAN recorded, leaving health unknown")
+            logging.warning(f"Request {req.rule_id} has no circuit VLAN recorded, judging health from FTS")
             self._forget(req.rule_id)
-            req.set_health(None, session=session)
+            self._fall_back_to_fts(req, session)
             return
 
         series = self._fetch(req, ends, now)
         if series is None:
             # Nothing measurable: say nothing rather than something wrong, and drop
             # what was collected so the next good read starts clean.
-            logging.warning(f"No usable Prometheus data for {req.rule_id}, leaving health unknown")
+            logging.warning(f"No usable Prometheus data for {req.rule_id}, judging health from FTS")
             self._forget(req.rule_id)
-            req.set_health(None, session=session)
+            self._fall_back_to_fts(req, session)
             return
         if not series:
-            logging.info(f"No switch counters yet for {req.rule_id}'s circuit VLANs {ends}")
-            req.set_health(None, session=session)
+            logging.info(f"No switch counters for {req.rule_id}'s circuit VLANs {ends}, judging health from FTS")
+            self._fall_back_to_fts(req, session)
             return
 
         newest = max(s.samples[-1][0] for s in series.values())
@@ -174,7 +196,47 @@ class MonitDaemon(DaemonBase):
             return
 
         req.set_prometheus_metrics(throughput=throughput_mbps, bytes_transferred=busiest.total, session=session)
-        req.set_health(self._health(req, throughput_mbps), session=session)
+        req.set_health(self._health(req, throughput_mbps), source=SOURCE_CIRCUIT, session=session)
+
+    def _fall_back_to_fts(self, req, session):
+        health = self._fts_health(req)
+        if health is not None and (health, SOURCE_FTS) != (req.health, req.health_source):
+            logging.info(f"Health of {req.rule_id} from its FTS jobs: {health}")
+        if health == HEALTH_BAD and req.health != HEALTH_BAD:
+            logging.warning(
+                f"{req.rule_id} is unhealthy: FTS has delivered nothing for over "
+                f"{self.fts_stall_seconds}s with files still pending"
+            )
+        req.set_health(health, source=SOURCE_FTS, session=session)
+
+    def _fts_health(self, req):
+        """
+        HEALTH_OK, HEALTH_BAD, or None when the FTS view gives no basis for one.
+
+        No basis: no jobs found yet, a view FTS didn't fully answer or that has
+        gone stale, or nothing left to move - a rule whose files are all done has
+        no data to be moving.
+        """
+        summary = req.fts_summary or {}
+        if not summary.get("jobs") or not summary.get("complete"):
+            return None
+        checked_at = _parse_utc(summary.get("checked_at"))
+        progress_at = _parse_utc(summary.get("progress_at"))
+        if checked_at is None or progress_at is None:
+            return None
+        now = utcnow()
+        if (now - checked_at).total_seconds() > self.fts_max_age_seconds:
+            return None
+        pending = sum(count for state, count in (summary.get("files") or {}).items()
+                      if state not in _FTS_DONE_FILE_STATES)
+        if not pending:
+            return None
+        # A circuit that has just come up gets the whole window, whatever FTS did
+        # before it.
+        since = max(progress_at, req.sense_provisioned_at or progress_at)
+        if (now - since).total_seconds() <= self.fts_stall_seconds:
+            return HEALTH_OK
+        return HEALTH_BAD
 
     def _fetch(self, req, ends, now):
         """
@@ -251,3 +313,16 @@ class MonitDaemon(DaemonBase):
             f"over {strikes} consecutive polls"
         )
         return HEALTH_BAD
+
+
+def _parse_utc(value):
+    """An ISO timestamp from a JSON column, as the naive UTC datetimes DMM stores."""
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    return when

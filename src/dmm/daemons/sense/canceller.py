@@ -17,7 +17,9 @@ from dmm.core.sense import (
     is_ready_for_cancel,
     is_create_failed,
     is_modify_failed,
+    is_stalled_status,
 )
+from dmm.core.recovery import check_stall, retry_cancel
 from dmm.core.utils import release_endpoints_and_addresses
 
 class SENSECancellerDaemon(DaemonBase):
@@ -26,6 +28,14 @@ class SENSECancellerDaemon(DaemonBase):
     
     def process(self, **kwargs):
         self.run_once(**kwargs)
+
+    @staticmethod
+    def _stalled(req):
+        """Stuck in a create or modify commit for longer than stall_escalate_seconds."""
+        if not is_stalled_status(req.sense_circuit_status) or req.sense_status_since is None:
+            return False
+        stall_secs = config_get_int("sense", "stall_escalate_seconds", default=1800, constraint="nonneg")
+        return (utcnow() - req.sense_status_since).total_seconds() >= stall_secs
 
     @databased
     def run_once(self, session=None):
@@ -91,42 +101,35 @@ class SENSECancellerDaemon(DaemonBase):
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue
 
+                if live_status == "UNKNOWN":
+                    logging.info(f"Circuit {req.sense_uuid} of {req.rule_id} is already gone from SENSE, releasing and marking CANCELED")
+                    release_endpoints_and_addresses(req, session)
+                    req.set_status(status=RequestStatus.CANCELED, session=session)
+                    continue
+
                 if is_being_cancelled(live_status):
                     # SENSE has accepted the cancel (CANCEL-COMMITTING / CANCEL-COMMITTED).
                     # Do NOT re-issue cancel_link() — that causes a 500 BadRequest storm.
-                    # Wait for SENSE to reach CANCEL-READY on the next poll cycle.
+                    # Wait for SENSE to reach CANCEL-READY, asking it to verify (and then
+                    # an admin) if it stalls in CANCEL - COMMITTED.
                     logging.debug(
                         f"Circuit {req.sense_uuid} is already being cancelled on SENSE side "
                         f"(status={live_status}). Waiting for CANCEL-READY."
                     )
+                    check_stall(req, session)
                     continue
 
                 if is_cancel_failed(live_status):
-                    # SENSE-O failed to complete the cancel.
-                    # Because "READY" is not in the status string, cancel_link() will automatically
-                    # set force=true — which is the correct SENSE-O API call to break the
-                    # circuit out of this state.  If the retry itself fails (e.g. the 503
-                    # is still ongoing) we log the error and leave the request in FINISHED
-                    # so the next daemon cycle tries again.
+                    # SENSE-O failed to complete the cancel, most often because a site RM
+                    # didn't answer. cancel_link() forces it, since "READY" is not in the
+                    # status. A bounded number of retries, then an admin.
                     logging.warning(
                         f"Circuit {req.sense_uuid} is in CANCEL - FAILED for request "
-                        f"{req.rule_id} (possible transient upstream error). "
-                        "Retrying with force cancel."
+                        f"{req.rule_id}, retrying with force cancel."
                     )
-                    try:
-                        cancel_link(req.sense_uuid, live_status)  # force=true, "READY" not in status
+                    if retry_cancel(req, live_status, session):
                         release_endpoints_and_addresses(req, session)
                         req.set_status(status=RequestStatus.CANCELED, session=session)
-                        logging.info(
-                            f"Force-cancel succeeded for CANCEL-FAILED circuit "
-                            f"{req.sense_uuid} ({req.rule_id})"
-                        )
-                    except Exception as force_err:
-                        logging.error(
-                            f"Force-cancel of CANCEL-FAILED circuit {req.sense_uuid} "
-                            f"for {req.rule_id} failed: {force_err} — will retry next cycle",
-                            exc_info=True,
-                        )
                     continue
 
                 if is_create_compiled(live_status):
@@ -135,9 +138,13 @@ class SENSECancellerDaemon(DaemonBase):
                     req.set_status(status=RequestStatus.CANCELED, session=session)
                     continue
 
-                # Failed circuits can't reach a READY state — force-cancel them so the
-                # request doesn't stay FINISHED forever.
-                if not (is_ready_for_cancel(live_status) or is_create_failed(live_status) or is_modify_failed(live_status)):
+                # Failed circuits can't reach a READY state, and neither can one stuck
+                # committing (a create or modify SENSE-O never verified) — force-cancel
+                # them so the request doesn't stay FINISHED forever.
+                if not (
+                    is_ready_for_cancel(live_status) or is_create_failed(live_status)
+                    or is_modify_failed(live_status) or self._stalled(req)
+                ):
                     logging.debug(f"Cannot cancel instance {req.sense_uuid} in status '{live_status}', will try again later")
                     continue
 

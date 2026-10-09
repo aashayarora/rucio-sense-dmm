@@ -37,6 +37,28 @@ class FTSClient:
             logging.error(f"Error while modifying FTS config for {endpoint}: {e}", exc_info=True)
             return False
     
+    def _send_get(self, endpoint, params=None, host=None):
+        """GET from FTS, returning the parsed JSON or None on any failure."""
+        url = (host or self.fts_host).rstrip("/") + endpoint
+        logging.debug(f"FTS GET {url} params={params}")
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=self.headers,
+                cert=self.cert,
+                verify=self.capath,
+                timeout=15,
+            )
+            logging.debug(f"FTS GET {endpoint} response {response.status_code}: {response.text}")
+            if response.status_code != 200:
+                logging.warning(f"FTS GET {url} returned status {response.status_code}: {response.text}")
+                return None
+            return response.json()
+        except (requests.RequestException, ValueError) as e:
+            logging.error(f"Error while querying FTS {url}: {e}", exc_info=True)
+            return None
+
     def _send_delete(self, endpoint, params=None):
         logging.debug(f"FTS DELETE {self.fts_host}{endpoint} params={params}")
         try:
@@ -155,3 +177,20 @@ def delete_fts_config(src_endpoint, dst_endpoint):
     link_deleted = delete_link_config(src_endpoint, dst_endpoint)
     se_deleted = delete_se_config(src_endpoint, dst_endpoint)
     return link_deleted and se_deleted
+
+
+# Per-file fields read for transfer monitoring.
+_JOB_FILE_FIELDS = "file_state,filesize,start_time,finish_time"
+
+
+def get_fts_job(job_id, fts_host=None):
+    """
+    A job's state and its files, or None when FTS could not be asked.
+
+    fts_host is the FTS server the job was submitted to, which Rucio records per
+    request and need not be the one DMM configures links on; without it the
+    configured [fts] fts_host is asked.
+    """
+    client = FTSClient()
+    job_id = urllib.parse.quote(job_id, safe="")
+    return client._send_get(f"/jobs/{job_id}", params={"files": _JOB_FILE_FIELDS}, host=fts_host)

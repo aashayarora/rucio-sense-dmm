@@ -22,6 +22,7 @@ from dmm.models.mesh import Mesh
 from dmm.core.config import config_get, config_get_int
 from dmm.core.config import config_get_float
 from dmm.core.allocation import refresh_all_sites
+from dmm.core.sense_triage import RECOMMENDATIONS
 from dmm.core.health import health_report
 from dmm.api.serializers import mesh_to_dict, request_to_dict, site_to_dict
 from dmm.core.sense import cancel_link, delete_instance
@@ -119,14 +120,21 @@ def classify_failure_reason(reason) -> str:
     return "other"
 
 
+def _fts_throughput_mbps(req):
+    """The throughput FTS reports the rule's finished files moved at, or None."""
+    return (req.fts_summary or {}).get("throughput_mbps")
+
+
 def _utilization(req):
     """
-    How much of its allocated bandwidth a request is actually using, graded.
+    How much of its allocated bandwidth the circuit is actually carrying, graded.
 
-    Deliberately separate from health: health answers "is this circuit carrying
-    traffic at all", while utilization is a tuning signal for the optimizer. A
-    transfer running well under its allocation is worth seeing, but it is not a
-    fault, so it never feeds the health verdict.
+    Read from the circuit's own counters only. FTS's delivery rate covers finished
+    files over their whole span, so dividing it by the allocation would compare
+    two different things.
+
+    A tuning signal for the optimizer, not a fault: a transfer running well under
+    its allocation is worth seeing, but it never feeds the health verdict.
     """
     if req.prometheus_throughput is None or not req.allocated_bandwidth_mbps:
         return None
@@ -204,18 +212,28 @@ def _render_metrics(reqs) -> str:
     lines.append("# TYPE dmm_request_prometheus_throughput_gbps gauge")
     lines.append("# HELP dmm_request_prometheus_bytes Measured bytes from prometheus polling")
     lines.append("# TYPE dmm_request_prometheus_bytes gauge")
-    lines.append("# HELP dmm_request_utilization_ratio Measured throughput as a fraction of allocated bandwidth")
-    lines.append("# TYPE dmm_request_utilization_ratio gauge")
-    lines.append("# HELP dmm_request_health Health status (1=healthy, 0=unhealthy, absent=unknown)")
+    lines.append("# HELP dmm_request_health Health status (1=healthy, 0=unhealthy, absent=unknown); "
+                 "source is circuit (switch counters) or fts (FTS progress, where counters are unavailable)")
     lines.append("# TYPE dmm_request_health gauge")
+    lines.append("# HELP dmm_request_fts_throughput_mbps Rate the rule's finished FTS files were delivered at, in Mbps")
+    lines.append("# TYPE dmm_request_fts_throughput_mbps gauge")
+    lines.append("# HELP dmm_request_fts_bytes_done Bytes in the rule's finished FTS files")
+    lines.append("# TYPE dmm_request_fts_bytes_done gauge")
+    lines.append("# HELP dmm_request_fts_bytes Bytes in all of the rule's FTS files")
+    lines.append("# TYPE dmm_request_fts_bytes gauge")
+    lines.append("# HELP dmm_request_fts_jobs FTS jobs found for the rule")
+    lines.append("# TYPE dmm_request_fts_jobs gauge")
+    lines.append("# HELP dmm_request_fts_files The rule's FTS files by state")
+    lines.append("# TYPE dmm_request_fts_files gauge")
+    lines.append("# HELP dmm_request_utilization_ratio Measured circuit throughput as a fraction of allocated bandwidth")
+    lines.append("# TYPE dmm_request_utilization_ratio gauge")
     lines.append("# HELP dmm_request_priority Rucio rule priority as submitted")
     lines.append("# TYPE dmm_request_priority gauge")
     lines.append("# HELP dmm_request_modified_priority Rule priority after operator override, absent when never overridden")
     lines.append("# TYPE dmm_request_modified_priority gauge")
-    lines.append("# HELP dmm_request_transfer_audit Post-transfer audit outcome (always 1, read the verdict label)")
-    lines.append("# TYPE dmm_request_transfer_audit gauge")
-    lines.append("# HELP dmm_transfer_audits_by_verdict Number of audited requests by verdict")
-    lines.append("# TYPE dmm_transfer_audits_by_verdict gauge")
+    lines.append("# HELP dmm_request_sense_escalated SENSE recovery gave up and needs an admin "
+                 "(always 1, read the stage, reason and action labels)")
+    lines.append("# TYPE dmm_request_sense_escalated gauge")
 
     for req in reqs:
         labels = {
@@ -261,6 +279,22 @@ def _render_metrics(reqs) -> str:
             labels,
         )
         _emit_gauge(lines, "dmm_request_prometheus_bytes", req.prometheus_bytes, labels)
+        # A request with no verdict yet emits no sample at all - "unknown" is the
+        # absence of the series, not a third value.
+        if str(req.health) in ("0", "1"):
+            _emit_gauge(lines, "dmm_request_health", int(req.health),
+                        {**labels, "source": req.health_source or "circuit"})
+        # A rule FTS has told DMM nothing about emits none of these, rather
+        # than zeros that read as a stalled transfer.
+        summary = req.fts_summary or {}
+        throughput = _fts_throughput_mbps(req)
+        _emit_gauge(lines, "dmm_request_fts_throughput_mbps", throughput, labels)
+        if summary.get("jobs"):
+            _emit_gauge(lines, "dmm_request_fts_jobs", summary["jobs"], labels)
+            _emit_gauge(lines, "dmm_request_fts_bytes_done", summary.get("bytes_done"), labels)
+            _emit_gauge(lines, "dmm_request_fts_bytes", summary.get("bytes"), labels)
+            for state, count in sorted((summary.get("files") or {}).items()):
+                _emit_gauge(lines, "dmm_request_fts_files", count, {**labels, "state": state})
         # _emit_gauge skips None, so modified_priority is simply absent for a
         # rule the operator never overrode, rather than reported as 0.
         _emit_gauge(lines, "dmm_request_priority", req.priority, labels)
@@ -274,20 +308,15 @@ def _render_metrics(reqs) -> str:
                 labels,
             )
 
-        # A request with no verdict yet emits no sample at all - "unknown" is the
-        # absence of the series, not a third value.
-        if str(req.health) in ("0", "1"):
-            _emit_gauge(lines, "dmm_request_health", int(req.health), labels)
-
-        if req.transfer_verdict:
-            _emit_gauge(lines, "dmm_request_transfer_audit", 1, {**labels, "verdict": req.transfer_verdict})
-
-    verdict_counts: dict[str, int] = {}
-    for req in reqs:
-        if req.transfer_verdict:
-            verdict_counts[req.transfer_verdict] = verdict_counts.get(req.transfer_verdict, 0) + 1
-    for verdict, count in sorted(verdict_counts.items()):
-        _emit_gauge(lines, "dmm_transfer_audits_by_verdict", count, {"verdict": verdict})
+        if req.sense_escalation:
+            stage, _, reason = req.sense_escalation.partition(":")
+            _emit_gauge(lines, "dmm_request_sense_escalated", 1, {
+                **labels,
+                "sense_uuid": req.sense_uuid or "",
+                "stage": stage,
+                "reason": reason,
+                "action": RECOMMENDATIONS.get(reason, RECOMMENDATIONS["retries_exhausted"]),
+            })
 
     return "\n".join(lines) + "\n"
 
@@ -574,7 +603,7 @@ async def api_list_mesh(session=None):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 _TERMINAL_STATUSES = [
-    RequestStatus.FINISHED_R, RequestStatus.FINISHED, RequestStatus.CANCELED,
+    RequestStatus.FINISHED, RequestStatus.CANCELED,
     RequestStatus.DELETED, RequestStatus.FAILED,
 ]
 
@@ -615,8 +644,7 @@ def _reject_if_circuit_shared(req, session):
     live_reqs = DBRequest.get_by_status(
         statuses=[
             RequestStatus.STAGED, RequestStatus.DECIDED, RequestStatus.PROVISIONED,
-            RequestStatus.STALE, RequestStatus.MODIFIED, RequestStatus.FINISHED_R,
-            RequestStatus.FINISHED,
+            RequestStatus.STALE, RequestStatus.MODIFIED, RequestStatus.FINISHED,
         ],
         session=session,
         use_lock=False,
@@ -640,7 +668,7 @@ async def mark_finished(request: Request, authorization: Optional[str] = Header(
         _validate_sense_request(req)
         if req.transfer_status in _TERMINAL_STATUSES:
             raise HTTPException(status_code=400, detail=f"Request is already in state '{req.transfer_status}'")
-        req.set_status(RequestStatus.FINISHED_R, session=session)
+        req.set_status(RequestStatus.FINISHED, session=session)
         req.update({"rucio_finished_at": utcnow()}, session=session)
         return "Request marked as finished"
     except HTTPException:

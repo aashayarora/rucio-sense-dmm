@@ -9,9 +9,14 @@ import html
 import ipaddress
 import re
 
-
 from sense.client.workflow_combined_api import WorkflowCombinedApi
+from sense.client.discover_api import DiscoverApi
 from dmm.models.request import SenseCircuitStatus
+
+class StagingError(ValueError):
+    def __init__(self, message, sense_uuid=None):
+        super().__init__(message)
+        self.sense_uuid = sense_uuid
 
 def _good_response(response):
     """Check if SENSE API response is valid (no errors)."""
@@ -39,9 +44,71 @@ def get_instance_status(sense_uuid):
         Status string or "UNKNOWN" if not available
     """
     workflow_api = WorkflowCombinedApi()
-    status = workflow_api.instance_get_status(si_uuid=sense_uuid) or "UNKNOWN"
+    try:
+        status = workflow_api.instance_get_status(si_uuid=sense_uuid) or "UNKNOWN"
+    except Exception as e:
+        # SENSE-O answers 404 for an instance it no longer has.
+        if "returned code 404" not in str(e).lower():
+            raise
+        status = "UNKNOWN"
     logging.debug(f"SENSE status of {sense_uuid}: {status}")
     return status
+
+def get_last_state(sense_uuid):
+    """
+    The phase a failed instance reached before it failed, e.g. "COMPILED".
+
+    Only SENSE-O's instance listing has it. None when it can't be found.
+    """
+    try:
+        instances = DiscoverApi().discover_service_instances_get().get("instances", [])
+    except Exception as e:
+        logging.warning(f"Could not look up the last state of SENSE instance {sense_uuid}: {e}")
+        return None
+    for instance in instances:
+        if instance.get("referenceUUID") == sense_uuid:
+            return instance.get("lastState")
+    return None
+
+def verify_instance(sense_uuid):
+    """
+    Ask SENSE-O to run its verification of an instance again.
+
+    The client's instance_operate() only allows provision, cancel and reprovision,
+    so this goes through the call underneath it.
+    """
+    workflow_api = WorkflowCombinedApi()
+    response = workflow_api.instance_si_uuid_action_put_with_http_info("verify", si_uuid=sense_uuid)
+    logging.debug(f"SENSE verify response for {sense_uuid}: {json.dumps(response, default=str)}")
+    return response
+
+def discard_instance(sense_uuid, status):
+    """
+    Remove an instance that cannot be recovered, so the request can start over.
+
+    An instance that failed before propagating holds nothing at the sites and is
+    simply deleted, as is one that only compiled. One that failed later, or is
+    live, holds resources at the sites and is force-cancelled first. Raises if
+    the instance can't be removed yet; the caller tries again next cycle.
+    """
+    if status == "UNKNOWN":
+        # Gone, or created but never given a status because its staging failed.
+        try:
+            delete_instance(sense_uuid)
+        except Exception as e:
+            logging.debug(f"Delete of SENSE instance {sense_uuid} with no status: {e}")
+        return
+    if is_being_cancelled(status):
+        raise ValueError(f"SENSE instance {sense_uuid} is still cancelling ({status})")
+    needs_cancel = not (is_create_compiled(status) or is_cancel_ready(status))
+    if needs_cancel and status.endswith("FAILED"):
+        last_state = get_last_state(sense_uuid)
+        if last_state in ("INIT", "COMPILED"):
+            logging.info(f"SENSE instance {sense_uuid} failed after {last_state}, deleting without cancel")
+            needs_cancel = False
+    if needs_cancel:
+        cancel_link(sense_uuid, status)
+    delete_instance(sense_uuid)
 
 def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vlan_range, rule_id):
     """
@@ -60,7 +127,8 @@ def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vla
         Response dict containing service_uuid, bandwidth info, and URIs
         
     Raises:
-        ValueError: If staging fails
+        StagingError: If staging fails. The instance is left in place for the
+        caller to record and clean up, and the error carries its uuid.
     """
     workflow_api = None
     try:
@@ -105,16 +173,14 @@ def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vla
         response = workflow_api.instance_create(json.dumps(intent))
         logging.debug(f"SENSE stage response for {rule_id}: {json.dumps(response, default=str)}")
         if not _good_response(response):
-            raise ValueError(f"SENSE req staging failed for {rule_id}")
+            raise ValueError(f"SENSE req staging failed for {rule_id}: {json.dumps(response, default=str)[:500]}")
+        if isinstance(response, dict) and not response.get("service_uuid"):
+            response["service_uuid"] = workflow_api.si_uuid
         return response
     except Exception as e:
-        logging.error(f"Failed to stage link for {rule_id}: {e}")
-        if workflow_api and getattr(workflow_api, "si_uuid", None):
-            try:
-                workflow_api.instance_delete(si_uuid=workflow_api.si_uuid)  # Clean up any created instance
-            except Exception as cleanup_err:
-                logging.error(f"Failed to clean up partially created SENSE instance for {rule_id}: {cleanup_err}")
-        raise ValueError(f"Failed to stage link for {rule_id}") from e
+        sense_uuid = getattr(workflow_api, "si_uuid", None)
+        logging.error(f"Failed to stage link for {rule_id} on SENSE instance {sense_uuid}: {e}")
+        raise StagingError(f"Failed to stage link for {rule_id}: {e}", sense_uuid=sense_uuid) from e
 
 def parse_staging_response(response, src_ip_range=None, dst_ip_range=None):
     """
@@ -327,16 +393,9 @@ def modify_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site,
                     "ask": "edit",
                     "options": [
                         {"data.connections[0].bandwidth.capacity": str(int(bandwidth_mbps))},
-                        {"data.connections[0].terminals[0].uri": src_site.sense_uri},
-                        {"data.connections[0].terminals[0].ipv6_prefix_list": src_ip_range},
-                        {"data.connections[0].terminals[1].uri": dst_site.sense_uri},
-                        {"data.connections[0].terminals[1].ipv6_prefix_list": dst_ip_range},
-                        {"data.connections[0].terminals[0].vlan_tag": vlan_range},
-                        {"data.connections[0].terminals[1].vlan_tag": vlan_range}
                     ]
                 }
-            ],
-            "alias": rule_id
+            ]
         }
         logging.debug(f"SENSE modify intent for {rule_id} on {sense_uuid}: {json.dumps(intent)}")
         response = workflow_api.instance_modify(json.dumps(intent), sync="true")
@@ -470,4 +529,12 @@ def is_affiliated_state(status):
         SenseCircuitStatus.CREATE_COMMITTED.value,
         SenseCircuitStatus.CREATE_COMMITTING.value,
         SenseCircuitStatus.CREATE_READY.value
+    }
+
+def is_stalled_status(status):
+    """Committed but never verified: SENSE-O stops here when a site RM doesn't confirm."""
+    return status in {
+        SenseCircuitStatus.CREATE_COMMITTED.value,
+        SenseCircuitStatus.MODIFY_COMMITTED.value,
+        SenseCircuitStatus.CANCEL_COMMITTED.value,
     }
