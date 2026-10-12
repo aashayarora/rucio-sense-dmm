@@ -4,6 +4,14 @@
 ; api_token = change-me
 port=80
 
+;[auth]
+; client_id = dmm
+; redirect_uri = https://dmm.example.org/auth/callback
+; client_secret =
+; metadata_url = https://sense-o.es.net:8543/realms/StackV/.well-known/openid-configuration
+; session_hours = 12
+; session_secret = change-me
+
 [db]
 db_type=postgres
 username=dmm

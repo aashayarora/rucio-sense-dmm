@@ -17,7 +17,13 @@ dependencies = [
     "jinja2",
     "sqlmodel<0.0.45",
     "uvicorn",
-    "scipy"
+    "scipy",
+    # dmm/api/auth.py. The published image has these; this file did not, so
+    # `pip install .` built a tree that ImportErrors on authlib before the
+    # frontend could start.
+    "authlib",
+    "httpx",
+    "itsdangerous"
 ]
 description = "Data Movement Manager for Rucio SENSE interoperatio prototype"
 readme = "README.md"
