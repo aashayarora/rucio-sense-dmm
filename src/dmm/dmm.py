@@ -12,6 +12,7 @@ from dmm import follow_log_file_in_child
 from dmm.db.session import get_engine
 from dmm.core.health import reset_heartbeats
 from dmm.api.frontend import auth_enabled
+from dmm.api.auth import login_settings
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 
@@ -78,12 +79,22 @@ class DMM:
         # removed daemon permanently red.
         reset_heartbeats()
 
+        login_settings()
         if not auth_enabled():
             logging.warning(
-                "[dmm] api_token is not set: mark_finished, update_fts_limit, "
-                "reinitialize_sense, reinitialize_request and refresh_sites accept "
-                "unauthenticated POSTs from anyone who can reach this service"
+                "Neither [auth] login nor [dmm] api_token is set: mark_finished, "
+                "update_fts_limit, reinitialize_sense, reinitialize_request and "
+                "refresh_sites accept unauthenticated POSTs from anyone who can "
+                "reach this service"
             )
+
+        # Fork the frontend while this process is still single-threaded. A fork
+        # copies every lock as it stands but only the forking thread, so a lock
+        # some daemon thread held at that instant stays held in the child with
+        # no one to release it, and the frontend hangs before it ever binds
+        # its port. The pod still looks healthy; the ingress answers 503.
+        frontend_process = multiprocessing.Process(target=self.run_server, args=(self.port,), name="Frontend")
+        frontend_process.start()
         
         logging.info("Initializing site database - this must complete before other daemons start")
         sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
@@ -125,9 +136,6 @@ class DMM:
             if thread:
                 self.threads.append(thread)
 
-        frontend_process = multiprocessing.Process(target=self.run_server, args=(self.port,), name="Frontend")
-        frontend_process.start()
-        
         logging.info("All daemons and frontend started successfully")
 
     def stop(self) -> None:

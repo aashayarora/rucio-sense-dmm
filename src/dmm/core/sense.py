@@ -33,6 +33,22 @@ def _good_response(response):
         )
     return True
 
+def _log_response(action, rule_id, response):
+    """
+    Log what SENSE-O answered to a rule's request, so it shows in the rule's log.
+
+    A create or modify response carries the instance's model, ~60 KB of escaped
+    Turtle that dwarfs the rest and would push the rule's other lines out of the
+    log. The rest goes in at INFO; the model only at DEBUG, for when the circuit
+    VLANs parsed from it look wrong.
+    """
+    if isinstance(response, dict) and "model" in response:
+        rest = {k: v for k, v in response.items() if k != "model"}
+        logging.info(f"SENSE {action} response for {rule_id}: {json.dumps(rest, default=str)}")
+        logging.debug(f"SENSE {action} model for {rule_id}: {json.dumps(response['model'], default=str)}")
+    else:
+        logging.info(f"SENSE {action} response for {rule_id}: {json.dumps(response, default=str)}")
+
 def get_instance_status(sense_uuid):
     """
     Get the status of a SENSE instance.
@@ -171,7 +187,7 @@ def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vla
         }
         logging.debug(f"SENSE stage intent for {rule_id} on {getattr(workflow_api, 'si_uuid', None)}: {json.dumps(intent)}")
         response = workflow_api.instance_create(json.dumps(intent))
-        logging.debug(f"SENSE stage response for {rule_id}: {json.dumps(response, default=str)}")
+        _log_response("stage", rule_id, response)
         if not _good_response(response):
             raise ValueError(f"SENSE req staging failed for {rule_id}: {json.dumps(response, default=str)[:500]}")
         if isinstance(response, dict) and not response.get("service_uuid"):
@@ -351,11 +367,11 @@ def provision_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site,
         }
         logging.debug(f"SENSE provision intent for {rule_id} on {sense_uuid}: {json.dumps(intent)}")
         response = workflow_api.instance_create(json.dumps(intent))
-        logging.debug(f"SENSE provision create response for {rule_id}: {json.dumps(response, default=str)}")
+        _log_response("provision create", rule_id, response)
         if not _good_response(response):
             raise ValueError(f"Failed to create instance for request {rule_id}, response: {response}")
         operate_response = workflow_api.instance_operate("provision", sync="true")
-        logging.debug(f"SENSE provision operate response for {rule_id}: {json.dumps(operate_response, default=str)}")
+        _log_response("provision operate", rule_id, operate_response)
         return response
     except Exception as e:
         logging.error(f"Failed to provision request {rule_id}: {e}")
@@ -399,7 +415,7 @@ def modify_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site,
         }
         logging.debug(f"SENSE modify intent for {rule_id} on {sense_uuid}: {json.dumps(intent)}")
         response = workflow_api.instance_modify(json.dumps(intent), sync="true")
-        logging.debug(f"SENSE modify response for {rule_id}: {json.dumps(response, default=str)}")
+        _log_response("modify", rule_id, response)
         return response
     except Exception as e:
         logging.error(f"Failed to modify request {rule_id}: {e}")

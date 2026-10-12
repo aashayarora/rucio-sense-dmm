@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Movement Manager - Home</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v={{ css_version }}">
 </head>
 <body>
     <header>
@@ -15,6 +15,8 @@
         <a href="/">Home</a>
         <a href="/sites">Sites</a>
         <a href="/logs" target="_blank" rel="noopener">Logs</a>
+        {% set user = current_user(request) %}
+        {% if user %}<span class="nav-user">{{ user.name }} <a href="/logout">Log out</a></span>{% endif %}
     </nav>
 
     <div class="container">
@@ -38,9 +40,13 @@
 
         <div class="toolbar">
             <input type="search" id="search" class="search-input" placeholder="Search rule ID, site, or hostname…" autocomplete="off">
+            <button type="button" class="btn btn-sm" id="clear-filters">Clear filters</button>
             <label class="refresh-toggle">
                 <input type="checkbox" id="autorefresh"> Auto-refresh (15s)
             </label>
+            <button type="button" class="btn btn-sm" onclick="location.reload()">Refresh now</button>
+            <button type="button" class="btn btn-sm" id="export-csv">Export CSV</button>
+            <a class="btn btn-sm" href="/logs?level=ERROR" target="_blank" rel="noopener">Error log</a>
             <span class="muted" id="meta"></span>
         </div>
 
@@ -165,6 +171,27 @@
         }));
 
         searchInput.addEventListener("input", applyFilter);
+
+        document.getElementById("clear-filters").addEventListener("click", () => {
+            activeFilter = "all";
+            searchInput.value = "";
+            applyFilter();
+            searchInput.focus();
+        });
+
+        // The rows currently shown, so a filtered view exports as filtered.
+        document.getElementById("export-csv").addEventListener("click", () => {
+            const quote = text => '"' + text.replace(/"/g, '""') + '"';
+            const cells = row => Array.from(row.cells).slice(0, -1).map(c => quote(c.innerText.trim()));
+            const header = document.querySelector("table thead tr");
+            const lines = [cells(header)].concat(rows.filter(r => !r.hidden).map(cells));
+            const blob = new Blob([lines.map(l => l.join(",")).join("\n") + "\n"], { type: "text/csv" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "dmm-requests-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".csv";
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(link.href), 0);
+        });
 
         // Auto-refresh, with state persisted so the toggle survives reloads.
         autoRefresh.checked = localStorage.getItem("dmm.autorefresh") === "1";

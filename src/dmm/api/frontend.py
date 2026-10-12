@@ -1,5 +1,7 @@
 import logging
+import hashlib
 import os
+import re
 import asyncio
 from hmac import compare_digest
 from datetime import datetime
@@ -14,6 +16,8 @@ from starlette.concurrency import run_in_threadpool
 
 from sqlmodel import select
 
+from dmm import LOG_BACKUP_COUNT, LOG_FILE
+from dmm.api.auth import LoginRequired, build_router, current_user, login_enabled
 from dmm.db.session import databased, get_session
 from dmm.models.base import utcnow
 from dmm.models.request import Request as DBRequest, RequestStatus
@@ -36,8 +40,30 @@ static_folder = os.path.join(current_directory, "static")
 
 templates = Jinja2Templates(directory=templates_folder)
 
+
+def _static_version(name):
+    """
+    A short content hash for a static file, for its URL's query string.
+
+    Static files are served without cache headers, so browsers keep a copy across
+    deploys and render new markup with old CSS or scripts. A URL that changes with
+    the file's contents makes every deploy that touches it fetch it afresh.
+    """
+    try:
+        with open(os.path.join(static_folder, name), "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()[:12]
+    except OSError:
+        return "0"
+
+
+templates.env.globals["css_version"] = _static_version("styles.css")
+templates.env.globals["js_version"] = _static_version("ui.js")
+templates.env.globals["current_user"] = current_user
+
 api = FastAPI()
 api.mount("/static", StaticFiles(directory=static_folder), name="static")
+api.add_middleware(LoginRequired)
+api.include_router(build_router(templates))
 
 
 def _api_token():
@@ -46,17 +72,27 @@ def _api_token():
 
 
 def auth_enabled() -> bool:
-    return bool(_api_token())
+    """Are the mutating endpoints protected, by a login or a token?"""
+    return login_enabled() or bool(_api_token())
 
 
-def _require_token(authorization: Optional[str]):
+def _token_only() -> bool:
+    """Only a bearer token unlocks the actions, which the pages cannot send."""
+    return bool(_api_token()) and not login_enabled()
+
+
+def _require_token(request: Request, authorization: Optional[str]):
     """Guard the POST endpoints.
 
-    Off unless [dmm] api_token is configured, so this cannot break an existing
-    deployment on upgrade. That default is not safe -- these endpoints cancel
-    circuits and reset requests, and DMM is typically on a public ingress -- so
-    startup logs a warning while it is unset.
+    With [auth] login on, LoginRequired has already let only logged-in users
+    through. Otherwise off unless [dmm] api_token is configured, so this cannot
+    break an existing deployment on upgrade. That default is not safe -- these
+    endpoints cancel circuits and reset requests, and DMM is typically on a
+    public ingress -- so startup logs a warning while neither is set.
     """
+    if login_enabled():
+        logging.info(f"{request.url.path} requested by {current_user(request)['username']}")
+        return
     expected = _api_token()
     if not expected:
         return
@@ -484,7 +520,7 @@ def get_sites(request: Request, session=None):
     try:
         sites = Site.get_all(session=session)
         return templates.TemplateResponse(
-            request, "sites.html", {"data": sites, "auth_enabled": auth_enabled()}
+            request, "sites.html", {"data": sites, "token_only": _token_only()}
         )
     except Exception as e:
         logging.error(e, exc_info=True)
@@ -500,7 +536,7 @@ def open_rule_details(request: Request, rule_id: str, session=None):
             "details.html",
             {
                 "data": req,
-                "auth_enabled": auth_enabled(),
+                "token_only": _token_only(),
                 "utilization": _utilization(req) if req else None,
             },
         )
@@ -660,7 +696,7 @@ def _reject_if_circuit_shared(req, session):
 @api.post("/mark_finished")
 @databased
 async def mark_finished(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
@@ -680,7 +716,7 @@ async def mark_finished(request: Request, authorization: Optional[str] = Header(
 @api.post("/update_fts_limit")
 @databased
 async def update_fts_limit(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
@@ -704,7 +740,7 @@ async def update_fts_limit(request: Request, authorization: Optional[str] = Head
 @api.post("/reinitialize_sense")
 @databased
 async def reinitialize_sense(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
@@ -727,7 +763,7 @@ async def reinitialize_sense(request: Request, authorization: Optional[str] = He
 @api.post("/reinitialize_request")
 @databased
 async def reinitialize_request(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
@@ -749,8 +785,8 @@ async def reinitialize_request(request: Request, authorization: Optional[str] = 
 
 @api.post("/refresh_sites")
 @databased
-async def refresh_sites(authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+async def refresh_sites(request: Request, authorization: Optional[str] = Header(None), session=None):
+    _require_token(request, authorization)
     try:
         client = Client()
         refresh_all_sites(client, session)
@@ -759,31 +795,104 @@ async def refresh_sites(authorization: Optional[str] = Header(None), session=Non
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to refresh sites")
     
+# A record's first line, in the format set in dmm/__init__.py:
+# "(ThreadName) [10-09-2026 01:01:36 AM] LEVEL: message". Any other line
+# continues the record above it, e.g. the traceback under an ERROR.
+_LOG_RECORD_START = re.compile(r"^\([^)]*\) \[(?P<time>[^\]]*)\] (?P<level>[A-Z]+): ")
+_LOG_LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+
+
+def _log_files_newest_first():
+    """The live log, then its rotated chunks; dmm.log.1 is the newest of those."""
+    paths = [LOG_FILE] + [f"{LOG_FILE}.{n}" for n in range(1, LOG_BACKUP_COUNT + 1)]
+    return [path for path in paths if os.path.exists(path)]
+
+
+def _log_records(path):
+    """One log file's records, oldest first, each a list of its lines."""
+    records = []
+    with open(path, "r", errors="replace") as handle:
+        for line in handle:
+            if not records or _LOG_RECORD_START.match(line):
+                records.append([line])
+            else:
+                records[-1].append(line)
+    return records
+
+
+def _tail_log_records(paths, lines, rule_id, min_level):
+    """
+    The newest records matching the filters, oldest first, up to `lines` lines.
+
+    Filters whole records rather than lines: a traceback does not mention the
+    rule, nor does it carry the level, but it belongs with the line above it.
+    Walks back through the rotated chunks and stops once it has enough, so an
+    unfiltered tail reads only the live file. A record is never split, so the
+    result can exceed `lines` only when the first record alone does.
+    """
+    picked, count = [], 0
+    for path in paths:
+        for record in reversed(_log_records(path)):
+            if rule_id and not any(rule_id in line for line in record):
+                continue
+            if min_level is not None:
+                match = _LOG_RECORD_START.match(record[0])
+                if not match or _LOG_LEVELS.get(match.group("level"), 0) < min_level:
+                    continue
+            if count and count + len(record) > lines:
+                return picked[::-1]
+            picked.append(record)
+            count += len(record)
+            if count >= lines:
+                return picked[::-1]
+    return picked[::-1]
+
+
+def _log_start(paths):
+    """The time of the oldest retained record, or None if it cannot be read."""
+    with open(paths[-1], "r", errors="replace") as handle:
+        for line in handle:
+            match = _LOG_RECORD_START.match(line)
+            if match:
+                return match.group("time")
+    return None
+
+
 @api.get("/logs", response_class=PlainTextResponse)
 async def get_logs(
     lines: int = Query(2000, ge=1, le=20000, description="Number of trailing lines"),
-    rule_id: Optional[str] = Query(None, description="Only lines mentioning this rule_id"),
-    level: Optional[str] = Query(None, description="Only lines at this level, e.g. ERROR"),
+    rule_id: Optional[str] = Query(None, description="Only entries mentioning this rule_id"),
+    level: Optional[str] = Query(None, description="Only entries at this level or above, e.g. ERROR"),
 ):
-    log_path = "dmm.log"
-    if not os.path.exists(log_path):
+    min_level = None
+    if level:
+        min_level = _LOG_LEVELS.get(level.upper())
+        if min_level is None:
+            raise HTTPException(status_code=400, detail=f"Unknown level '{level}'; use one of {', '.join(_LOG_LEVELS)}")
+
+    paths = _log_files_newest_first()
+    if not paths:
         raise HTTPException(status_code=404, detail="Log file not found")
     try:
-        with open(log_path, "r") as f:
-            content = f.readlines()
-
-        # Filter before tailing, so `lines` counts matching lines rather than
-        # whichever ones happen to survive the filter.
-        if rule_id:
-            content = [ln for ln in content if rule_id in ln]
-        if level:
-            needle = level.upper()
-            content = [ln for ln in content if needle in ln.upper()]
-
-        return PlainTextResponse("".join(content[-lines:]))
+        records = await run_in_threadpool(_tail_log_records, paths, lines, rule_id, min_level)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to read log file")
+
+    if not records:
+        wanted = "log entries"
+        if rule_id:
+            wanted += f" for rule {rule_id}"
+        if level:
+            wanted += f" at {level.upper()} or above"
+        message = f"No {wanted} in {', '.join(paths)}.\n"
+        # The log does not outlive the pod, so an empty answer often means only
+        # that the rule's activity predates it.
+        start = await run_in_threadpool(_log_start, paths)
+        if start:
+            message += f"The retained log starts at {start}; anything earlier is not here.\n"
+        return PlainTextResponse(message)
+    return PlainTextResponse("".join(line for record in records for line in record))
 
 @api.get("/health/live")
 async def liveness_check():

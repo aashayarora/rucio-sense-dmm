@@ -46,6 +46,18 @@ nav a:hover {
     border-bottom-color: #38bdf8;
 }
 
+nav .nav-user {
+    float: right;
+    color: #cbd5e1;
+    font-size: 14px;
+    padding: 6px 0 10px;
+}
+
+nav .nav-user a {
+    margin: 0 0 0 12px;
+    padding: 0;
+}
+
 .container {
     flex: 1;
     padding: 20px;
@@ -216,6 +228,7 @@ td .status-badge {
 
 /* ---- Sites page ---- */
 .sites-toolbar { justify-content: center; margin: 20px; }
+.sites-toolbar .action-result { margin-top: 0; }
 .legend { font-size: 12px; color: #475569; display: inline-flex; align-items: center; gap: 6px; }
 .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 .legend-free { background: #16a34a; }
@@ -407,19 +420,9 @@ pre.alert-body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mon
 .empty-note { margin: 0; }
 .panel-note a { color: #0369a1; }
 
-.path-table { margin: 0; table-layout: auto; font-size: 13px; }
-.path-table th, .path-table td {
-    border: none;
-    border-bottom: 1px solid #f1f5f9;
-    padding: 7px 10px 7px 0;
-    text-align: left;
-    font-size: 13px;
-    white-space: normal;
-    word-break: break-all;
-}
-.path-table thead th { background: none; color: #64748b; font-weight: 500; font-size: 12px; }
-.path-table tbody th { background: none; color: #64748b; font-weight: 400; white-space: nowrap; }
-.path-table tbody tr:nth-child(even), .path-table tbody tr:hover { background: none; }
+.path-end + .path-end { margin-top: 14px; }
+.path-end-title { font-size: 12px; color: #64748b; margin-bottom: 2px; }
+.path-end-site { color: #0f172a; font-weight: 600; font-size: 13px; margin-left: 6px; }
 
 .actions-panel { margin-top: 0; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -438,6 +441,52 @@ pre.alert-body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mon
 .btn:hover { background: #f8fafc; border-color: #94a3b8; }
 .btn-danger { color: #b91c1c; border-color: #fecaca; }
 .btn-danger:hover { background: #fef2f2; border-color: #f87171; }
+.btn:disabled, .btn:disabled:hover { opacity: 0.55; cursor: not-allowed; background: #fff; }
+a.btn { display: inline-block; text-decoration: none; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-primary { background: #0078D4; border-color: #0078D4; color: #fff; }
+.btn-primary:hover { background: #005a9e; border-color: #005a9e; }
+.btn-danger-solid { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+.btn-danger-solid:hover { background: #991b1b; border-color: #991b1b; }
+
+.rule-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+/* ---- Confirmation dialog (static/ui.js) ---- */
+.confirm-dialog {
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    width: min(480px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3);
+    color: #0f172a;
+}
+.confirm-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
+.confirm-form { padding: 20px 22px 18px; }
+.confirm-title { margin: 0 0 8px; font-size: 16px; }
+.confirm-message { margin: 0; font-size: 13px; line-height: 1.5; color: #475569; }
+.confirm-section { margin-top: 14px; }
+.confirm-section[hidden], .confirm-note[hidden] { display: none; }
+.confirm-heading { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.confirm-steps { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.5; color: #334155; }
+.confirm-steps li + li { margin-top: 2px; }
+.confirm-when { margin: 0; font-size: 13px; line-height: 1.5; color: #334155; }
+.confirm-note {
+    margin: 14px 0 0;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+}
+.confirm-field { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 13px; color: #334155; }
+.confirm-field[hidden] { display: none; }
+.confirm-input { padding: 7px 10px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 6px; }
+.confirm-input:focus { outline: none; border-color: #0078D4; box-shadow: 0 0 0 2px rgba(0,120,212,0.15); }
+.confirm-error { margin: 8px 0 0; min-height: 1em; font-size: 12px; color: #b91c1c; }
+.confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
 .action-result { font-size: 13px; margin-top: 10px; min-height: 1em; }
 .action-result.is-ok { color: #047857; }

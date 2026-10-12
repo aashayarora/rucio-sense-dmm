@@ -31,7 +31,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Movement Manager - Rule {{ data.rule_id[:8] if data else 'not found' }}</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v={{ css_version }}">
+    <script src="/static/ui.js?v={{ js_version }}"></script>
 </head>
 <body>
     <header>
@@ -41,6 +42,8 @@
         <a href="/">Home</a>
         <a href="/sites">Sites</a>
         <a href="/logs" target="_blank" rel="noopener">Logs</a>
+        {% set user = current_user(request) %}
+        {% if user %}<span class="nav-user">{{ user.name }} <a href="/logout">Log out</a></span>{% endif %}
     </nav>
     <main class="container rule-page">
         <a class="back-link" href="/">&larr; All requests</a>
@@ -70,6 +73,13 @@
                     {% if (data.src_logical_site and data.src_logical_site != src_name) or (data.dst_logical_site and data.dst_logical_site != dst_name) %}
                     <span class="muted">RSEs {{ data.src_logical_site or src_name }} &rarr; {{ data.dst_logical_site or dst_name }}</span>
                     {% endif %}
+                </div>
+                <div class="rule-tools">
+                    <button type="button" class="btn btn-sm" id="copy-rule-id">Copy rule ID</button>
+                    <a class="btn btn-sm" href="/logs?rule_id={{ data.rule_id | urlencode }}" target="_blank" rel="noopener">Rule logs</a>
+                    <a class="btn btn-sm" href="/logs?rule_id={{ data.rule_id | urlencode }}&amp;level=ERROR" target="_blank" rel="noopener">Rule errors</a>
+                    <a class="btn btn-sm" href="/api/requests/{{ data.rule_id | urlencode }}" target="_blank" rel="noopener">Raw JSON</a>
+                    <button type="button" class="btn btn-sm" onclick="location.reload()">Refresh</button>
                 </div>
             </div>
             <div class="rule-head-badges">
@@ -117,7 +127,8 @@
                 <div class="kpi-value">{{ rate(data.prometheus_throughput) }}</div>
                 <div class="kpi-sub">
                     {% if utilization %}{{ utilization.percent }}% of allocation <span class="status-badge {{ utilization.css }}">{{ utilization.label }}</span>
-                    {% elif data.prometheus_throughput is none %}Switch counters unavailable
+                    {% elif data.prometheus_throughput is none and transfer_status == 'PROVISIONED' %}No switch counters for this circuit
+                    {% elif data.prometheus_throughput is none %}Measured only while the circuit is provisioned
                     {% else %}&nbsp;{% endif %}
                 </div>
             </div>
@@ -170,14 +181,15 @@
 
             <article class="panel">
                 <h3>Path</h3>
-                <table class="path-table">
-                    <thead><tr><th></th><th>Source</th><th>Destination</th></tr></thead>
-                    <tbody>
-                        <tr><th scope="row">Site</th><td>{{ src_name }}</td><td>{{ dst_name }}</td></tr>
-                        <tr><th scope="row">Endpoint</th><td class="mono">{{ data.src_endpoint.hostname if data.src_endpoint else '—' }}</td><td class="mono">{{ data.dst_endpoint.hostname if data.dst_endpoint else '—' }}</td></tr>
-                        <tr><th scope="row">IPv6 range</th><td class="mono">{{ data.src_endpoint.ip_range if data.src_endpoint else '—' }}</td><td class="mono">{{ data.dst_endpoint.ip_range if data.dst_endpoint else '—' }}</td></tr>
-                    </tbody>
-                </table>
+                {% for side, site, endpoint in [('Source', src_name, data.src_endpoint), ('Destination', dst_name, data.dst_endpoint)] %}
+                <div class="path-end">
+                    <div class="path-end-title">{{ side }} <span class="path-end-site">{{ site }}</span></div>
+                    <dl class="facts">
+                        <dt>Endpoint</dt><dd class="mono">{{ endpoint.hostname if endpoint else '—' }}</dd>
+                        <dt>IPv6 range</dt><dd class="mono">{{ endpoint.ip_range if endpoint else '—' }}</dd>
+                    </dl>
+                </div>
+                {% endfor %}
             </article>
 
             <article class="panel">
@@ -196,27 +208,96 @@
 
         <section class="panel actions-panel">
             <h3>Operator actions</h3>
-            {% if auth_enabled %}
+            {% if token_only %}
             <p class="panel-note">These actions require a bearer token. Use the API.</p>
             {% else %}
             <div class="actions">
-                <button type="button" class="btn" data-action="mark_finished">Mark as finished</button>
-                <button type="button" class="btn" data-action="update_fts_limit">Update FTS limit&hellip;</button>
+                <button type="button" class="btn" data-action="mark_finished">Finish &amp; release circuit</button>
+                <button type="button" class="btn" data-action="update_fts_limit">Set FTS streams&hellip;</button>
                 <span class="actions-sep" aria-hidden="true"></span>
-                <button type="button" class="btn btn-danger" data-action="reinitialize_sense">Re-initialize SENSE</button>
-                <button type="button" class="btn btn-danger" data-action="reinitialize_request">Re-initialize request</button>
+                <button type="button" class="btn btn-danger" data-action="reinitialize_sense">Rebuild circuit</button>
+                <button type="button" class="btn btn-danger" data-action="reinitialize_request">Reallocate &amp; rebuild circuit</button>
             </div>
             <div id="action-result" class="action-result" role="status" aria-live="polite"></div>
             {% endif %}
         </section>
 
-        {% if not auth_enabled %}
         <script>
             const RULE_ID = {{ data.rule_id | tojson }};
-            const CONFIRM = {
-                reinitialize_sense: "Re-initialize SENSE for this rule? Its circuit will be rebuilt.",
-                reinitialize_request: "Re-initialize this request? It starts over from INIT.",
-                mark_finished: "Mark this rule as finished? Its circuit will be taken down.",
+
+            document.getElementById('copy-rule-id').addEventListener('click', async event => {
+                const button = event.currentTarget;
+                try {
+                    await copyText(RULE_ID);
+                    flashLabel(button, 'Copied');
+                } catch (error) {
+                    flashLabel(button, 'Copy failed');
+                }
+            });
+        </script>
+        {% if not token_only %}
+        <script>
+            const ROUTE = {{ (src_name ~ ' → ' ~ dst_name) | tojson }};
+            const STATUS = {{ transfer_status | tojson }};
+            const DIALOGS = {
+                mark_finished: {
+                    title: "Finish and release the circuit?",
+                    message: "Ends DMM's management of this rule (" + ROUTE + ", currently " + STATUS + ") and releases its circuit.",
+                    steps: [
+                        "The request is set to FINISHED, as if Rucio had reported the rule done.",
+                        "Its circuit stays up for the keep-alive window (sense_keep_alive_seconds) so a new rule on the same sites can reuse it.",
+                        "After that the SENSE instance is cancelled, the endpoints and IPv6 addresses are released, and the request becomes DELETED.",
+                    ],
+                    when: "The transfer is done or abandoned but DMM has not noticed, and the circuit is holding bandwidth other rules need.",
+                    note: "This cannot be undone from the UI. The Rucio rule itself is not changed.",
+                    confirmLabel: "Finish & release circuit",
+                    danger: true,
+                },
+                reinitialize_sense: {
+                    title: "Rebuild the circuit?",
+                    message: "Rebuilds the circuit for " + ROUTE + " and keeps the endpoints and IPv6 ranges already allocated.",
+                    steps: [
+                        "The current SENSE instance is cancelled and deleted.",
+                        "VLANs, bandwidth, SENSE retries and the failure reason are cleared.",
+                        "The request goes back to ALLOCATED, and DMM decides a bandwidth and provisions a new circuit on the same endpoints.",
+                    ],
+                    when: "The circuit is stuck or failed in SENSE, but the endpoint allocation is still good.",
+                    note: "Transfers lose the circuit until the new one is provisioned. Refused if another request shares this circuit.",
+                    confirmLabel: "Rebuild circuit",
+                    danger: true,
+                },
+                reinitialize_request: {
+                    title: "Reallocate endpoints and rebuild the circuit?",
+                    message: "Starts this request (" + ROUTE + ") over from scratch.",
+                    steps: [
+                        "The current SENSE instance is cancelled and deleted.",
+                        "The source and destination endpoints and IPv6 addresses are released.",
+                        "All SENSE state and the failure reason are cleared, and the request goes back to INIT.",
+                        "DMM allocates endpoints again, which may be different ones, then builds a new circuit.",
+                    ],
+                    when: "Rebuilding the circuit did not help, or the endpoints or IPv6 ranges themselves are wrong.",
+                    note: "Transfers lose the circuit until the request is provisioned again. Refused if another request shares this circuit.",
+                    confirmLabel: "Reallocate & rebuild",
+                    danger: true,
+                },
+                update_fts_limit: {
+                    title: "Set FTS streams",
+                    message: "Sets the target number of concurrent FTS streams for " + ROUTE + ".",
+                    steps: [
+                        "The request's target stream count is set to this value.",
+                        "On its next cycle the FTS modifier pushes the new limit to FTS for this source and destination endpoint pair.",
+                    ],
+                    when: "Transfers are overloading or under-using the link, and you want to adjust how many files FTS moves at once.",
+                    note: "While the circuit is provisioned, DMM re-splits streams between rules on the same site pair every SENSE handler cycle, so this value may be overwritten.",
+                    confirmLabel: "Set streams",
+                    input: {
+                        label: "New limit (streams)",
+                        type: "number",
+                        value: {{ (data.fts_streams_desired if data.fts_streams_desired is not none else data.fts_streams_current) | tojson }},
+                        attrs: { min: 0, step: 1 },
+                        validate: value => /^\d+$/.test(value.trim()) ? null : "Enter a non-negative whole number.",
+                    },
+                },
             };
 
             function showResult(text, ok) {
@@ -225,20 +306,18 @@
                 box.className = 'action-result ' + (ok ? 'is-ok' : 'is-error');
             }
 
-            async function runAction(action) {
+            async function runAction(button) {
+                const action = button.dataset.action;
+                const answer = await confirmAction(DIALOGS[action]);
+                if (answer === null) return;
+
                 const body = { rule_id: RULE_ID };
-                if (action === 'update_fts_limit') {
-                    const input = prompt("New FTS limit (streams):");
-                    if (input === null) return;
-                    const limit = Number.parseInt(input, 10);
-                    if (!Number.isInteger(limit) || limit < 0) {
-                        showResult("The FTS limit must be a non-negative integer.", false);
-                        return;
-                    }
-                    body.limit = limit;
-                } else if (CONFIRM[action] && !confirm(CONFIRM[action])) {
-                    return;
-                }
+                if (action === 'update_fts_limit') body.limit = Number.parseInt(answer, 10);
+
+                // One request at a time: a second click while the first is in flight is ignored.
+                const buttons = document.querySelectorAll('[data-action]');
+                buttons.forEach(b => { b.disabled = true; });
+                showResult("Working…", true);
                 try {
                     const response = await fetch('/' + action, {
                         method: 'POST',
@@ -249,11 +328,14 @@
                 } catch (error) {
                     console.error(error);
                     showResult("Request failed: " + error.message, false);
+                } finally {
+                    buttons.forEach(b => { b.disabled = false; });
                 }
             }
 
             document.querySelectorAll('[data-action]').forEach(button => {
-                button.addEventListener('click', () => runAction(button.dataset.action));
+                button.title = DIALOGS[button.dataset.action].message;
+                button.addEventListener('click', () => runAction(button));
             });
         </script>
         {% endif %}

@@ -6,6 +6,8 @@ metadata:
     {{- include "dmm.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "dmm.selectorLabels" . | nindent 6 }}
@@ -22,7 +24,16 @@ spec:
           {{- toYaml .Values.dmm.resources | nindent 10 }}
         ports:
         - containerPort: {{ .Values.dmm.port }}
+        env:
+        - name: DMM_LOG_FILE
+          value: {{ .Values.dmm.logs.dir }}/dmm.log
+        - name: DMM_LOG_MAX_BYTES
+          value: {{ .Values.dmm.logs.maxBytes | int | quote }}
+        - name: DMM_LOG_BACKUP_COUNT
+          value: {{ .Values.dmm.logs.backupCount | int | quote }}
         volumeMounts:
+        - name: logs
+          mountPath: {{ .Values.dmm.logs.dir }}
         - name: dmm-config
           mountPath: {{ .Values.paths.dmmConfig }}
           subPath: dmm.cfg
@@ -47,6 +58,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+      - name: logs
+        {{- if .Values.dmm.logs.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "dmm.fullname" . }}-logs
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
       - name: dmm-config
         secret:
           secretName: {{ .Values.secrets.dmmConfig }}

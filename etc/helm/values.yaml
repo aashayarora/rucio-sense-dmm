@@ -47,6 +47,15 @@ dmm:
       memory: "4Gi"
       cpu: "4"
   port: 80
+  logs:
+    dir: /var/log/dmm
+    maxBytes: 20971520
+    backupCount: 50
+    persistence:
+      enabled: true
+      size: 2Gi
+      accessMode: ReadWriteOnce
+      storageClass: ""
 
 secrets:
   dmmConfig: dmm-config
