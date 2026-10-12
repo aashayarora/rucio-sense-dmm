@@ -17,6 +17,11 @@ profile_uuid=
 sense_keep_alive_seconds=60
 finished_r_hold_seconds=120
 
+[decider]
+; Skip raising a live circuit's bandwidth by less than this fraction of what it
+; has now; each change costs a SENSE modify. Decreases are never skipped.
+min_upward_modify_fraction=0.1
+
 [prometheus]
 host=
 user=
@@ -29,6 +34,8 @@ key=/opt/certs/key.pem
 monit_host=https://monit-grafana.cern.ch
 monit_auth_token=
 default_num_streams=20
+# Attempts at removing a request's link/SE config before leaving it in FTS
+max_delete_retries=3
 
 [rucio]
 max_retries=1

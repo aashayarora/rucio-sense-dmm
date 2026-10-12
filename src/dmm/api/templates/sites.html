@@ -5,7 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Movement Manager - Sites</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v={{ css_version }}">
+    <script src="/static/ui.js?v={{ js_version }}"></script>
 </head>
 <body>
     <header>
@@ -15,13 +16,17 @@
         <a href="/">Home</a>
         <a href="/sites">Sites</a>
         <a href="/logs" target="_blank" rel="noopener">Logs</a>
+        {% set user = current_user(request) %}
+        {% if user %}<span class="nav-user">{{ user.name }} <a href="/logout">Log out</a></span>{% endif %}
     </nav>
     <div class="toolbar sites-toolbar">
-        {% if auth_enabled %}
-        <span class="legend">Refresh requires a bearer token; use POST /refresh_sites.</span>
+        {% if token_only %}
+        <span class="legend">Importing sites requires a bearer token; use POST /refresh_sites.</span>
         {% else %}
-        <button type="button" onclick="refreshSites()">Refresh Sites</button>
+        <button type="button" id="refresh-sites" onclick="refreshSites(this)" title="Add sites, endpoints and site pairs that are new in Rucio or SENSE">Import new sites</button>
+        <span class="action-result" id="refresh-result" role="status" aria-live="polite"></span>
         {% endif %}
+        <a class="btn btn-sm" href="/api/sites" target="_blank" rel="noopener">Raw JSON</a>
         <span class="legend"><span class="legend-dot legend-free"></span>Free</span>
         <span class="legend"><span class="legend-dot legend-used"></span>Allocated</span>
     </div>
@@ -67,19 +72,39 @@
             </tbody>
         </table>
         <script>
-            function refreshSites() {
-                fetch('/refresh_sites', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-                .then(response => response.text())
-                .then(data => alert(data))
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert("Failed to Refresh Sites");
+            async function refreshSites(button) {
+                const answer = await confirmAction({
+                    title: "Import new sites?",
+                    message: "Picks up sites, endpoints and site pairs that were added in Rucio or SENSE since DMM last looked.",
+                    steps: [
+                        "DMM reads the list of RSEs from Rucio and maps each one to its physical site, creating sites it has not seen.",
+                        "For each site it fetches the endpoints and IPv6 ranges from SENSE and adds any that are new.",
+                        "It creates the missing links between site pairs, with their VLAN range and link capacity.",
+                    ],
+                    when: "A new site or endpoint was registered in Rucio or SENSE and does not show up here yet.",
+                    note: "Only adds. Existing sites and endpoints are not updated or removed, and running requests are not touched. Can take a while with many sites.",
+                    confirmLabel: "Import new sites",
                 });
+                if (answer === null) return;
+
+                const result = document.getElementById('refresh-result');
+                button.disabled = true;
+                result.className = 'action-result';
+                result.textContent = "Importing…";
+                try {
+                    const response = await fetch('/refresh_sites', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                    result.textContent = await response.text();
+                    result.className = 'action-result ' + (response.ok ? 'is-ok' : 'is-error');
+                } catch (error) {
+                    console.error('Error:', error);
+                    result.textContent = "Failed to import sites";
+                    result.className = 'action-result is-error';
+                } finally {
+                    button.disabled = false;
+                }
             }
         </script>
     </div>

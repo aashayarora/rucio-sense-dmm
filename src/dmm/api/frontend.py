@@ -1,5 +1,7 @@
 import logging
+import hashlib
 import os
+import re
 import asyncio
 from hmac import compare_digest
 from datetime import datetime
@@ -14,14 +16,21 @@ from starlette.concurrency import run_in_threadpool
 
 from sqlmodel import select
 
+from dmm import LOG_BACKUP_COUNT, LOG_FILE
+from dmm.api.auth import LoginRequired, build_router, current_user, login_enabled
 from dmm.db.session import databased, get_session
+from dmm.models.base import utcnow
 from dmm.models.request import Request as DBRequest, RequestStatus
 from dmm.models.site import Site
 from dmm.models.mesh import Mesh
 from dmm.core.config import config_get, config_get_int
+from dmm.core.config import config_get_float
 from dmm.core.allocation import refresh_all_sites
+from dmm.core.sense_triage import RECOMMENDATIONS
 from dmm.core.health import health_report
 from dmm.api.serializers import mesh_to_dict, request_to_dict, site_to_dict
+from dmm.core.sense import cancel_link, delete_instance
+from dmm.core.utils import release_endpoints_and_addresses
 
 from rucio.client import Client
 
@@ -31,8 +40,30 @@ static_folder = os.path.join(current_directory, "static")
 
 templates = Jinja2Templates(directory=templates_folder)
 
+
+def _static_version(name):
+    """
+    A short content hash for a static file, for its URL's query string.
+
+    Static files are served without cache headers, so browsers keep a copy across
+    deploys and render new markup with old CSS or scripts. A URL that changes with
+    the file's contents makes every deploy that touches it fetch it afresh.
+    """
+    try:
+        with open(os.path.join(static_folder, name), "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()[:12]
+    except OSError:
+        return "0"
+
+
+templates.env.globals["css_version"] = _static_version("styles.css")
+templates.env.globals["js_version"] = _static_version("ui.js")
+templates.env.globals["current_user"] = current_user
+
 api = FastAPI()
 api.mount("/static", StaticFiles(directory=static_folder), name="static")
+api.add_middleware(LoginRequired)
+api.include_router(build_router(templates))
 
 
 def _api_token():
@@ -41,17 +72,27 @@ def _api_token():
 
 
 def auth_enabled() -> bool:
-    return bool(_api_token())
+    """Are the mutating endpoints protected, by a login or a token?"""
+    return login_enabled() or bool(_api_token())
 
 
-def _require_token(authorization: Optional[str]):
+def _token_only() -> bool:
+    """Only a bearer token unlocks the actions, which the pages cannot send."""
+    return bool(_api_token()) and not login_enabled()
+
+
+def _require_token(request: Request, authorization: Optional[str]):
     """Guard the POST endpoints.
 
-    Off unless [dmm] api_token is configured, so this cannot break an existing
-    deployment on upgrade. That default is not safe -- these endpoints cancel
-    circuits and reset requests, and DMM is typically on a public ingress -- so
-    startup logs a warning while it is unset.
+    With [auth] login on, LoginRequired has already let only logged-in users
+    through. Otherwise off unless [dmm] api_token is configured, so this cannot
+    break an existing deployment on upgrade. That default is not safe -- these
+    endpoints cancel circuits and reset requests, and DMM is typically on a
+    public ingress -- so startup logs a warning while neither is set.
     """
+    if login_enabled():
+        logging.info(f"{request.url.path} requested by {current_user(request)['username']}")
+        return
     expected = _api_token()
     if not expected:
         return
@@ -115,6 +156,38 @@ def classify_failure_reason(reason) -> str:
     return "other"
 
 
+def _fts_throughput_mbps(req):
+    """The throughput FTS reports the rule's finished files moved at, or None."""
+    return (req.fts_summary or {}).get("throughput_mbps")
+
+
+def _utilization(req):
+    """
+    How much of its allocated bandwidth the circuit is actually carrying, graded.
+
+    Read from the circuit's own counters only. FTS's delivery rate covers finished
+    files over their whole span, so dividing it by the allocation would compare
+    two different things.
+
+    A tuning signal for the optimizer, not a fault: a transfer running well under
+    its allocation is worth seeing, but it never feeds the health verdict.
+    """
+    if req.prometheus_throughput is None or not req.allocated_bandwidth_mbps:
+        return None
+
+    ratio = req.prometheus_throughput / req.allocated_bandwidth_mbps
+    excellent = config_get_float("monit", "utilization_excellent", default=0.9)
+    ok = config_get_float("monit", "utilization_ok", default=0.8)
+
+    if ratio >= excellent:
+        label, css = "EXCELLENT", "status-good"
+    elif ratio >= ok:
+        label, css = "OK", "status-warn"
+    else:
+        label, css = "LOW", "status-bad"
+    return {"percent": round(100 * ratio, 1), "label": label, "css": css}
+
+
 def _prometheus_escape_label(value) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
@@ -175,12 +248,28 @@ def _render_metrics(reqs) -> str:
     lines.append("# TYPE dmm_request_prometheus_throughput_gbps gauge")
     lines.append("# HELP dmm_request_prometheus_bytes Measured bytes from prometheus polling")
     lines.append("# TYPE dmm_request_prometheus_bytes gauge")
-    lines.append("# HELP dmm_request_health Health status (1=healthy, 0=unhealthy, absent=unknown)")
+    lines.append("# HELP dmm_request_health Health status (1=healthy, 0=unhealthy, absent=unknown); "
+                 "source is circuit (switch counters) or fts (FTS progress, where counters are unavailable)")
     lines.append("# TYPE dmm_request_health gauge")
+    lines.append("# HELP dmm_request_fts_throughput_mbps Rate the rule's finished FTS files were delivered at, in Mbps")
+    lines.append("# TYPE dmm_request_fts_throughput_mbps gauge")
+    lines.append("# HELP dmm_request_fts_bytes_done Bytes in the rule's finished FTS files")
+    lines.append("# TYPE dmm_request_fts_bytes_done gauge")
+    lines.append("# HELP dmm_request_fts_bytes Bytes in all of the rule's FTS files")
+    lines.append("# TYPE dmm_request_fts_bytes gauge")
+    lines.append("# HELP dmm_request_fts_jobs FTS jobs found for the rule")
+    lines.append("# TYPE dmm_request_fts_jobs gauge")
+    lines.append("# HELP dmm_request_fts_files The rule's FTS files by state")
+    lines.append("# TYPE dmm_request_fts_files gauge")
+    lines.append("# HELP dmm_request_utilization_ratio Measured circuit throughput as a fraction of allocated bandwidth")
+    lines.append("# TYPE dmm_request_utilization_ratio gauge")
     lines.append("# HELP dmm_request_priority Rucio rule priority as submitted")
     lines.append("# TYPE dmm_request_priority gauge")
     lines.append("# HELP dmm_request_modified_priority Rule priority after operator override, absent when never overridden")
     lines.append("# TYPE dmm_request_modified_priority gauge")
+    lines.append("# HELP dmm_request_sense_escalated SENSE recovery gave up and needs an admin "
+                 "(always 1, read the stage, reason and action labels)")
+    lines.append("# TYPE dmm_request_sense_escalated gauge")
 
     for req in reqs:
         labels = {
@@ -226,16 +315,44 @@ def _render_metrics(reqs) -> str:
             labels,
         )
         _emit_gauge(lines, "dmm_request_prometheus_bytes", req.prometheus_bytes, labels)
+        # A request with no verdict yet emits no sample at all - "unknown" is the
+        # absence of the series, not a third value.
+        if str(req.health) in ("0", "1"):
+            _emit_gauge(lines, "dmm_request_health", int(req.health),
+                        {**labels, "source": req.health_source or "circuit"})
+        # A rule FTS has told DMM nothing about emits none of these, rather
+        # than zeros that read as a stalled transfer.
+        summary = req.fts_summary or {}
+        throughput = _fts_throughput_mbps(req)
+        _emit_gauge(lines, "dmm_request_fts_throughput_mbps", throughput, labels)
+        if summary.get("jobs"):
+            _emit_gauge(lines, "dmm_request_fts_jobs", summary["jobs"], labels)
+            _emit_gauge(lines, "dmm_request_fts_bytes_done", summary.get("bytes_done"), labels)
+            _emit_gauge(lines, "dmm_request_fts_bytes", summary.get("bytes"), labels)
+            for state, count in sorted((summary.get("files") or {}).items()):
+                _emit_gauge(lines, "dmm_request_fts_files", count, {**labels, "state": state})
         # _emit_gauge skips None, so modified_priority is simply absent for a
         # rule the operator never overrode, rather than reported as 0.
         _emit_gauge(lines, "dmm_request_priority", req.priority, labels)
         _emit_gauge(lines, "dmm_request_modified_priority", req.modified_priority, labels)
 
-        if req.health is not None:
-            if str(req.health) == "1":
-                _emit_gauge(lines, "dmm_request_health", 1, labels)
-            elif str(req.health) == "0":
-                _emit_gauge(lines, "dmm_request_health", 0, labels)
+        if req.prometheus_throughput is not None and req.allocated_bandwidth_mbps:
+            _emit_gauge(
+                lines,
+                "dmm_request_utilization_ratio",
+                round(req.prometheus_throughput / req.allocated_bandwidth_mbps, 4),
+                labels,
+            )
+
+        if req.sense_escalation:
+            stage, _, reason = req.sense_escalation.partition(":")
+            _emit_gauge(lines, "dmm_request_sense_escalated", 1, {
+                **labels,
+                "sense_uuid": req.sense_uuid or "",
+                "stage": stage,
+                "reason": reason,
+                "action": RECOMMENDATIONS.get(reason, RECOMMENDATIONS["retries_exhausted"]),
+            })
 
     return "\n".join(lines) + "\n"
 
@@ -388,9 +505,10 @@ async def handle_client(rule_id: str, session=None):
 # OpenAPI spec advertised while the handlers returned HTML.
 @api.get("/", response_class=HTMLResponse)
 @databased
-async def get_dmm_status(request: Request, session=None):
+def get_dmm_status(request: Request, session=None):
     try:
         reqs = DBRequest.get_all(session=session)
+        reqs.sort(key=lambda r: r.created_at or datetime.min, reverse=True)
         return templates.TemplateResponse(request, "index.html", {"data": reqs})
     except Exception as e:
         logging.error(e, exc_info=True)
@@ -398,11 +516,11 @@ async def get_dmm_status(request: Request, session=None):
 
 @api.get("/sites", response_class=HTMLResponse)
 @databased
-async def get_sites(request: Request, session=None):
+def get_sites(request: Request, session=None):
     try:
         sites = Site.get_all(session=session)
         return templates.TemplateResponse(
-            request, "sites.html", {"data": sites, "auth_enabled": auth_enabled()}
+            request, "sites.html", {"data": sites, "token_only": _token_only()}
         )
     except Exception as e:
         logging.error(e, exc_info=True)
@@ -410,11 +528,17 @@ async def get_sites(request: Request, session=None):
 
 @api.get("/details/{rule_id}", response_class=HTMLResponse)
 @databased
-async def open_rule_details(request: Request, rule_id: str, session=None):
+def open_rule_details(request: Request, rule_id: str, session=None):
     try:
         req = DBRequest.get_by_id(rule_id, session=session, use_lock=False)
         return templates.TemplateResponse(
-            request, "details.html", {"data": req, "auth_enabled": auth_enabled()}
+            request,
+            "details.html",
+            {
+                "data": req,
+                "token_only": _token_only(),
+                "utilization": _utilization(req) if req else None,
+            },
         )
     except Exception as e:
         logging.error(e, exc_info=True)
@@ -514,17 +638,74 @@ async def api_list_mesh(session=None):
         logging.error(e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
+_TERMINAL_STATUSES = [
+    RequestStatus.FINISHED, RequestStatus.CANCELED,
+    RequestStatus.DELETED, RequestStatus.FAILED,
+]
+
+_SENSE_STATE_RESET = {
+    "sense_uuid": None,
+    "sense_src_uri": None,
+    "sense_dst_uri": None,
+    "src_vlan": None,
+    "dst_vlan": None,
+    "sense_circuit_status": None,
+    "sense_affiliated": False,
+    "sense_provisioned_at": None,
+    "sense_retries": 0,
+    "fts_delete_retries": 0,
+    "allocated_bandwidth_mbps": None,
+    "available_bandwidth_mbps": None,
+    "previous_bandwidth_mbps": None,
+}
+
+
+def _cleanup_sense_instance(req):
+    """Best-effort cancel + delete of a request's old SENSE instance."""
+    if not req.sense_uuid:
+        return
+    try:
+        cancel_link(req.sense_uuid, req.sense_circuit_status)
+    except Exception as e:
+        logging.error(f"Failed to cancel SENSE instance {req.sense_uuid} for {req.rule_id}: {e}")
+    try:
+        delete_instance(req.sense_uuid)
+    except Exception as e:
+        logging.error(f"Failed to delete SENSE instance {req.sense_uuid} for {req.rule_id}: {e}")
+
+
+def _reject_if_circuit_shared(req, session):
+    if not req.sense_uuid:
+        return
+    live_reqs = DBRequest.get_by_status(
+        statuses=[
+            RequestStatus.STAGED, RequestStatus.DECIDED, RequestStatus.PROVISIONED,
+            RequestStatus.STALE, RequestStatus.MODIFIED, RequestStatus.FINISHED,
+        ],
+        session=session,
+        use_lock=False,
+    )
+    for other in live_reqs:
+        if other.rule_id != req.rule_id and other.sense_uuid == req.sense_uuid:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Circuit {req.sense_uuid} is in use by request '{other.rule_id}'",
+            )
+
+
 @api.post("/mark_finished")
 @databased
 async def mark_finished(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
-        req.set_status(RequestStatus.FINISHED_R, session=session)
-        req.update({"rucio_finished_at": datetime.now()}, session=session)
+        if req.transfer_status in _TERMINAL_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Request is already in state '{req.transfer_status}'")
+        req.set_status(RequestStatus.FINISHED, session=session)
+        req.update({"rucio_finished_at": utcnow()}, session=session)
         return "Request marked as finished"
     except HTTPException:
         raise
@@ -535,7 +716,7 @@ async def mark_finished(request: Request, authorization: Optional[str] = Header(
 @api.post("/update_fts_limit")
 @databased
 async def update_fts_limit(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
@@ -559,12 +740,18 @@ async def update_fts_limit(request: Request, authorization: Optional[str] = Head
 @api.post("/reinitialize_sense")
 @databased
 async def reinitialize_sense(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
+        if not req.src_endpoint or not req.dst_endpoint:
+            raise HTTPException(status_code=400, detail="Request has no allocated endpoints; use /reinitialize_request instead")
+        _reject_if_circuit_shared(req, session)
+        _cleanup_sense_instance(req)
+        req.update(dict(_SENSE_STATE_RESET), session=session)
+        req.clear_failure_reason(session=session)
         req.set_status(RequestStatus.ALLOCATED, session=session)
         return "Request reinitialized"
     except HTTPException:
@@ -576,12 +763,17 @@ async def reinitialize_sense(request: Request, authorization: Optional[str] = He
 @api.post("/reinitialize_request")
 @databased
 async def reinitialize_request(request: Request, authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+    _require_token(request, authorization)
     try:
         data = await _parse_json_or_400(request)
         rule_id = _require_rule_id(data)
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
+        _reject_if_circuit_shared(req, session)
+        _cleanup_sense_instance(req)
+        release_endpoints_and_addresses(req, session)
+        req.update({**_SENSE_STATE_RESET, "src_endpoint": None, "dst_endpoint": None}, session=session)
+        req.clear_failure_reason(session=session)
         req.set_status(RequestStatus.INIT, session=session)
         return "Request reinitialized"
     except HTTPException:
@@ -593,8 +785,8 @@ async def reinitialize_request(request: Request, authorization: Optional[str] = 
 
 @api.post("/refresh_sites")
 @databased
-async def refresh_sites(authorization: Optional[str] = Header(None), session=None):
-    _require_token(authorization)
+async def refresh_sites(request: Request, authorization: Optional[str] = Header(None), session=None):
+    _require_token(request, authorization)
     try:
         client = Client()
         refresh_all_sites(client, session)
@@ -603,31 +795,104 @@ async def refresh_sites(authorization: Optional[str] = Header(None), session=Non
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to refresh sites")
     
+# A record's first line, in the format set in dmm/__init__.py:
+# "(ThreadName) [10-09-2026 01:01:36 AM] LEVEL: message". Any other line
+# continues the record above it, e.g. the traceback under an ERROR.
+_LOG_RECORD_START = re.compile(r"^\([^)]*\) \[(?P<time>[^\]]*)\] (?P<level>[A-Z]+): ")
+_LOG_LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+
+
+def _log_files_newest_first():
+    """The live log, then its rotated chunks; dmm.log.1 is the newest of those."""
+    paths = [LOG_FILE] + [f"{LOG_FILE}.{n}" for n in range(1, LOG_BACKUP_COUNT + 1)]
+    return [path for path in paths if os.path.exists(path)]
+
+
+def _log_records(path):
+    """One log file's records, oldest first, each a list of its lines."""
+    records = []
+    with open(path, "r", errors="replace") as handle:
+        for line in handle:
+            if not records or _LOG_RECORD_START.match(line):
+                records.append([line])
+            else:
+                records[-1].append(line)
+    return records
+
+
+def _tail_log_records(paths, lines, rule_id, min_level):
+    """
+    The newest records matching the filters, oldest first, up to `lines` lines.
+
+    Filters whole records rather than lines: a traceback does not mention the
+    rule, nor does it carry the level, but it belongs with the line above it.
+    Walks back through the rotated chunks and stops once it has enough, so an
+    unfiltered tail reads only the live file. A record is never split, so the
+    result can exceed `lines` only when the first record alone does.
+    """
+    picked, count = [], 0
+    for path in paths:
+        for record in reversed(_log_records(path)):
+            if rule_id and not any(rule_id in line for line in record):
+                continue
+            if min_level is not None:
+                match = _LOG_RECORD_START.match(record[0])
+                if not match or _LOG_LEVELS.get(match.group("level"), 0) < min_level:
+                    continue
+            if count and count + len(record) > lines:
+                return picked[::-1]
+            picked.append(record)
+            count += len(record)
+            if count >= lines:
+                return picked[::-1]
+    return picked[::-1]
+
+
+def _log_start(paths):
+    """The time of the oldest retained record, or None if it cannot be read."""
+    with open(paths[-1], "r", errors="replace") as handle:
+        for line in handle:
+            match = _LOG_RECORD_START.match(line)
+            if match:
+                return match.group("time")
+    return None
+
+
 @api.get("/logs", response_class=PlainTextResponse)
 async def get_logs(
     lines: int = Query(2000, ge=1, le=20000, description="Number of trailing lines"),
-    rule_id: Optional[str] = Query(None, description="Only lines mentioning this rule_id"),
-    level: Optional[str] = Query(None, description="Only lines at this level, e.g. ERROR"),
+    rule_id: Optional[str] = Query(None, description="Only entries mentioning this rule_id"),
+    level: Optional[str] = Query(None, description="Only entries at this level or above, e.g. ERROR"),
 ):
-    log_path = "dmm.log"
-    if not os.path.exists(log_path):
+    min_level = None
+    if level:
+        min_level = _LOG_LEVELS.get(level.upper())
+        if min_level is None:
+            raise HTTPException(status_code=400, detail=f"Unknown level '{level}'; use one of {', '.join(_LOG_LEVELS)}")
+
+    paths = _log_files_newest_first()
+    if not paths:
         raise HTTPException(status_code=404, detail="Log file not found")
     try:
-        with open(log_path, "r") as f:
-            content = f.readlines()
-
-        # Filter before tailing, so `lines` counts matching lines rather than
-        # whichever ones happen to survive the filter.
-        if rule_id:
-            content = [ln for ln in content if rule_id in ln]
-        if level:
-            needle = level.upper()
-            content = [ln for ln in content if needle in ln.upper()]
-
-        return PlainTextResponse("".join(content[-lines:]))
+        records = await run_in_threadpool(_tail_log_records, paths, lines, rule_id, min_level)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Failed to read log file")
+
+    if not records:
+        wanted = "log entries"
+        if rule_id:
+            wanted += f" for rule {rule_id}"
+        if level:
+            wanted += f" at {level.upper()} or above"
+        message = f"No {wanted} in {', '.join(paths)}.\n"
+        # The log does not outlive the pod, so an empty answer often means only
+        # that the rule's activity predates it.
+        start = await run_in_threadpool(_log_start, paths)
+        if start:
+            message += f"The retained log starts at {start}; anything earlier is not here.\n"
+        return PlainTextResponse(message)
+    return PlainTextResponse("".join(line for record in records for line in record))
 
 @api.get("/health/live")
 async def liveness_check():

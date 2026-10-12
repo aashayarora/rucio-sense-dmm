@@ -1,3 +1,4 @@
+from sqlalchemy import Column, JSON
 from sqlmodel import Field, Relationship, or_, select
 from typing import Optional, List, ClassVar
 from enum import Enum
@@ -18,8 +19,7 @@ class RequestStatus(str, Enum):
     PROVISIONED = "PROVISIONED" # SENSE circuit active at allocated bandwidth
     STALE       = "STALE"       # Bandwidth needs to change (re-optimization result)
     MODIFIED    = "MODIFIED"    # Rucio rule priority changed, triggers re-optimization
-    FINISHED_R  = "FINISHED_R"  # Rucio rule done, circuit still live (keep-alive / reuse window)
-    FINISHED    = "FINISHED"    # Circuit throttled to 1G, ready for cancellation
+    FINISHED    = "FINISHED"    # Rucio rule done; circuit kept for sense_keep_alive_seconds for reuse, then cancelled
     CANCELED    = "CANCELED"    # SENSE circuit cancelled, endpoints freed
     DELETED     = "DELETED"     # SENSE instance deleted, record fully retired
 
@@ -50,20 +50,37 @@ class Request(ModelBase, table=True):
     previous_bandwidth_mbps: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
     sense_src_uri: Optional[str] = Field(default=None)  
-    sense_dst_uri: Optional[str] = Field(default=None)  
+    sense_dst_uri: Optional[str] = Field(default=None)
+    src_vlan: Optional[int] = Field(default=None)
+    dst_vlan: Optional[int] = Field(default=None)
     sense_circuit_status: Optional[str] = Field(default=None, index=True)
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_streams_current: Optional[int] = Field(default=0)
     fts_streams_desired: Optional[int] = Field(default=None)
+    fts_delete_retries: Optional[int] = Field(default=0)
     sense_provisioned_at: Optional[datetime] = Field(default=None)
     rucio_finished_at: Optional[datetime] = Field(default=None)
     prometheus_throughput: Optional[float] = Field(default=None)
     prometheus_bytes: Optional[float] = Field(default=None)
     health: Optional[str] = Field(default=None)
+    # What the health verdict came from: "circuit" (the VLAN's switch counters) or
+    # "fts" (the rule's FTS jobs, when the circuit can't be measured).
+    health_source: Optional[str] = Field(default=None)
     sense_retries: Optional[int] = Field(default=0)
+    sense_status_since: Optional[datetime] = Field(default=None)
+    sense_verify_sent_at: Optional[datetime] = Field(default=None)
+    sense_next_attempt_at: Optional[datetime] = Field(default=None)
+    sense_cancel_retries: Optional[int] = Field(default=0)
+    sense_hard_modifies: Optional[int] = Field(default=0)
+    sense_escalation: Optional[str] = Field(default=None)
+    sense_escalated_at: Optional[datetime] = Field(default=None)
     sense_alloc_rule_id: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
     failed_at: Optional[datetime] = Field(default=None)
+    # FTS jobs found for the rule, job id -> what the last look at it said; and the
+    # roll-up of all of them. Written by FTSMonitorDaemon.
+    fts_jobs: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    fts_summary: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # Site names as Rucio sent them. Several logical sites can map to one
     # physical site (T2_US_UCSD_Blackhole -> T2_US_UCSD); src_site_/dst_site_
@@ -175,7 +192,22 @@ class Request(ModelBase, table=True):
         if use_lock:
             statement = statement.with_for_update()
         return session.exec(statement).first()
-    
+
+    @classmethod
+    def get_stale_health(cls, active_statuses: List[str], session=None, use_lock: bool = True):
+        """
+        Requests still carrying a health verdict that nothing updates any more -
+        only PROVISIONED requests get sampled, so anything else holds a stale value.
+        """
+        logging.debug(f"REQUEST QUERY: health set outside statuses={active_statuses}, locked={use_lock}")
+        statement = select(cls).where(
+            cls.health.is_not(None),
+            cls.transfer_status.not_in(active_statuses),
+        )
+        if use_lock:
+            statement = statement.with_for_update()
+        return list(session.exec(statement).all())
+
     # Failure reasons can be long (tracebacks, SENSE error blobs); cap what we persist.
     FAILURE_REASON_MAX_LEN: ClassVar[int] = 2000
 
@@ -213,7 +245,7 @@ class Request(ModelBase, table=True):
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> FAILED ({reason})")
         self.transfer_status = RequestStatus.FAILED
         self.failure_reason = reason
-        self.failed_at = datetime.now()
+        self.failed_at = utcnow()
         self.save(session)
 
     def mark_retry(self, reason, session=None):
@@ -239,7 +271,14 @@ class Request(ModelBase, table=True):
         self.sense_src_uri = src_uri
         self.sense_dst_uri = dst_uri
         self.save(session)
-    
+
+    def set_circuit_vlans(self, src_vlan: Optional[int], dst_vlan: Optional[int], session=None):
+        if (src_vlan, dst_vlan) != (self.src_vlan, self.dst_vlan):
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit vlans src={src_vlan}, dst={dst_vlan}")
+        self.src_vlan = src_vlan
+        self.dst_vlan = dst_vlan
+        self.save(session)
+
     def set_allocated_bandwidth(self, bandwidth_mbps: float, session=None):
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> allocated_bandwidth={bandwidth_mbps} Mbps")
         self.allocated_bandwidth_mbps = bandwidth_mbps
@@ -265,8 +304,25 @@ class Request(ModelBase, table=True):
         # Called with the polled status every handler cycle; only a change is news.
         if status != self.sense_circuit_status:
             logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit_status={status} (was {self.sense_circuit_status})")
+            self.sense_status_since = utcnow()
+            self.sense_verify_sent_at = None
+            # A new status supersedes an escalation about the old one, e.g. an
+            # admin fixed the circuit. A failed request keeps its escalation.
+            if self.sense_escalation and self.transfer_status != RequestStatus.FAILED:
+                logging.info(f"REQUEST UPDATE: {self.rule_id} -> clearing escalation {self.sense_escalation}")
+                self.sense_escalation = None
+                self.sense_escalated_at = None
+        elif self.sense_status_since is None:
+            self.sense_status_since = utcnow()
         self.sense_circuit_status = status
         self.save(session)
+
+    def set_escalation(self, escalation: str, session=None):
+        if escalation != self.sense_escalation:
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> escalation={escalation}")
+            self.sense_escalation = escalation
+            self.sense_escalated_at = utcnow()
+            self.save(session)
     
     def set_fts_streams(self, current: int = None, desired: int = None, session=None):
         if current is not None:
@@ -277,6 +333,11 @@ class Request(ModelBase, table=True):
             self.fts_streams_desired = desired
         self.save(session)
 
+    def increment_fts_delete_retries(self, session=None):
+        self.fts_delete_retries = (self.fts_delete_retries or 0) + 1
+        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> fts_delete_retries={self.fts_delete_retries}")
+        self.save(session)
+
     def set_prometheus_metrics(self, throughput: float = None, bytes_transferred: float = None, session=None):
         if throughput is not None:
             self.prometheus_throughput = throughput
@@ -284,6 +345,15 @@ class Request(ModelBase, table=True):
             self.prometheus_bytes = bytes_transferred
         self.save(session)
 
-    def set_health(self, health: str, session=None):
+    def set_health(self, health: str, source: str = None, session=None):
         self.health = health
+        self.health_source = source if health is not None else None
+        self.save(session)
+
+    def set_fts_monitoring(self, jobs: dict, summary: dict, session=None):
+        logging.debug(f"REQUEST UPDATE: {self.rule_id} -> fts jobs={len(jobs)}, files={summary.get('files')}")
+        # New objects rather than edits in place: the JSON columns only notice
+        # being reassigned.
+        self.fts_jobs = jobs
+        self.fts_summary = summary
         self.save(session)

@@ -2,6 +2,7 @@ import logging
 
 from dmm.models.request import Request, RequestStatus
 from dmm.db.session import databased
+from dmm.core.config import config_get_int
 
 from dmm.daemons.base import DaemonBase
 from dmm.core.fts import modify_fts_config, delete_fts_config
@@ -38,13 +39,30 @@ class FTSModifierDaemon(DaemonBase):
     def _delete_request(self, req, session):
         if req.fts_streams_current != 0:
             if not req.src_endpoint or not req.dst_endpoint:
-                # Cannot call delete_fts_config without endpoints — log prominently so
-                # the operator knows the FTS stream cap was NOT actually removed.
                 logging.error(
                     f"Cannot remove FTS stream cap for request {req.rule_id}: "
                     "missing source or destination endpoint. The cap may still be active in FTS."
                 )
                 return
+            if req.src_endpoint.is_allocated or req.dst_endpoint.is_allocated:
+                logging.debug(
+                    f"Endpoints of request {req.rule_id} are in use by another request, "
+                    "skipping FTS config deletion"
+                )
+                req.set_fts_streams(current=0, session=session)
+                return
+            # A config left in FTS does no harm, so after a few failed removals stop
+            # asking. fts_streams_current stays as-is: the cap really is still there.
+            max_retries = config_get_int("fts", "max_delete_retries", default=3)
+            if (req.fts_delete_retries or 0) >= max_retries:
+                return
             logging.info(f"Deleting FTS limits for request {req.rule_id}")
-            delete_fts_config(req.src_endpoint, req.dst_endpoint)
-            req.set_fts_streams(current=0, session=session)
+            if delete_fts_config(req.src_endpoint, req.dst_endpoint):
+                req.set_fts_streams(current=0, session=session)
+                return
+            req.increment_fts_delete_retries(session=session)
+            if req.fts_delete_retries >= max_retries:
+                logging.warning(
+                    f"Giving up on removing FTS config for request {req.rule_id} after "
+                    f"{req.fts_delete_retries} failed attempts; it stays in FTS"
+                )

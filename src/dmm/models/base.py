@@ -2,9 +2,12 @@ from datetime import datetime, timezone
 
 from sqlmodel import SQLModel, Field
 
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 class ModelBase(SQLModel):
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
     def __repr__(self):
         attrs = {k: getattr(self, k) for k in vars(self) if not k.startswith('_')}
@@ -13,15 +16,15 @@ class ModelBase(SQLModel):
     def __setitem__(self, key, value):
         setattr(self, key, value)
         if key != 'updated_at':
-            self.updated_at = datetime.now(timezone.utc)
+            self.updated_at = utcnow()
 
     def __getitem__(self, key):
         return getattr(self, key)
-    
+
     def save(self, session=None):
         if session is None:
             raise ValueError("Session is required to save model instances")
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = utcnow()
         session.add(self)
 
     def delete(self, session=None):

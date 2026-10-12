@@ -17,7 +17,7 @@ class Mesh(ModelBase, table=True):
         super().__init__(**kwargs)
 
     @classmethod
-    def get_vlan_range(cls, site_1, site_2, session=None, use_lock: bool = True):
+    def get_by_sites(cls, site_1, site_2, session=None, use_lock: bool = True):
         site_1_name = site_1.name if hasattr(site_1, 'name') else site_1
         site_2_name = site_2.name if hasattr(site_2, 'name') else site_2
 
@@ -28,7 +28,11 @@ class Mesh(ModelBase, table=True):
         )
         if use_lock:
             statement = statement.with_for_update()
-        mesh = session.exec(statement).first()
+        return session.exec(statement).first()
+
+    @classmethod
+    def get_vlan_range(cls, site_1, site_2, session=None, use_lock: bool = True):
+        mesh = cls.get_by_sites(site_1, site_2, session=session, use_lock=use_lock)
         return mesh.vlan_range if mesh else None
 
     @classmethod

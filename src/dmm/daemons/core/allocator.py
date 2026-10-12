@@ -13,6 +13,7 @@ from dmm.core.allocation import (
     format_ipv6_compressed,
     subnet_pool_name,
 )
+from dmm.core.sense import is_circuit_active
 
 class AllocatorDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -27,7 +28,7 @@ class AllocatorDaemon(DaemonBase):
         if not reqs_init:
             return
 
-        # Track rule_ids of FINISHED/FINISHED_R requests already claimed this cycle
+        # Track rule_ids of FINISHED requests already claimed this cycle
         # so that two INIT requests for the same site pair don't both try to reuse
         # the same finished request.
         claimed_rule_ids = set()
@@ -39,8 +40,10 @@ class AllocatorDaemon(DaemonBase):
             self._allocate_new_endpoints(new_request, session)  # if not found, allocate new endpoints
 
     def _reuse_finished_request(self, new_request, session, claimed_rule_ids: set) -> bool:
-        reqs_finished_r = Request.get_by_status(statuses=[RequestStatus.FINISHED_R], session=session)
-        for req_fin in reqs_finished_r:
+        # A finished request's circuit stays up at its allocated bandwidth for
+        # sense_keep_alive_seconds before the canceller takes it down.
+        reqs_finished = Request.get_by_status(statuses=[RequestStatus.FINISHED], session=session)
+        for req_fin in reqs_finished:
             if req_fin.rule_id in claimed_rule_ids:
                 continue
 
@@ -48,6 +51,13 @@ class AllocatorDaemon(DaemonBase):
                 logging.debug(
                     f"Skipping reuse of circuit {req_fin.sense_uuid} from {req_fin.rule_id}: "
                     "circuit_status is UNKNOWN — likely cleaned up by SENSE-O ConsistencyService"
+                )
+                continue
+
+            if not is_circuit_active(req_fin.sense_circuit_status):
+                logging.debug(
+                    f"Skipping reuse of circuit {req_fin.sense_uuid} from {req_fin.rule_id}: "
+                    f"circuit_status '{req_fin.sense_circuit_status}' is not an active state"
                 )
                 continue
 
@@ -75,6 +85,8 @@ class AllocatorDaemon(DaemonBase):
                 reused_dst_endpoint = req_fin.dst_endpoint if same_direction else req_fin.src_endpoint
                 reused_src_uri = req_fin.sense_src_uri if same_direction else req_fin.sense_dst_uri
                 reused_dst_uri = req_fin.sense_dst_uri if same_direction else req_fin.sense_src_uri
+                reused_src_vlan = req_fin.src_vlan if same_direction else req_fin.dst_vlan
+                reused_dst_vlan = req_fin.dst_vlan if same_direction else req_fin.src_vlan
 
                 logging.info(
                     f"Request {new_request.rule_id} found a live circuit from FINISHED request "
@@ -89,6 +101,8 @@ class AllocatorDaemon(DaemonBase):
                     "sense_uuid": req_fin.sense_uuid,
                     "sense_src_uri": reused_src_uri,
                     "sense_dst_uri": reused_dst_uri,
+                    "src_vlan": reused_src_vlan,
+                    "dst_vlan": reused_dst_vlan,
                     "allocated_bandwidth_mbps": req_fin.allocated_bandwidth_mbps,
                     "available_bandwidth_mbps": req_fin.available_bandwidth_mbps,
                     "sense_circuit_status": req_fin.sense_circuit_status,
@@ -169,7 +183,7 @@ class AllocatorDaemon(DaemonBase):
                 "transfer_status": RequestStatus.ALLOCATED
             }, session=session)
 
-            # Let the @databased decorator on run_once own the final commit.
+            session.commit()
             logging.info(f"Successfully allocated endpoints for request {new_request.rule_id}")
 
         except Exception as e:

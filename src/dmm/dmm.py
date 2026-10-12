@@ -8,8 +8,11 @@ import uvicorn
 
 from rucio.client import Client
 from dmm.core.config import config_get, config_get_int
+from dmm import follow_log_file_in_child
+from dmm.db.session import get_engine
 from dmm.core.health import reset_heartbeats
 from dmm.api.frontend import auth_enabled
+from dmm.api.auth import login_settings
 
 from dmm.daemons.core.sites import RefreshSiteDBDaemon
 
@@ -18,6 +21,7 @@ from dmm.daemons.rucio.modifier import RucioModifierDaemon
 from dmm.daemons.rucio.finisher import RucioFinisherDaemon
 
 from dmm.daemons.fts.modifier import FTSModifierDaemon
+from dmm.daemons.fts.monitor import FTSMonitorDaemon
 
 from dmm.daemons.sense.handler import SENSEHandlerDaemon
 from dmm.daemons.sense.stager import SENSEStagerDaemon
@@ -58,9 +62,13 @@ class DMM:
     
     @staticmethod
     def run_server(port):
+        follow_log_file_in_child()
+        get_engine().dispose(close=False)
         try:
             uvicorn.run(api, host="0.0.0.0", port=port)
-        except BaseException as e:
+        except BaseException:
+            if port == 31601:
+                raise
             logging.error(f"Failed to start frontend on {port}, trying default port 31601", exc_info=True)
             uvicorn.run(api, host="0.0.0.0", port=31601)
 
@@ -71,12 +79,22 @@ class DMM:
         # removed daemon permanently red.
         reset_heartbeats()
 
+        login_settings()
         if not auth_enabled():
             logging.warning(
-                "[dmm] api_token is not set: mark_finished, update_fts_limit, "
-                "reinitialize_sense, reinitialize_request and refresh_sites accept "
-                "unauthenticated POSTs from anyone who can reach this service"
+                "Neither [auth] login nor [dmm] api_token is set: mark_finished, "
+                "update_fts_limit, reinitialize_sense, reinitialize_request and "
+                "refresh_sites accept unauthenticated POSTs from anyone who can "
+                "reach this service"
             )
+
+        # Fork the frontend while this process is still single-threaded. A fork
+        # copies every lock as it stands but only the forking thread, so a lock
+        # some daemon thread held at that instant stays held in the child with
+        # no one to release it, and the frontend hangs before it ever binds
+        # its port. The pod still looks healthy; the ingress answers 503.
+        frontend_process = multiprocessing.Process(target=self.run_server, args=(self.port,), name="Frontend")
+        frontend_process.start()
         
         logging.info("Initializing site database - this must complete before other daemons start")
         sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
@@ -91,6 +109,7 @@ class DMM:
         decider = DeciderDaemon(frequency=self.dmm_frequency)
 
         monit = MonitDaemon(frequency=self.monit_frequency)
+        fts_monit = FTSMonitorDaemon(frequency=self.monit_frequency, kwargs={"client": self.rucio_client})
         fts = FTSModifierDaemon(frequency=self.fts_frequency)
         
         rucio_init = RucioInitDaemon(frequency=self.rucio_frequency, kwargs={"client": self.rucio_client})
@@ -105,7 +124,7 @@ class DMM:
         deleter = SENSEDeleterDaemon(frequency=self.sense_frequency)
 
         daemons = [
-            sitedb, fts, allocator, decider, monit,
+            sitedb, fts, allocator, decider, monit, fts_monit,
             rucio_init, rucio_modifier, rucio_finisher,
             sense_updater, stager, provision, sense_modifier,
             canceller, deleter
@@ -117,9 +136,6 @@ class DMM:
             if thread:
                 self.threads.append(thread)
 
-        frontend_process = multiprocessing.Process(target=self.run_server, args=(self.port,), name="Frontend")
-        frontend_process.start()
-        
         logging.info("All daemons and frontend started successfully")
 
     def stop(self) -> None:

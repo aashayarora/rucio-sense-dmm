@@ -10,6 +10,7 @@ from dmm.core.config import config_get
 from dmm.core.utils import is_sync_timeout
 from dmm.core.sense import (
     provision_link,
+    parse_circuit_vlans,
     is_create_ready,
     is_create_compiled,
     is_being_provisioned,
@@ -27,14 +28,17 @@ class SENSEProvisionerDaemon(DaemonBase):
     @databased
     def run_once(self, session=None):
         # make sure there are no stale requests before provisioning any new ones
+        # An escalated one is waiting on an admin and must not stop everyone else.
         reqs_stale = Request.get_by_status(statuses=[RequestStatus.STALE], session=session)
-        if reqs_stale != []:
+        if any(not r.sense_escalation for r in reqs_stale):
             logging.debug("Stale requests exist, skipping provisioning")
             return
-            
+
         reqs_decided = Request.get_by_status(statuses=[RequestStatus.DECIDED], session=session)
         if reqs_decided == []:
             return
+        for r in reqs_stale:
+            logging.warning(f"Provisioning despite STALE request {r.rule_id}: it is escalated ({r.sense_escalation})")
             
         # Check which specific requests have provisioning in progress
         # Build a set of rule_ids that are currently being provisioned
@@ -73,6 +77,10 @@ class SENSEProvisionerDaemon(DaemonBase):
                     )
                     req.mark_retry(f"SENSE circuit {req.sense_uuid} in {status}", session=session)
                     continue
+
+                if status == "UNKNOWN":
+                    req.mark_retry(f"SENSE instance {req.sense_uuid} is no longer known to SENSE-O", session=session)
+                    continue
                     
                 if not is_create_compiled(status):
                     logging.debug(f"Request {req.sense_uuid} not in compiled status (current: {status}), will try to provision again")
@@ -83,7 +91,7 @@ class SENSEProvisionerDaemon(DaemonBase):
                     logging.error(f"No VLAN range found for {req.rule_id}")
                     continue
                     
-                provision_link(
+                response = provision_link(
                     sense_uuid=req.sense_uuid,
                     profile_uuid=self.profile_uuid,
                     bandwidth_mbps=req.allocated_bandwidth_mbps,
@@ -94,6 +102,15 @@ class SENSEProvisionerDaemon(DaemonBase):
                     vlan_range=vlan_range,
                     rule_id=req.rule_id
                 )
+                # Always overwrite: a VLAN left over from an earlier circuit on this
+                # request would have monitoring read someone else's traffic.
+                src_vlan, dst_vlan = parse_circuit_vlans(
+                    response, req.sense_src_uri, req.sense_dst_uri,
+                    req.src_site.sense_uri, req.dst_site.sense_uri,
+                )
+                if src_vlan is None and dst_vlan is None:
+                    logging.warning(f"No circuit VLAN in the provision response for {req.rule_id}, it will not be monitored")
+                req.set_circuit_vlans(src_vlan, dst_vlan, session=session)
                 req.clear_failure_reason(session=session)
                 req.set_status(status=RequestStatus.PROVISIONED, session=session)
                 logging.info(f"Successfully provisioned request {req.rule_id}")
@@ -103,6 +120,8 @@ class SENSEProvisionerDaemon(DaemonBase):
                         f"Provision for {req.rule_id} timed out (504); treating as in-flight, "
                         "marking PROVISIONED and deferring to handler status polling"
                     )
+                    # No response, so no VLAN until a later modify reports one.
+                    req.set_circuit_vlans(None, None, session=session)
                     req.set_status(status=RequestStatus.PROVISIONED, session=session)
                 else:
                     logging.error(f"Failed to provision link for {req.rule_id}: {e}", exc_info=True)

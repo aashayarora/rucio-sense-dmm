@@ -1,22 +1,24 @@
 import logging
-from datetime import datetime
+from datetime import timedelta
 
 from dmm.daemons.base import DaemonBase
 
 from dmm.db.session import databased
+from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
 from dmm.models.mesh import Mesh
 
-from dmm.core.config import config_get, config_get_int
+from dmm.core.config import config_get
 from dmm.core.utils import is_sync_timeout
+from dmm.core.recovery import MODIFY, escalate, hard_modify
+from dmm.core.sense_triage import ESCALATE, backoff_seconds, triage
 from dmm.core.sense import (
     modify_link,
-    cancel_link,
-    delete_instance,
-    get_instance_status,
+    parse_circuit_vlans,
     is_ready_for_modify,
     is_being_modified,
     is_modify_failed,
+    is_create_compiled,
 )
 
 class SENSEModifierDaemon(DaemonBase):
@@ -29,103 +31,18 @@ class SENSEModifierDaemon(DaemonBase):
 
     @databased
     def run_once(self, session=None):
-        reqs_finished_r = Request.get_by_status(statuses=[RequestStatus.FINISHED_R], session=session)
         reqs_stale = Request.get_by_status(statuses=[RequestStatus.STALE], session=session)
-        if reqs_stale == [] and reqs_finished_r == []:
+        if reqs_stale == []:
             return
         
         # Sort requests by previous bandwidth to prioritize modifications which reduce bandwidth
         # This ensures that we make bandwidth available for other requests
         reqs_stale = sorted(reqs_stale, key=lambda x: (x.allocated_bandwidth_mbps or 0) - (x.previous_bandwidth_mbps or 0))
 
-        # Track which requests are currently being modified (not just if ANY modification is in progress)
-        # Build a set of rule_ids that are currently in a modifying state
-        all_reqs = Request.get_by_status(statuses=[RequestStatus.FINISHED_R, RequestStatus.STALE, RequestStatus.PROVISIONED], session=session)
-        modifying_rule_ids = set()
-        for req_ in all_reqs:
-            if is_being_modified(req_.sense_circuit_status):
-                modifying_rule_ids.add(req_.rule_id)
-        
-        # Build a set of sense_uuids that have been taken over by a PROVISIONED request.
-        # A FINISHED_R circuit that was reused will have its sense_uuid now also referenced
-        # by the new PROVISIONED request — we must not throttle/tear it down.
-        reqs_provisioned = Request.get_by_status(statuses=[RequestStatus.PROVISIONED], session=session)
-        reused_uuids = {req_.sense_uuid for req_ in reqs_provisioned if req_.sense_uuid}
-
-        # Only skip requests that are already being modified, allow others to proceed
+        # Requests whose circuit already has a modify in flight
+        modifying_rule_ids = {r.rule_id for r in reqs_stale if is_being_modified(r.sense_circuit_status)}
         if modifying_rule_ids:
             logging.debug(f"Requests currently being modified: {modifying_rule_ids}")
-            
-        for req in reqs_finished_r:
-            # Skip this specific request if it's already being modified
-            if req.rule_id in modifying_rule_ids:
-                logging.debug(f"Request {req.rule_id} is already being modified, skipping")
-                continue
-
-            if req.sense_uuid is None:
-                logging.info(f"Request {req.rule_id} finished before SENSE circuit was created, marking as FINISHED directly")
-                req.set_status(status=RequestStatus.FINISHED, session=session)
-                continue
-
-            # Skip if the circuit has been taken over by a new provisioned request
-            if req.sense_uuid in reused_uuids:
-                logging.info(
-                    f"Request {req.rule_id} circuit {req.sense_uuid} has been reused by another "
-                    f"request — skipping throttle/teardown, marking as DELETED"
-                )
-                req.set_status(status=RequestStatus.DELETED, session=session)
-                continue
-
-            # Hold in FINISHED_R for a configurable grace period to allow circuit reuse
-            finished_r_hold_secs = config_get_int("sense", "finished_r_hold_seconds", default=120, constraint="nonneg")
-            if req.rucio_finished_at is not None:
-                elapsed = (datetime.now() - req.rucio_finished_at).total_seconds()
-                if elapsed < finished_r_hold_secs:
-                    logging.debug(
-                        f"Request {req.rule_id} entered FINISHED_R {elapsed:.0f}s ago, "
-                        f"holding for {finished_r_hold_secs}s before throttle/teardown"
-                    )
-                    continue
-
-            try:
-                vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
-                if not vlan_range:
-                    logging.error(f"No VLAN range found for {req.rule_id}")
-                    continue
-                
-                modify_link(
-                    sense_uuid=req.sense_uuid,
-                    profile_uuid=self.profile_uuid,
-                    bandwidth_mbps=1000, # set finished links to 1 Gbps to free up bandwidth for other requests
-                    src_site=req.src_site,
-                    dst_site=req.dst_site,
-                    src_ip_range=req.src_endpoint.ip_range,
-                    dst_ip_range=req.dst_endpoint.ip_range,
-                    vlan_range=vlan_range,
-                    rule_id=req.rule_id
-                )
-                req.set_sense_circuit_status(
-                    status=SenseCircuitStatus.MODIFY_COMMITTING.value, session=session
-                )
-                logging.info(
-                    f"Submitted throttle for {req.rule_id}, waiting for SENSE MODIFY-READY before marking FINISHED"
-                )
-            except Exception as e:
-                if is_sync_timeout(e):
-                    logging.warning(
-                        f"Throttle of finished request {req.rule_id} timed out (504); "
-                        "marking MODIFY_COMMITTING, waiting for SENSE MODIFY-READY before FINISHED"
-                    )
-                    req.set_sense_circuit_status(
-                        status=SenseCircuitStatus.MODIFY_COMMITTING.value, session=session
-                    )
-                else:
-                    logging.error(
-                        f"Failed to throttle {req.rule_id}: {e} — "
-                        "skipping throttle, advancing to FINISHED for cancellation",
-                        exc_info=True,
-                    )
-                    req.set_status(status=RequestStatus.FINISHED, session=session)
 
         for req in reqs_stale:
             # Skip this specific request if it's already being modified
@@ -134,11 +51,29 @@ class SENSEModifierDaemon(DaemonBase):
                 continue
                 
             if req.sense_uuid is None:
-                logging.warning(f"Request {req.rule_id} has no SENSE UUID, skipping modification")
+                # A STALE request with no circuit can't be modified and would block the
+                # provisioner forever — send it back through staging (endpoints are
+                # still allocated) or fail it if they're gone.
+                if req.src_endpoint and req.dst_endpoint:
+                    logging.warning(f"Request {req.rule_id} is STALE but has no SENSE UUID, resetting to ALLOCATED for re-staging")
+                    req.set_status(status=RequestStatus.ALLOCATED, session=session)
+                else:
+                    logging.error(f"Request {req.rule_id} is STALE with no SENSE UUID and no endpoints, marking as FAILED")
+                    req.mark_failed("STALE request with no SENSE UUID and no endpoints", session=session)
                 continue
-                
+
             try:
                 status = req.sense_circuit_status
+
+                if is_create_compiled(status):
+                    # The circuit was never provisioned — there's nothing to modify.
+                    # Fold the new bandwidth into DECIDED so the provisioner handles it.
+                    logging.info(
+                        f"Request {req.rule_id} is STALE but circuit {req.sense_uuid} is only compiled; "
+                        "returning to DECIDED so it gets provisioned at the new bandwidth"
+                    )
+                    req.set_status(status=RequestStatus.DECIDED, session=session)
+                    continue
 
                 if status == "UNKNOWN":
                     # The circuit UUID is no longer known to SENSE-O — most likely cleaned up
@@ -153,6 +88,8 @@ class SENSEModifierDaemon(DaemonBase):
                         "sense_uuid": None,
                         "sense_src_uri": None,
                         "sense_dst_uri": None,
+                        "src_vlan": None,
+                        "dst_vlan": None,
                         "sense_circuit_status": None,
                         "sense_affiliated": False,
                         "sense_provisioned_at": None,
@@ -162,57 +99,32 @@ class SENSEModifierDaemon(DaemonBase):
                     continue
 
                 if is_modify_failed(status):
+                    # No force retry of a modify: SENSE-O has none. Rebuild the
+                    # circuit instead, a bounded number of times, then escalate.
                     logging.warning(
                         f"Request {req.rule_id} circuit {req.sense_uuid} is in MODIFY - FAILED. "
                         "Cancelling and deleting the failed instance to rebuild from scratch."
                     )
-                    failed_uuid = req.sense_uuid
-                    # Before attempting cancel/delete, check if SENSE has already cleaned up
-                    # this circuit (e.g., auto-cancelled after the modify rejection).
-                    # If so, skip the cancel/delete and go straight to the ALLOCATED reset.
-                    current_sense_status = get_instance_status(failed_uuid)
-                    if current_sense_status == "UNKNOWN":
-                        logging.warning(
-                            f"Circuit {failed_uuid} is already gone from SENSE (status=UNKNOWN) "
-                            f"— skipping cancel/delete, resetting {req.rule_id} to ALLOCATED"
-                        )
-                    else:
-                        try:
-                            cancel_link(failed_uuid, status)
-                            delete_instance(failed_uuid)
-                            logging.info(
-                                f"Successfully cancelled and deleted MODIFY-FAILED instance "
-                                f"{failed_uuid} for {req.rule_id}"
-                            )
-                        except Exception as e:
-                            logging.error(
-                                f"Failed to cancel/delete MODIFY-FAILED instance {failed_uuid} "
-                                f"for {req.rule_id}: {e} — will retry next cycle",
-                                exc_info=True,
-                            )
-                            continue
-                    req.update({
-                        "sense_uuid": None,
-                        "sense_src_uri": None,
-                        "sense_dst_uri": None,
-                        "sense_circuit_status": None,
-                        "sense_affiliated": False,
-                        "sense_provisioned_at": None,
-                        "sense_retries": 0,
-                        "transfer_status": RequestStatus.ALLOCATED,
-                    }, session=session)
+                    hard_modify(req, status, "modify failed", session)
                     continue
 
                 if not is_ready_for_modify(status):
                     logging.debug(f"Cannot modify request {req.rule_id} in status '{status}', will try again later")
                     continue
-                    
+
+                if req.sense_escalation:
+                    # An admin has been asked to look; the escalation clears when the
+                    # circuit's status changes.
+                    continue
+                if req.sense_next_attempt_at is not None and utcnow() < req.sense_next_attempt_at:
+                    continue
+
                 vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
                 if not vlan_range:
                     logging.error(f"No VLAN range found for {req.rule_id}")
                     continue
                     
-                modify_link(
+                response = modify_link(
                     sense_uuid=req.sense_uuid,
                     profile_uuid=self.profile_uuid,
                     bandwidth_mbps=req.allocated_bandwidth_mbps,
@@ -223,6 +135,18 @@ class SENSEModifierDaemon(DaemonBase):
                     vlan_range=vlan_range,
                     rule_id=req.rule_id
                 )
+                # A modify recompiles the circuit too. Only overwrite what it reports,
+                # so a response without a model keeps the VLANs from provisioning.
+                src_vlan, dst_vlan = parse_circuit_vlans(
+                    response, req.sense_src_uri, req.sense_dst_uri,
+                    req.src_site.sense_uri, req.dst_site.sense_uri,
+                )
+                if src_vlan is not None or dst_vlan is not None:
+                    req.set_circuit_vlans(
+                        src_vlan if src_vlan is not None else req.src_vlan,
+                        dst_vlan if dst_vlan is not None else req.dst_vlan,
+                        session=session,
+                    )
 
                 req.set_sense_circuit_status(
                     status=SenseCircuitStatus.MODIFY_COMMITTING.value, session=session
@@ -243,5 +167,22 @@ class SENSEModifierDaemon(DaemonBase):
                         status=SenseCircuitStatus.MODIFY_COMMITTING.value, session=session
                     )
                 else:
-                    logging.error(f"Failed to modify link for {req.rule_id}: {e}", exc_info=True)
+                    # A STALE request blocks the provisioner, so a modify SENSE-O keeps
+                    # refusing must not be retried forever: rebuild the circuit at the
+                    # new bandwidth after a few tries (hard_modify escalates once its
+                    # own budget is spent), or escalate at once if retrying can't help.
+                    req.increment_sense_retries(session=session)
+                    logging.error(
+                        f"Failed to modify link for {req.rule_id} "
+                        f"(attempt {req.sense_retries}): {e}", exc_info=True
+                    )
+                    result = triage(e)
+                    if result.action == ESCALATE:
+                        escalate(req, MODIFY, result.kind, e, session)
+                    elif req.sense_retries >= result.max_retries:
+                        hard_modify(req, req.sense_circuit_status, f"modify refused {req.sense_retries} times: {e}", session)
+                    else:
+                        delay = backoff_seconds(result, req.sense_retries)
+                        if delay:
+                            req.update({"sense_next_attempt_at": utcnow() + timedelta(seconds=delay)}, session=session)
             

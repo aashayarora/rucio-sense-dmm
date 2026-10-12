@@ -1,17 +1,29 @@
 import json
 import requests
-import re
 import logging
 
 from dmm.core.config import config_get
 
 # Helper functions
 
+
+class PrometheusNotConfigured(RuntimeError):
+    """The [prometheus] section is missing or carries no host."""
+
+
 class PrometheusUtils:
     def __init__(self):
-        self.prometheus_user = config_get("prometheus", "user")
-        self.prometheus_pass = config_get("prometheus", "password")
-        self.prometheus_host = config_get("prometheus", "host")
+        self.prometheus_host = config_get("prometheus", "host", default="").strip().rstrip("/")
+        self.prometheus_user = config_get("prometheus", "user", default="")
+        self.prometheus_pass = config_get("prometheus", "password", default="")
+        if not self.prometheus_host:
+            raise PrometheusNotConfigured("no host set in the [prometheus] section")
+
+    @property
+    def _auth(self):
+        # Anonymous Prometheus deployments are common, and sending ("", "") turns
+        # into an empty Basic header that some proxies reject outright.
+        return (self.prometheus_user, self.prometheus_pass) if self.prometheus_user else None
 
     def submit_query(self, query_dict) -> dict:
         endpoint = "api/v1/query"
@@ -21,7 +33,7 @@ class PrometheusUtils:
             response = requests.get(
                 query_addr,
                 params=query_dict,
-                auth=(self.prometheus_user, self.prometheus_pass),
+                auth=self._auth,
                 timeout=15,
             )
             logging.debug(f"Prometheus response {response.status_code}: {response.text}")
@@ -33,105 +45,82 @@ class PrometheusUtils:
         except ValueError as e:
             logging.error(f"Prometheus query returned invalid JSON for {query_addr}: {e}", exc_info=True)
             raise
-    
-    @staticmethod
-    def get_val_from_response(response):
-        try:
-            return response["data"]["result"][0]["value"][1]
-        except (KeyError, IndexError, TypeError) as e:
-            raise ValueError(f"Invalid Prometheus response format: {response}") from e
-                
-    def get_interfaces(self, ipv6) -> str:
-        """
-        Gets all interfaces with ipv6 addresses matching the given ipv6
-        """
-        #Change ipv6_pattern if needed
-        ipv6_pattern = f"{ipv6[:-3]}[0-9a-fA-F]{{1,4}}"
-        query = f"node_network_address_info{{address=~'{ipv6_pattern}'}}"
-        response = self.submit_query({"query": query})
-
-        interfaces = []
-        
-        #If response is a successful transfer and matches the given ipv6,
-        #adds its interface data to the list
-        if response.get("status") == "success":
-            for metric in response.get("data", {}).get("result", []):
-                metric_data = metric.get("metric", {}) if isinstance(metric, dict) else {}
-                address = metric_data.get("address")
-                if address and re.match(ipv6_pattern, address):
-                    interfaces.append(
-                        (
-                            metric_data.get("device"),
-                            metric_data.get("instance"),
-                            metric_data.get("job"),
-                            metric_data.get("sitename"),
-                        )
-                    )
-        return interfaces
-
-    def get_all_bytes_at_t(self, time, ipv6) -> float:
-        """
-        Returns the total number of bytes transmitted from a given Rucio RSE via a given
-        ipv6 address
-        """
-        transfers = self.get_interfaces(ipv6) 
-        total_bytes = 0
-        for transfer in transfers:
-            device, instance, job, sitename = transfer[0], transfer[1], transfer[2], transfer[3]
-            query_params = f"device=\"{device}\",instance=\"{instance}\",job=\"{job}\",sitename=\"{sitename}\""
-            metric = f"node_network_transmit_bytes_total{{{query_params}}}"
-
-            response = self.submit_query({"query": metric, "time": time})
-            if response.get("status") == "success" and response.get("data", {}).get("result"):
-                bytes_at_t = self.get_val_from_response(response)
-            else:
-                raise ValueError(f"query {metric} failed or returned empty result")
-            total_bytes += float(bytes_at_t)
-        return total_bytes
-
-    
-class FTSMonitUtils:
-    def __init__(self):
-        self.fts_host = config_get("fts", "monit_host")
-        self.fts_token = config_get("fts", "monit_auth_token")
-        self.headers = {"Authorization": f"Bearer {self.fts_token}", "Content-Type": "application/json"}
 
     @staticmethod
-    def get_val_from_response(response):
-        return response["hits"]["hits"][0]["_source"]["data"]
+    def _escape_label_value(value) -> str:
+        return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
-    def submit_job_query(self, rule_id, query_params=None) -> list:
-        if query_params is None:
-            query_params = []
-        endpoint = "api/datasources/proxy/9233/monit_prod_fts_enr_complete*/_search"
-        query_addr = f"{self.fts_host}/{endpoint}"
-        data = {
-            "size": 10,
-            "query":{
-                "bool":{
-                    "filter":[{
-                        "query_string": {
-                            "analyze_wildcard": "true",
-                            "query": f"data.file_metadata.rule_id:{rule_id}"
-                        }
-                    }]
-                }
-            },
-            "_source": query_params
-        }
-        data_string = json.dumps(data)
-        logging.debug(f"FTS Monit query for {rule_id} {query_addr}: {data_string}")
-        try:
-            response_obj = requests.get(query_addr, data=data_string, headers=self.headers, timeout=15)
-            logging.debug(f"FTS Monit response for {rule_id} {response_obj.status_code}: {response_obj.text}")
-            response_obj.raise_for_status()
-            response = response_obj.json()
-        except requests.RequestException as e:
-            logging.error(f"FTS Monit request failed for rule {rule_id}: {e}", exc_info=True)
-            raise
-        except ValueError as e:
-            logging.error(f"FTS Monit returned invalid JSON for rule {rule_id}: {e}", exc_info=True)
-            raise
-        hits = response.get("hits", {}).get("hits", [])
-        timestamps = [hit.get("_source", {}).get("data") for hit in hits if hit.get("_source", {}).get("data") is not None]
-        return timestamps
+    def get_circuit_samples(self, site, vlan, lookback_seconds, at_time=None):
+        """
+        Raw octet counters for one circuit VLAN on a site's switches.
+
+        SiteRM scrapes every switch it manages over SNMP and exports each VLAN
+        interface as interface_statistics{Key="ifHCInOctets"|"ifHCOutOctets"}. A
+        circuit has a VLAN to itself, so unlike a host interface this counts the
+        circuit's traffic and nothing else. Every switch at the site that reports
+        the VLAN is returned; which direction carries the data depends on which end
+        of the circuit the site is.
+
+        Returns {(hostname, ifDescr, Key): [(timestamp, bytes), ...]} with samples
+        oldest first - sample timestamps, not the time of this call, because SiteRM
+        scrapes on its own schedule - or None when Prometheus refuses the query.
+        """
+        selector = (
+            f'interface_statistics{{sitename="{self._escape_label_value(site)}",'
+            f'ifDescr=~"(?i)vlan ?{int(vlan)}",Key=~"ifHC(In|Out)Octets"}}'
+        )
+        params = {"query": f"{selector}[{max(int(lookback_seconds), 1)}s]"}
+        if at_time is not None:
+            params["time"] = at_time
+        response = self.submit_query(params)
+        if response.get("status") != "success":
+            logging.warning(f"Counter query for VLAN {vlan} at {site} failed: {response.get('error', response.get('status'))}")
+            return None
+
+        series = {}
+        for result in response.get("data", {}).get("result", []):
+            labels = result.get("metric", {})
+            key = (labels.get("hostname"), labels.get("ifDescr"), labels.get("Key"))
+            samples = []
+            for timestamp, value in result.get("values", []):
+                try:
+                    samples.append((float(timestamp), float(value)))
+                except (TypeError, ValueError):
+                    continue
+            if samples:
+                series[key] = sorted(samples)
+        return series
+
+
+def counter_increase(samples):
+    """
+    Growth of a counter across consecutive samples.
+
+    A drop means the counter restarted (switch reboot, SiteRM reset), so the value
+    after it counts from zero - the same rule PromQL's increase() uses, without
+    its extrapolation past the first and last sample.
+    """
+    total = 0.0
+    for (_, previous), (_, current) in zip(samples, samples[1:]):
+        total += current - previous if current >= previous else current
+    return total
+
+
+def counter_rate_mbps(samples):
+    """Average rate between the first and last sample in decimal Mbps, or None."""
+    if len(samples) < 2:
+        return None
+    elapsed = samples[-1][0] - samples[0][0]
+    if elapsed <= 0:
+        return None
+    # Counters are bytes; bandwidth everywhere else in DMM is decimal Mbps.
+    return round(counter_increase(samples) * 8 / 1e6 / elapsed, 2)
+
+
+def circuit_ends(req):
+    """(site name, VLAN) for each end of the request's circuit whose VLAN is known."""
+    ends = []
+    for site, vlan in ((req.src_site, req.src_vlan), (req.dst_site, req.dst_vlan)):
+        if site is not None and vlan is not None:
+            ends.append((site.name, int(vlan)))
+    return ends

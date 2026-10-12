@@ -1,0 +1,19 @@
+{{- if .Values.dmm.logs.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dmm.fullname" . }}-logs
+  labels:
+    {{- include "dmm.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+  - {{ .Values.dmm.logs.persistence.accessMode }}
+  {{- if .Values.dmm.logs.persistence.storageClass }}
+  storageClassName: {{ .Values.dmm.logs.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dmm.logs.persistence.size }}
+{{- end }}

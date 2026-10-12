@@ -1,11 +1,13 @@
 import logging
-from datetime import datetime
 from collections import defaultdict
 from math import floor
 
 from dmm.core.config import config_get_int
+from dmm.core.recovery import CREATE, attempt_due, check_stall, escalate, reset_circuit
+from dmm.core.sense_triage import ESCALATE, backoff_seconds, triage
 from dmm.daemons.base import DaemonBase
-from dmm.models.request import Request, RequestStatus
+from dmm.models.base import utcnow
+from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
 from dmm.db.session import databased
 
 from dmm.core.sense import (
@@ -17,6 +19,7 @@ from dmm.core.sense import (
     is_modify_failed,
     is_being_modified,
     is_ready_for_modify,
+    discard_instance,
 )
 from dmm.core.allocation import affiliate_endpoints
 from dmm.core.utils import release_endpoints_and_addresses
@@ -65,7 +68,7 @@ class SENSEHandlerDaemon(DaemonBase):
 
     @staticmethod
     def _pair_stream_cap(src_site_name: str, dst_site_name: str) -> int:
-        default_streams = config_get_int("fts", "default_num_streams", default=200)
+        default_streams = config_get_int("fts", "default_num_streams", default=20)
         pair_stream = config_get_int("fts-streams", f"{src_site_name}-{dst_site_name}", default=None)
         if pair_stream is None:
             pair_stream = config_get_int("fts-streams", f"{dst_site_name}-{src_site_name}", default=None)
@@ -102,113 +105,169 @@ class SENSEHandlerDaemon(DaemonBase):
                         f"priority={req.priority}, desired={desired}, pair_max={max_streams}"
                     )
 
-    @staticmethod
-    def _retry_target_status(req) -> RequestStatus:
+    # An instance in one of these can still be provisioned, or already has been.
+    _USABLE_CREATE_STATUSES = {
+        SenseCircuitStatus.CREATE_COMPILED.value,
+        SenseCircuitStatus.CREATE_COMMITTING.value,
+        SenseCircuitStatus.CREATE_COMMITTED.value,
+        SenseCircuitStatus.CREATE_READY.value,
+    }
+
+    def _handle_retry(self, req, session) -> bool:
         """
-        Decide where to resume after RETRY.
-        - If a SENSE instance already exists, resume from DECIDED (re-provision path)
-        - Otherwise resume from ALLOCATED (re-stage path)
+        Act on a RETRY, the create path of the recovery workflow.
+
+        The last error is triaged: an error retrying can't fix, or one whose retries
+        are used up, fails the request and escalates. Otherwise, after any backoff
+        the triage asks for, the request resumes from DECIDED if its instance can
+        still be provisioned, or starts over from ALLOCATED with the instance
+        discarded. That includes a request holding the uuid of an instance its
+        staging failed on: only a successful staging records the available bandwidth.
+
+        Returns True if the request went back to DECIDED, so its status is polled now.
         """
-        return RequestStatus.DECIDED if req.sense_uuid else RequestStatus.ALLOCATED
+        result = triage(req.failure_reason)
+        retries = req.sense_retries or 0
+        if result.action == ESCALATE or retries >= result.max_retries:
+            last_error = req.failure_reason or "unknown error"
+            escalate(req, CREATE, result.kind, last_error, session)
+            if result.action == ESCALATE:
+                reason = f"SENSE error that retrying won't fix ({result.kind}): {last_error}"
+            else:
+                reason = f"Reached max SENSE retries ({retries}) for {result.kind}. Last error: {last_error}"
+            logging.warning(f"Request {req.rule_id}: {reason}. Marking as failed.")
+            req.mark_failed(reason, session=session)
+            self._cleanup_failed_instance(req)
+            release_endpoints_and_addresses(req, session)
+            return False
+
+        if not attempt_due(req, backoff_seconds(result, retries + 1), session):
+            return False
+
+        status = get_instance_status(req.sense_uuid) if req.sense_uuid else None
+        staged = req.sense_uuid and req.available_bandwidth_mbps is not None
+        if staged and status in self._USABLE_CREATE_STATUSES:
+            target = RequestStatus.DECIDED
+        else:
+            if req.sense_uuid:
+                try:
+                    discard_instance(req.sense_uuid, status)
+                except Exception as e:
+                    logging.error(f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: {e}, will retry next cycle")
+                    return False
+                logging.info(f"Discarded SENSE instance {req.sense_uuid} ({status}) of {req.rule_id}, restaging")
+                reset_circuit(req, session)
+            target = RequestStatus.ALLOCATED
+
+        logging.info(f"Request {req.rule_id} retry {retries + 1}/{result.max_retries} ({result.kind}), resuming from {target}")
+        req.increment_sense_retries(session=session)
+        req.set_status(target, session=session)
+        return target == RequestStatus.DECIDED
 
     @databased
     def run_once(self, session=None):
-        reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED, RequestStatus.FINISHED_R], session=session)
+        reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED], session=session)
         if not reqs:
             return
         
         for req in reqs:
             if req.transfer_status == RequestStatus.RETRY:
-                if req.sense_retries < config_get_int("sense", "max_retries", default=3):
-                    logging.info(f"Request {req.rule_id} has {req.sense_retries} retries, less than max retries. Retrying.")
-                    req.increment_sense_retries(session=session)
-                    target_status = self._retry_target_status(req)
-                    req.set_status(target_status, session=session)
-                else:
-                    logging.warning(f"Request {req.rule_id} has reached max SENSE retries. Marking as failed.")
-                    last_error = req.failure_reason or "unknown error"
-                    req.mark_failed(f"Reached max SENSE retries ({req.sense_retries}). Last error: {last_error}", session=session)
-                    release_endpoints_and_addresses(req, session)
-            
+                try:
+                    if not self._handle_retry(req, session):
+                        continue
+                except Exception as e:
+                    logging.error(f"Failed to retry {req.rule_id}: {e}", exc_info=True)
+                    continue
+
             if req.sense_uuid is None:
                 continue
 
-            # Capture the DB-side circuit status BEFORE polling SENSE so we can
-            # detect state transitions (e.g. MODIFY_COMMITTING → MODIFY_READY).
-            prev_circuit_status = req.sense_circuit_status
+            try:
+                # Capture the DB-side circuit status BEFORE polling SENSE so we can
+                # detect state transitions (e.g. MODIFY_COMMITTING → MODIFY_READY).
+                prev_circuit_status = req.sense_circuit_status
 
-            status = get_instance_status(req.sense_uuid)
-            req.set_sense_circuit_status(status=status, session=session)
+                status = get_instance_status(req.sense_uuid)
+                req.set_sense_circuit_status(status=status, session=session)
 
-            # Affiliate endpoints when ready
-            if not req.sense_affiliated and is_affiliated_state(status):
-                if not req.src_pool_site or not req.dst_pool_site:
-                    logging.error(
-                        f"Request {req.rule_id} has no source/destination site, cannot affiliate endpoints"
+                # Affiliate endpoints when ready
+                if not req.sense_affiliated and is_affiliated_state(status):
+                    if not req.src_pool_site or not req.dst_pool_site:
+                        logging.error(
+                            f"Request {req.rule_id} has no source/destination site, cannot affiliate endpoints"
+                        )
+                        continue
+                    logging.info(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
+                    try:
+                        affiliate_endpoints(
+                            sense_uuid=req.sense_uuid,
+                            src_pool_site=req.src_pool_site,
+                            dst_pool_site=req.dst_pool_site,
+                            rule_id=req.rule_id,
+                            sense_src_uri=req.sense_src_uri,
+                            sense_dst_uri=req.sense_dst_uri
+                        )
+                        req.update({"sense_affiliated": True}, session=session)
+                    except Exception as e:
+                        logging.error(f"Failed to affiliate endpoints for {req.rule_id}, will retry next cycle: {e}")
+                        continue
+
+                if not req.sense_provisioned_at and is_create_ready(status):
+                    logging.info(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
+                    req.update({"sense_provisioned_at": utcnow()}, session=session)
+
+                elif req.transfer_status in [RequestStatus.PROVISIONED] and is_create_failed(status):
+                    logging.warning(
+                        f"Request {req.rule_id} reached CREATE_FAILED after being PROVISIONED; "
+                        "marking as RETRY to re-enter SENSE retry flow"
                     )
-                    continue
-                logging.info(f"Request {req.rule_id} is not affiliated with SENSE instance {req.sense_uuid}, affiliating now.")
-                try:
-                    affiliate_endpoints(
-                        sense_uuid=req.sense_uuid,
-                        src_pool_site=req.src_pool_site,
-                        dst_pool_site=req.dst_pool_site,
-                        rule_id=req.rule_id,
-                        sense_src_uri=req.sense_src_uri,
-                        sense_dst_uri=req.sense_dst_uri
+                    req.mark_retry(f"Circuit reached {status} after being PROVISIONED", session=session)
+
+                elif (
+                    req.transfer_status == RequestStatus.STALE
+                    and is_being_modified(prev_circuit_status)
+                    and is_ready_for_modify(status)
+                ):
+                    # The modifier set circuit_status = MODIFY_COMMITTING optimistically when
+                    # it called modify_link.  SENSE has now confirmed the delta was applied
+                    # (transitioned back to a READY state).  Safe to mark PROVISIONED.
+                    logging.info(
+                        f"Request {req.rule_id} SENSE modification confirmed "
+                        f"({prev_circuit_status} → {status}), marking as PROVISIONED"
                     )
-                    req.update({"sense_affiliated": True}, session=session)
-                except Exception as e:
-                    logging.error(f"Failed to affiliate endpoints for {req.rule_id}, will retry next cycle: {e}")
-                    continue
+                    req.set_status(RequestStatus.PROVISIONED, session=session)
 
-            if not req.sense_provisioned_at and is_create_ready(status):
-                logging.info(f"Request {req.rule_id} is ready, updating sense_provisioned_at to current time.")
-                req.update({"sense_provisioned_at": datetime.now()}, session=session)
+                elif req.transfer_status == RequestStatus.PROVISIONED and is_modify_failed(status):
+                    # A modification entered MODIFY - FAILED while the request was already
+                    # PROVISIONED (e.g. SENSE-O internally retried and failed).  Re-queue as
+                    # STALE so the modifier's MODIFY_FAILED handler can cancel + rebuild.
+                    logging.warning(
+                        f"Request {req.rule_id} circuit {req.sense_uuid} entered MODIFY - FAILED "
+                        "while PROVISIONED; re-queuing as STALE for modifier to cancel and rebuild"
+                    )
+                    req.set_status(RequestStatus.STALE, session=session)
 
-            elif req.transfer_status in [RequestStatus.PROVISIONED] and is_create_failed(status):
-                logging.warning(
-                    f"Request {req.rule_id} reached CREATE_FAILED after being PROVISIONED; "
-                    "marking as RETRY to re-enter SENSE retry flow"
-                )
-                req.mark_retry(f"Circuit reached {status} after being PROVISIONED", session=session)
+                check_stall(req, session)
+            except Exception as e:
+                # Isolate per-request failures so one bad SENSE call doesn't roll back
+                # the whole cycle's updates.
+                logging.error(f"Failed to update SENSE status for {req.rule_id}: {e}", exc_info=True)
+                continue
 
-            elif (
-                req.transfer_status == RequestStatus.STALE
-                and is_being_modified(prev_circuit_status)
-                and is_ready_for_modify(status)
-            ):
-                # The modifier set circuit_status = MODIFY_COMMITTING optimistically when
-                # it called modify_link.  SENSE has now confirmed the delta was applied
-                # (transitioned back to a READY state).  Safe to mark PROVISIONED.
-                logging.info(
-                    f"Request {req.rule_id} SENSE modification confirmed "
-                    f"({prev_circuit_status} → {status}), marking as PROVISIONED"
-                )
-                req.set_status(RequestStatus.PROVISIONED, session=session)
+        try:
+            self._rebalance_fts_streams(session)
+        except Exception as e:
+            logging.error(f"Failed to rebalance FTS streams: {e}", exc_info=True)
 
-            elif (
-                req.transfer_status == RequestStatus.FINISHED_R
-                and is_being_modified(prev_circuit_status)
-                and is_ready_for_modify(status)
-            ):
-                # The modifier submitted a throttle (to 1 Gbps) for this finished request
-                # and set MODIFY_COMMITTING.  SENSE has now confirmed the throttle was applied
-                # (circuit back in READY state).  Safe to mark FINISHED so the canceller proceeds.
-                logging.info(
-                    f"Request {req.rule_id} throttle modification confirmed "
-                    f"({prev_circuit_status} → {status}), marking as FINISHED"
-                )
-                req.set_status(RequestStatus.FINISHED, session=session)
-
-            elif req.transfer_status == RequestStatus.PROVISIONED and is_modify_failed(status):
-                # A modification entered MODIFY - FAILED while the request was already
-                # PROVISIONED (e.g. SENSE-O internally retried and failed).  Re-queue as
-                # STALE so the modifier's MODIFY_FAILED handler can cancel + rebuild.
-                logging.warning(
-                    f"Request {req.rule_id} circuit {req.sense_uuid} entered MODIFY - FAILED "
-                    "while PROVISIONED; re-queuing as STALE for modifier to cancel and rebuild"
-                )
-                req.set_status(RequestStatus.STALE, session=session)
-
-        self._rebalance_fts_streams(session)
+    @staticmethod
+    def _cleanup_failed_instance(req) -> None:
+        """Best-effort removal of the SENSE instance of a permanently failed request."""
+        if not req.sense_uuid:
+            return
+        try:
+            discard_instance(req.sense_uuid, get_instance_status(req.sense_uuid))
+        except Exception as e:
+            logging.error(
+                f"Failed to remove SENSE instance {req.sense_uuid} for failed request {req.rule_id}, "
+                f"it may need removing by hand: {e}"
+            )

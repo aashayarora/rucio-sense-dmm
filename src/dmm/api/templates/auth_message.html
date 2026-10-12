@@ -1,0 +1,22 @@
+<!-- auth_message.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Movement Manager - {{ title }}</title>
+    <link rel="stylesheet" href="/static/styles.css?v={{ css_version }}">
+</head>
+<body>
+    <header>
+        <h1>Data Movement Manager</h1>
+    </header>
+    <main class="container">
+        <div class="empty-state">
+            <h2>{{ title }}</h2>
+            <p>{{ message }}</p>
+            {% if link %}<p><a class="btn" href="{{ link[0] }}">{{ link[1] }}</a></p>{% endif %}
+        </div>
+    </main>
+</body>
+</html>

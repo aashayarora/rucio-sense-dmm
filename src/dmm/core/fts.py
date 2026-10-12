@@ -37,17 +37,40 @@ class FTSClient:
             logging.error(f"Error while modifying FTS config for {endpoint}: {e}", exc_info=True)
             return False
     
-    def _send_delete(self, endpoint):
-        logging.debug(f"FTS DELETE {self.fts_host}{endpoint}")
+    def _send_get(self, endpoint, params=None, host=None):
+        """GET from FTS, returning the parsed JSON or None on any failure."""
+        url = (host or self.fts_host).rstrip("/") + endpoint
+        logging.debug(f"FTS GET {url} params={params}")
         try:
-            response = requests.delete(
-                self.fts_host + endpoint,
+            response = requests.get(
+                url,
+                params=params,
                 headers=self.headers,
                 cert=self.cert,
                 verify=self.capath,
                 timeout=15,
             )
-            logging.debug(f"FTS DELETE {endpoint} response {response.status_code}: {response.text}")
+            logging.debug(f"FTS GET {endpoint} response {response.status_code}: {response.text}")
+            if response.status_code != 200:
+                logging.warning(f"FTS GET {url} returned status {response.status_code}: {response.text}")
+                return None
+            return response.json()
+        except (requests.RequestException, ValueError) as e:
+            logging.error(f"Error while querying FTS {url}: {e}", exc_info=True)
+            return None
+
+    def _send_delete(self, endpoint, params=None):
+        logging.debug(f"FTS DELETE {self.fts_host}{endpoint} params={params}")
+        try:
+            response = requests.delete(
+                self.fts_host + endpoint,
+                params=params,
+                headers=self.headers,
+                cert=self.cert,
+                verify=self.capath,
+                timeout=15,
+            )
+            logging.debug(f"FTS DELETE {endpoint} params={params} response {response.status_code}: {response.text}")
             success = response.status_code in [200, 201, 204]
             if not success:
                 logging.warning(f"FTS deletion returned status {response.status_code}: {response.text}")
@@ -120,8 +143,10 @@ def modify_link_config(src_endpoint, dst_endpoint, max_active, min_active):
 def delete_link_config(src_endpoint, dst_endpoint):
     client = FTSClient()
     src_url, dst_url = get_endpoint_urls(src_endpoint, dst_endpoint)
+    # Encoded twice: the httpd in front of FTS returns 404 for any %2F in the
+    # path, and FTS unquotes the name itself.
     link_name = urllib.parse.quote("-".join([src_url, dst_url]), safe="")
-    return client._send_delete(f"/config/links/{link_name}")
+    return client._send_delete(f"/config/links/{urllib.parse.quote(link_name, safe='')}")
 
 
 def modify_se_config(src_endpoint, dst_endpoint, max_inbound, max_outbound):
@@ -134,13 +159,11 @@ def modify_se_config(src_endpoint, dst_endpoint, max_inbound, max_outbound):
 def delete_se_config(src_endpoint, dst_endpoint):
     client = FTSClient()
     src_url, dst_url = get_endpoint_urls(src_endpoint, dst_endpoint)
-    
-    src_encoded = urllib.parse.quote(src_url, safe="")
-    dst_encoded = urllib.parse.quote(dst_url, safe="")
-    
-    success_src = client._send_delete(f"/config/se/{src_encoded}")
-    success_dst = client._send_delete(f"/config/se/{dst_encoded}")
-    
+
+    # FTS takes the SE as a query parameter, not a path segment.
+    success_src = client._send_delete("/config/se", params={"se": src_url})
+    success_dst = client._send_delete("/config/se", params={"se": dst_url})
+
     return success_src and success_dst
 
 
@@ -154,3 +177,20 @@ def delete_fts_config(src_endpoint, dst_endpoint):
     link_deleted = delete_link_config(src_endpoint, dst_endpoint)
     se_deleted = delete_se_config(src_endpoint, dst_endpoint)
     return link_deleted and se_deleted
+
+
+# Per-file fields read for transfer monitoring.
+_JOB_FILE_FIELDS = "file_state,filesize,start_time,finish_time"
+
+
+def get_fts_job(job_id, fts_host=None):
+    """
+    A job's state and its files, or None when FTS could not be asked.
+
+    fts_host is the FTS server the job was submitted to, which Rucio records per
+    request and need not be the one DMM configures links on; without it the
+    configured [fts] fts_host is asked.
+    """
+    client = FTSClient()
+    job_id = urllib.parse.quote(job_id, safe="")
+    return client._send_get(f"/jobs/{job_id}", params={"files": _JOB_FILE_FIELDS}, host=fts_host)
