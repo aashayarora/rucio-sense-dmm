@@ -467,6 +467,10 @@ def is_modify_failed(status):
     """Check if instance modification has failed."""
     return status == SenseCircuitStatus.MODIFY_FAILED.value
 
+def is_cancel_compiled(status):
+    """Check if a SENSE circuit cancel attempt failed during propagate (after COMPILED)."""
+    return status == SenseCircuitStatus.CANCEL_COMPILED.value
+
 def is_cancel_failed(status):
     """Check if a SENSE circuit cancel attempt has failed.
 
