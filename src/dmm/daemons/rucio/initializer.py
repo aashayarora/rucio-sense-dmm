@@ -1,9 +1,8 @@
 import json
 import logging
 
-from datetime import datetime
-
 from dmm.daemons.base import DaemonBase
+from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus
 from dmm.db.session import databased
 
@@ -121,7 +120,10 @@ class RucioInitDaemon(DaemonBase):
             return Request(
                 transfer_status=RequestStatus.FAILED,
                 failure_reason=reason,
-                failed_at=datetime.now(),
+                # Naive UTC, like every other timestamp column -- datetime.now()
+                # here was naive *local*, which only read correctly because the
+                # pod happens to run Etc/UTC.
+                failed_at=utcnow(),
                 **request_kwargs,
             )
 
