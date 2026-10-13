@@ -11,6 +11,7 @@ from dmm.core.sense import (
     cancel_link,
     get_instance_status,
     is_being_cancelled,
+    is_cancel_compiled,
     is_cancel_failed,
     is_cancel_ready,
     is_create_compiled,
@@ -126,6 +127,19 @@ class SENSECancellerDaemon(DaemonBase):
                     logging.warning(
                         f"Circuit {req.sense_uuid} is in CANCEL - FAILED for request "
                         f"{req.rule_id}, retrying with force cancel."
+                    )
+                    if retry_cancel(req, live_status, session):
+                        release_endpoints_and_addresses(req, session)
+                        req.set_status(status=RequestStatus.CANCELED, session=session)
+                    continue
+
+                if is_cancel_compiled(live_status):
+                    # Cancel failed during propagate (after COMPILED, before
+                    # COMMITTING). The site RMs were never reached, so a force-cancel retry
+                    # is the correct recovery — same path as CANCEL - FAILED.
+                    logging.warning(
+                        f"Circuit {req.sense_uuid} is in CANCEL - COMPILED for request "
+                        f"{req.rule_id} (cancel failed during propagate), retrying with force cancel."
                     )
                     if retry_cancel(req, live_status, session):
                         release_endpoints_and_addresses(req, session)
