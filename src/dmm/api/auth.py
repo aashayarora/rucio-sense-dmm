@@ -18,7 +18,9 @@ from functools import lru_cache
 from typing import Optional
 from urllib.parse import quote, urlencode, urlsplit
 
+import httpx
 from authlib.integrations.starlette_client import OAuth, OAuthError
+from authlib.jose import JsonWebKey, jwt as jose_jwt
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -39,6 +41,8 @@ PUBLIC_PREFIXES = ("/query/", "/static/")
 
 SESSION_COOKIE = "dmm_session"
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+MACHINE_USER_KEY = "dmm_machine_user"
 
 
 def is_public(path: str) -> bool:
@@ -118,9 +122,54 @@ def _oauth_client():
 
 
 def current_user(request: Request) -> Optional[dict]:
-    """The logged-in user, or None (always None while login is off)."""
+    """The logged-in user, or None (always None while login is off).
+
+    Also covers the token caller the gate put on the scope, which has no
+    session -- otherwise the audit line in frontend.py would raise on it.
+    """
     session = request.scope.get("session")
-    return session.get("user") if session else None
+    user = session.get("user") if session else None
+    return user or request.scope.get(MACHINE_USER_KEY)
+
+
+@lru_cache(maxsize=1)
+def _realm_keys():
+    """The realm's issuer and signing keys. Cached: a fetch per request would
+    put the realm in the path of every API call. A rotation needs a restart."""
+    metadata = httpx.get(login_settings().metadata_url).json()
+    keys = httpx.get(metadata["jwks_uri"]).json()
+    return metadata["issuer"], JsonWebKey.import_key_set(keys)
+
+
+def machine_user(request: Request) -> Optional[dict]:
+    """The service account behind an Authorization header, or None.
+
+    Every failure is None, so a bad token lands on the same "not logged in"
+    path as no token rather than a 500.
+    """
+    header = request.headers.get("authorization", "")
+    if not header.startswith("Bearer "):
+        return None
+    try:
+        issuer, keys = _realm_keys()
+    except Exception as exc:
+        logging.warning(f"Could not load realm keys, refusing token: {exc}")
+        return None
+    try:
+        claims = jose_jwt.decode(header[len("Bearer "):], keys)
+        claims.validate()  # exp, nbf, iat
+    except Exception as exc:
+        logging.warning(f"Rejected bearer token: {type(exc).__name__}")
+        return None
+    # A signature from another realm is still a valid signature.
+    if claims.get("iss") != issuer:
+        logging.warning(f"Rejected bearer token from issuer {claims.get('iss')!r}")
+        return None
+    # Service accounts carry azp and no preferred_username, so a log line can
+    # say "sense-iop" instead of a uuid.
+    name = (claims.get("preferred_username") or claims.get("azp")
+            or claims.get("client_id") or claims.get("sub"))
+    return {"username": name, "name": name, "machine": True}
 
 
 def _safe_next(target: Optional[str]) -> str:
@@ -232,8 +281,23 @@ class LoginRequired:
             return await self.app(scope, receive, send)
 
         request = Request(scope)
-        if current_user(request) is None:
+        user = current_user(request)
+        if user is None:
+            # Checked second, so a session wins: a signed-in human who also
+            # sends a header stays a human.
+            user = machine_user(request)
+            if user is not None:
+                scope[MACHINE_USER_KEY] = user
+
+        if user is None:
             response = self._login_required(request)
+        elif user.get("machine") and request.method in _UNSAFE_METHODS:
+            # These cancel circuits and reset requests. A token in a
+            # dashboard's config should not be able to.
+            response = JSONResponse(
+                {"detail": "Token is read-only; operator actions need a login"},
+                status_code=403,
+            )
         elif request.method in _UNSAFE_METHODS and not self._same_origin(request):
             response = JSONResponse({"detail": "Cross-origin request refused"}, status_code=403)
         else:

@@ -4,7 +4,7 @@ import os
 import re
 import asyncio
 from hmac import compare_digest
-from datetime import datetime
+from datetime import datetime, timezone
 from json import JSONDecodeError
 from typing import Optional
 
@@ -192,6 +192,20 @@ def _prometheus_escape_label(value) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
+def _epoch_seconds(when):
+    """A model timestamp as unix seconds, or None if it never happened.
+
+    The columns are naive UTC (models.base.utcnow strips the tzinfo), so they
+    have to be told they are UTC before being asked for an epoch -- otherwise
+    .timestamp() reads them as local time and every stamp lands hours out.
+    """
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return round(when.timestamp(), 3)
+
+
 def _emit_gauge(lines: list[str], name: str, value, labels: dict | None = None):
     if value is None:
         return
@@ -270,6 +284,10 @@ def _render_metrics(reqs) -> str:
     lines.append("# HELP dmm_request_sense_escalated SENSE recovery gave up and needs an admin "
                  "(always 1, read the stage, reason and action labels)")
     lines.append("# TYPE dmm_request_sense_escalated gauge")
+    lines.append("# HELP dmm_request_timestamp_seconds When each of a request's "
+                 "lifecycle events happened, unix seconds, one series per event; "
+                 "a series is absent until its event has happened")
+    lines.append("# TYPE dmm_request_timestamp_seconds gauge")
 
     for req in reqs:
         labels = {
@@ -353,6 +371,29 @@ def _render_metrics(reqs) -> str:
                 "reason": reason,
                 "action": RECOMMENDATIONS.get(reason, RECOMMENDATIONS["retries_exhausted"]),
             })
+
+        # The five timestamps /api/requests already returns, on /metrics too.
+        # Without these, anything reading this endpoint can tell *what state* a
+        # rule is in but never *when* anything happened: no submission date, no
+        # ordering, and no way to place a rule in a time range. A reader on the
+        # public endpoint had to infer progress from status alone, which marked
+        # delivered transfers as still in flight.
+        #
+        # One series per event rather than one metric each: the set of events
+        # is a property of the data, and `event` is a bounded label (five
+        # values), so this costs five series per rule and no new metric names
+        # when a sixth event is added. _emit_gauge skips None, so a series is
+        # absent until the event happens -- which is the distinction a zero
+        # would destroy.
+        for event, when in (
+            ("created", req.created_at),
+            ("sense_provisioned", req.sense_provisioned_at),
+            ("rucio_finished", req.rucio_finished_at),
+            ("failed", req.failed_at),
+            ("updated", req.updated_at),
+        ):
+            _emit_gauge(lines, "dmm_request_timestamp_seconds",
+                        _epoch_seconds(when), {**labels, "event": event})
 
     return "\n".join(lines) + "\n"
 
