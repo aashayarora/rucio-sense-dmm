@@ -24,6 +24,7 @@ db_name=dmm
 profile_uuid=
 sense_keep_alive_seconds=60
 finished_r_hold_seconds=120
+keep_failed_instances=false
 
 [decider]
 ; Skip raising a live circuit's bandwidth by less than this fraction of what it

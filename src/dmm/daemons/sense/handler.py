@@ -2,7 +2,7 @@ import logging
 from collections import defaultdict
 from math import floor
 
-from dmm.core.config import config_get_int
+from dmm.core.config import config_get_bool, config_get_int
 from dmm.core.recovery import CREATE, attempt_due, check_stall, escalate, reset_circuit
 from dmm.core.sense_triage import ESCALATE, backoff_seconds, triage
 from dmm.daemons.base import DaemonBase
@@ -137,7 +137,13 @@ class SENSEHandlerDaemon(DaemonBase):
                 reason = f"Reached max SENSE retries ({retries}) for {result.kind}. Last error: {last_error}"
             logging.warning(f"Request {req.rule_id}: {reason}. Marking as failed.")
             req.mark_failed(reason, session=session)
-            self._cleanup_failed_instance(req)
+            if config_get_bool("sense", "keep_failed_instances", default=False):
+                logging.info(
+                    f"Keeping failed SENSE instance {req.sense_uuid} for troubleshooting "
+                    f"(keep_failed_instances=true in [sense])"
+                )
+            else:
+                self._cleanup_failed_instance(req)
             release_endpoints_and_addresses(req, session)
             return False
 
