@@ -76,6 +76,9 @@ class Request(ModelBase, table=True):
     sense_escalation: Optional[str] = Field(default=None)
     sense_escalated_at: Optional[datetime] = Field(default=None)
     sense_alloc_rule_id: Optional[str] = Field(default=None)
+    # True once SENSE-O has been asked to register this circuit with RTMon
+    # (addon RTMon, instance registration). Guards a once-per-circuit enable.
+    rtmon_enabled: Optional[bool] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
     failed_at: Optional[datetime] = Field(default=None)
     # FTS jobs found for the rule, job id -> what the last look at it said; and the
@@ -324,6 +327,11 @@ class Request(ModelBase, table=True):
             self.sense_escalation = escalation
             self.sense_escalated_at = utcnow()
             self.save(session)
+
+    def set_rtmon_enabled(self, enabled: bool = True, session=None):
+        self.rtmon_enabled = enabled
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> rtmon_enabled={enabled}")
+        self.save(session)
     
     def set_fts_streams(self, current: int = None, desired: int = None, session=None):
         if current is not None:

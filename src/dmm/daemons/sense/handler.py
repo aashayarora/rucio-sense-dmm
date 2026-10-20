@@ -20,6 +20,8 @@ from dmm.core.sense import (
     is_being_modified,
     is_ready_for_modify,
     discard_instance,
+    enable_rtmon,
+    rtmon_deployment,
 )
 from dmm.core.allocation import affiliate_endpoints
 from dmm.core.utils import release_endpoints_and_addresses
@@ -164,12 +166,63 @@ class SENSEHandlerDaemon(DaemonBase):
         req.set_status(target, session=session)
         return target == RequestStatus.DECIDED
 
+    @staticmethod
+    def _rtmon_deployment(cache):
+        """
+        The RTMon deployment to register circuits with, resolved once per cycle.
+
+        Unconfigured this is a GET against SENSE-O, and the answer is the same
+        for every request in the cycle. Misses are cached too, so an
+        orchestrator that is down, or that has several deployments registered
+        with none chosen, costs one log line per cycle rather than one per
+        circuit.
+
+        A circuit with no deployment cannot be monitored: the PUT would still
+        succeed but nothing would ever pick the task up, so skip and say why.
+        """
+        if "deployment" in cache:
+            return cache["deployment"]
+        deployment = None
+        try:
+            deployment = rtmon_deployment()
+            if not deployment:
+                logging.warning("No RTMon deployment is registered with SENSE-O; not enabling RTMon")
+        except Exception as e:
+            logging.warning(f"Cannot resolve an RTMon deployment, not enabling RTMon: {e}")
+        cache["deployment"] = deployment
+        return deployment
+
+    def _enable_rtmon_if_needed(self, req, session, cache) -> None:
+        """
+        Register a live circuit with RTMon, once per circuit.
+
+        Called whenever the handler sees a request on a live circuit: CREATE -
+        READY, or MODIFY / REINSTATE - READY if the create cycle was missed.
+        SENSE-O's addon/RTMon PUT is the enable: it grants the addon's delegate
+        user READ on the instance and queues an RTMon task, which the RTMon
+        deployment consumes on its next poll. The request-level flag makes this
+        one call per circuit: while the circuit stays READY a failed enable is
+        retried next cycle (harmless, SENSE-O cancels overlapping pending tasks
+        for the same instance), and once it succeeds the flag stops the calls.
+        """
+        if req.rtmon_enabled or not req.sense_uuid:
+            return
+        deployment = self._rtmon_deployment(cache)
+        if not deployment:
+            return
+        try:
+            enable_rtmon(req.sense_uuid, deployment)
+            req.set_rtmon_enabled(True, session=session)
+        except Exception as e:
+            logging.error(f"Failed to enable RTMon for {req.rule_id} ({req.sense_uuid}): {e}")
+
     @databased
     def run_once(self, session=None):
         reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED], session=session)
         if not reqs:
             return
-        
+
+        rtmon_cache = {}
         for req in reqs:
             if req.transfer_status == RequestStatus.RETRY:
                 try:
@@ -246,6 +299,14 @@ class SENSEHandlerDaemon(DaemonBase):
                         "while PROVISIONED; re-queuing as STALE for modifier to cancel and rebuild"
                     )
                     req.set_status(RequestStatus.STALE, session=session)
+
+                # Outside the chain above: a live circuit is the moment to
+                # register with RTMon (instance is up, UUID known), but that is
+                # independent of which transition the chain just handled, and
+                # folding it in would shadow the branches keyed on the same
+                # READY states.
+                if is_circuit_active(status):
+                    self._enable_rtmon_if_needed(req, session, rtmon_cache)
 
                 check_stall(req, session)
             except Exception as e:
