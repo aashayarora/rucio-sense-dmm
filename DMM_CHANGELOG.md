@@ -579,3 +579,98 @@ return True
 **Change size:** 1 line added.
 
 ---
+## FEATURE — `SENSEHandlerDaemon`: register a ready circuit with the RTMon addon
+
+**Date:** 2026-10-19
+**Repo:** `rucio-sense-dmm`
+**Files:**
+- `src/dmm/core/sense.py`
+- `src/dmm/daemons/sense/handler.py`
+- `src/dmm/models/request.py`
+- `dmm.cfg.sample`
+**Status:** Implemented, not deployed. Needs `[rtmon] deployment` set (see caveats)
+
+### Problem
+
+A SENSE path DMM provisions is only monitored by RTMon if someone separately
+registers the instance with SENSE-O's RTMon addon, which the portal only offers
+as a one-click action and DMM never did. Every circuit DMM brought up was
+therefore unmonitored by default until an operator left DMM to do it by hand.
+
+### What
+
+When `SENSEHandlerDaemon` first sees a request reach a READY circuit state
+(CREATE - READY / MODIFY - READY / REINSTATE - READY), it asks SENSE-O to
+register the instance with RTMon — once, per circuit. This is the server-side
+`PUT /addon/RTMon/instance/{si_uuid}` (`AddonResource` →
+`RTMonService.manageInstanceRegistration` → `registerDeployment`), which grants
+the addon's delegate user READ ACL on the instance and queues an
+`RTMonInstanceTask` for the RTMon deployment to pick up on its next poll.
+
+```
+handler.py run_once
+    rtmon_cache = {}                         # per cycle, outside the request loop
+    ...
+    if is_circuit_active(status):            # own statement, after the transition chain
+        self._enable_rtmon_if_needed(req, session, rtmon_cache)
+
+_enable_rtmon_if_needed
+    guards on req.rtmon_enabled (once per circuit)
+    deployment = self._rtmon_deployment(cache)   # resolved once per cycle
+    enable_rtmon(sense_uuid, deployment)         # PUT /addon/RTMon/instance/{uuid}
+    req.set_rtmon_enabled(True, session)
+
+rtmon_deployment                             # core/sense.py
+    [rtmon] deployment if set
+    else GET /addon/RTMon, used only if it returns exactly one name
+    else raise AmbiguousRTMonDeployment / return None
+```
+
+`rtmon_enabled` is a new nullable column on `request`; `sync_columns()` in
+`db/__init__.py` adds it on startup, no hand migration.
+
+### Why the enable is not placed in the status chain
+
+`run_once` has an `if`/`elif` chain over circuit transitions whose third branch
+is keyed on `is_ready_for_modify(status)`. That predicate and
+`is_circuit_active(status)` return the identical set
+(`{CREATE_READY, MODIFY_READY, REINSTATE_READY}`), so an `if is_circuit_active`
+placed in the chain shadows it: the STALE to PROVISIONED modify confirmation
+becomes unreachable and a modified request sits in STALE until `check_stall`
+escalates it. The enable is a standalone statement after the chain for that
+reason.
+
+### Why an ambiguous deployment list is not resolved by order
+
+Registering grants the deployment's delegate user READ ACL on the instance, so
+the name matters. `GET /addon/RTMon` on `sense-o.es.net` returns five
+(verified 2026-10-20):
+
+```
+['Real Time Mon', 'Real Time Mon - Justas-Local',
+ 'Real Time Mon - Sunami-Image-Server-Latest',
+ 'Real Time Mon - Sunami-Image-Server-vJan', 'Sunami-Image-Server-vJan']
+```
+
+Taking the first would hand circuits to whichever name sorts first and grant
+that deployment's delegate READ on every instance DMM provisions. Unconfigured,
+the fallback therefore only acts when exactly one deployment is registered;
+with several it raises `AmbiguousRTMonDeployment`, which the handler logs once
+per cycle. Operators on a multi-deployment orchestrator must set
+`[rtmon] deployment`.
+
+### Caveats
+
+- The PUT succeeds even when the addon is not enabled; what it needs is a
+  *registered deployment* on the orchestrator. With nothing registered and
+  nothing configured, the handler skips with a warning instead of sending a
+  task that nothing would consume.
+- The enable is fire-and-forget by design: SENSE-O's registration is
+  asynchronous (task, RTMon poll, callback URL), so a success here means the
+  task was accepted, not that a dashboard exists.
+- The deployed DMM in ns `ucsd-rucio` talks to `sense-o.es.net`, where
+  `Real Time Mon` is registered, so this needs `[rtmon] deployment` set in the
+  live config to do anything. Pointing a `sense-rtmon` at other orchestrators
+  is tracked separately in sense-iop #79.
+
+**Change size:** 3 files + config sample.

@@ -17,6 +17,17 @@ profile_uuid=
 sense_keep_alive_seconds=60
 finished_r_hold_seconds=120
 
+[rtmon]
+; The RTMon deployment to register each ready circuit with, named exactly as
+; SENSE-O has it. GET /addon/RTMon lists them; on sense-o.es.net that is
+; "Real Time Mon" alongside several local and image-server deployments.
+; When unset, DMM asks the orchestrator and uses the answer only if exactly one
+; deployment is registered. With several it logs them and enables nothing,
+; because registering grants that deployment's delegate user READ on the
+; instance and the choice is not DMM's to guess. Set this on any orchestrator
+; with more than one.
+; deployment = Real Time Mon
+
 [decider]
 ; Skip raising a live circuit's bandwidth by less than this fraction of what it
 ; has now; each change costs a SENSE modify. Decreases are never skipped.

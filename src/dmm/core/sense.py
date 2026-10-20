@@ -12,11 +12,21 @@ import re
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 from sense.client.discover_api import DiscoverApi
 from dmm.models.request import SenseCircuitStatus
+from dmm.core.config import config_get
 
 class StagingError(ValueError):
     def __init__(self, message, sense_uuid=None):
         super().__init__(message)
         self.sense_uuid = sense_uuid
+
+class AmbiguousRTMonDeployment(ValueError):
+    """More than one RTMon deployment is registered and none is configured."""
+    def __init__(self, names):
+        super().__init__(
+            f"{len(names)} RTMon deployments are registered with SENSE-O ({', '.join(names)}); "
+            "set [rtmon] deployment to pick one"
+        )
+        self.names = names
 
 def _good_response(response):
     """Check if SENSE API response is valid (no errors)."""
@@ -85,6 +95,78 @@ def get_last_state(sense_uuid):
         if instance.get("referenceUUID") == sense_uuid:
             return instance.get("lastState")
     return None
+
+def get_rtmon_deployments():
+    """
+    The deployment names registered with SENSE-O's RTMon addon.
+
+    GET /addon/RTMon enumerates every deployment that has registered RTMon
+    metadata with this orchestrator, e.g. ["Real Time Mon"]. Empty when the
+    addon has nothing registered - the orchestrator may not have one enabled,
+    or no RTMon deployment polls it yet. Names are not stable across
+    orchestrators, so callers should resolve against this rather than assume.
+    """
+    workflow_api = WorkflowCombinedApi()
+    response = workflow_api.client.request("GET", "/addon/RTMon")
+    logging.debug(f"SENSE RTMon deployments: {json.dumps(response, default=str)}")
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except ValueError:
+            return []
+    if not isinstance(response, list):
+        return []
+    names = [d for d in response if isinstance(d, str) and d]
+    logging.debug(f"SENSE RTMon deployment names: {names}")
+    return names
+
+def rtmon_deployment():
+    """
+    The deployment name to register a circuit with: the config value if set,
+    otherwise the orchestrator's one registered deployment.
+
+    The config option exists because the registered list can be empty (no RTMon
+    deployment polling this orchestrator yet, addon just not enabled) while the
+    operator still wants a known name sent. The fallback always consults the
+    orchestrator, per sense-iop #79: deployment names are not hardcodable.
+
+    An orchestrator can have several deployments registered - sense-o.es.net
+    has five, most of them someone's local or image-server instance. Registering
+    grants that deployment's delegate user READ on the instance, so picking one
+    by list order would hand a circuit to whichever happened to sort first.
+    Ambiguity is returned to the caller to report, not guessed at: name the
+    deployment in [rtmon] deployment.
+    """
+    configured = config_get("rtmon", "deployment", default=None)
+    if configured:
+        return configured
+    names = get_rtmon_deployments()
+    if len(names) == 1:
+        return names[0]
+    if names:
+        raise AmbiguousRTMonDeployment(names)
+    return None
+
+def enable_rtmon(sense_uuid, deployment):
+    """
+    Ask SENSE-O to register a circuit with its RTMon addon, once the circuit is
+    up (CREATE - READY).
+
+    PUT /addon/RTMon/instance/{si_uuid} with {"deployment": name} is the enable.
+    Server side (RTMonService.manageInstanceRegistration) grants the addon's
+    delegate user READ on the instance and submits an RTMonInstanceTask, which
+    the RTMon deployment picks up on its next poll. It is idempotent: re-sending
+    cancels any pending task for the same instance/deployment first.
+
+    The addon does not have to be enabled for this call to succeed - the enable
+    is how it gets enabled. What it needs to be effective, and this function
+    cannot check, is a registered deployment name (see get_rtmon_deployments).
+    """
+    workflow_api = WorkflowCombinedApi()
+    body = json.dumps({"deployment": deployment})
+    response = workflow_api.client.request("PUT", f"/addon/RTMon/instance/{sense_uuid}", body_params=body)
+    logging.info(f"Enabled RTMon for SENSE instance {sense_uuid} ({deployment})")
+    return response
 
 def verify_instance(sense_uuid):
     """
