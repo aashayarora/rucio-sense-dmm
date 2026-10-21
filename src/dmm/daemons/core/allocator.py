@@ -15,12 +15,39 @@ from dmm.core.allocation import (
 )
 from dmm.core.sense import is_circuit_active
 
+# Statuses that mean a request is actively using its endpoints.
+_ACTIVE_STATUSES = {
+    RequestStatus.ALLOCATED,
+    RequestStatus.RETRY,
+    RequestStatus.STAGED,
+    RequestStatus.DECIDED,
+    RequestStatus.PROVISIONED,
+    RequestStatus.STALE,
+    RequestStatus.MODIFIED,
+    RequestStatus.FINISHED,
+}
+
 class AllocatorDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
         
     def process(self, **kwargs):
         self.run_once(**kwargs)
+
+    @staticmethod
+    def _is_orphan(endpoint, session) -> bool:
+        """Return True if no active request is currently holding this endpoint.
+
+        is_allocated=True with no live request behind it is a stale flag left
+        by a prior run whose cleanup path didn't complete (e.g. cancel_link()
+        threw before release_endpoints_and_addresses() was reached).  It is
+        safe to clear the flag and reuse the endpoint.
+        """
+        holders = Request.get_by_status(statuses=list(_ACTIVE_STATUSES), session=session)
+        for req in holders:
+            if req.src_endpoint_ == endpoint.id or req.dst_endpoint_ == endpoint.id:
+                return False
+        return True
 
     @databased
     def run_once(self, session=None):
@@ -169,9 +196,23 @@ class AllocatorDaemon(DaemonBase):
                 )
 
             if src_endpoint.is_allocated:
-                raise ValueError(f"Source endpoint {free_src_ipv6} is already in use")
+                if self._is_orphan(src_endpoint, session):
+                    logging.warning(
+                        f"Source endpoint {free_src_ipv6} has stale is_allocated=True with no "
+                        "active request — resetting orphan flag and proceeding with allocation"
+                    )
+                    src_endpoint.set_allocated(is_allocated=False, session=session)
+                else:
+                    raise ValueError(f"Source endpoint {free_src_ipv6} is already in use")
             if dst_endpoint.is_allocated:
-                raise ValueError(f"Destination endpoint {free_dst_ipv6} is already in use")
+                if self._is_orphan(dst_endpoint, session):
+                    logging.warning(
+                        f"Destination endpoint {free_dst_ipv6} has stale is_allocated=True with no "
+                        "active request — resetting orphan flag and proceeding with allocation"
+                    )
+                    dst_endpoint.set_allocated(is_allocated=False, session=session)
+                else:
+                    raise ValueError(f"Destination endpoint {free_dst_ipv6} is already in use")
 
             src_endpoint.set_allocated(is_allocated=True, session=session)
             dst_endpoint.set_allocated(is_allocated=True, session=session)
