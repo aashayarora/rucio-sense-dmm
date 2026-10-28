@@ -24,6 +24,12 @@ RM_UNREACHABLE = "rm_unreachable"
 # The path could not be compiled for lack of bandwidth, VLANs or subnets. Often
 # an old instance still holds them, which starting over cleans up, so one retry.
 NO_RESOURCES = "no_resources"
+# Refined sub-kinds of NO_RESOURCES, written into failure_reason after the
+# local model probe runs. triage() still returns NO_RESOURCES; these constants
+# are used only in stager._probe_path_on_no_resources() and in RECOMMENDATIONS.
+NO_CAPACITY = "no_capacity"    # topology joined but bottleneck is out of free Mbps
+NO_VLANS = "no_vlans"          # topology joined at zero rate but no VLAN id is free
+NO_TOPOLOGY = "no_topology"    # endpoints not joined in the model at all
 # SENSE-O no longer knows the instance.
 INSTANCE_GONE = "instance_gone"
 # A circuit reached a FAILED state while DMM was watching it.
@@ -64,6 +70,9 @@ _HTTP_CODE = re.compile(r"returned code (\d{3})|\((\d{3})\) reason")
 RECOMMENDATIONS = {
     RM_UNREACHABLE: "check the site RM named in the error is up and reachable from SENSE-O",
     NO_RESOURCES: "look for stale SENSE instances holding bandwidth, VLANs or subnets on this path and cancel them",
+    NO_CAPACITY:  "free bandwidth on the bottleneck port (cancel stale SENSE instances holding it, or provision hardware)",
+    NO_VLANS:     "free a VLAN id on the blocked cable (cancel stale SENSE instances holding VLANs on this path)",
+    NO_TOPOLOGY:  "check that the site RM for the missing domain is running and publishing its topology to SENSE-O",
     INSTANCE_GONE: "check SENSE-O for the instance; DMM no longer finds it",
     CIRCUIT_FAILED: "check the instance's failure in SENSE-O and the site RMs on its path",
     AUTH: "renew DMM's SENSE-O credentials",
