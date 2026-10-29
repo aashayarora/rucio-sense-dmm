@@ -96,7 +96,7 @@ def allocate_address(pool_site, alloc_name):
         Allocated IPv6 address string
 
     Raises:
-        Exception: If allocation fails
+        RuntimeError: If allocation fails, with pool name and rule_id in the message
     """
     address_api = AddressApi()
     pool_name = subnet_pool_name(pool_site)
@@ -115,7 +115,10 @@ def allocate_address(pool_site, alloc_name):
                 f"allocate_address cleanup failed for pool={pool_name}, alloc_name={alloc_name}: {cleanup_err}",
                 exc_info=True,
             )
-        raise
+        raise RuntimeError(
+            f"SENSE-O address allocation failed for pool {pool_name} "
+            f"(rule_id={alloc_name}): {e}"
+        ) from e
 
 def free_address(pool_site, alloc_name):
     """
