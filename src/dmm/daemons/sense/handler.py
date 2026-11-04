@@ -4,7 +4,7 @@ from math import floor
 
 from dmm.core.config import config_get_bool, config_get_int
 from dmm.core.recovery import CREATE, attempt_due, check_stall, escalate, reset_circuit
-from dmm.core.sense_triage import ESCALATE, backoff_seconds, triage
+from dmm.core.sense_triage import ESCALATE, backoff_seconds, triage, http_code
 from dmm.daemons.base import DaemonBase
 from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
@@ -126,6 +126,14 @@ class SENSEHandlerDaemon(DaemonBase):
         discarded. That includes a request holding the uuid of an instance its
         staging failed on: only a successful staging records the available bandwidth.
 
+        Discard failures are handled in two ways:
+          - HTTP 400: SENSE-O structurally prohibits the delete (e.g. non-admin
+            credential cannot delete an instance in CREATE - FAILED). Escalates and
+            marks FAILED immediately — retrying cannot fix this.
+          - Other errors: counted toward sense_retries so the retry budget drains.
+            Once the budget is exhausted the request is failed and escalated; it
+            cannot loop silently forever.
+
         Returns True if the request went back to DECIDED, so its status is polled now.
         """
         result = triage(req.failure_reason)
@@ -161,7 +169,37 @@ class SENSEHandlerDaemon(DaemonBase):
                 try:
                     discard_instance(req.sense_uuid, status)
                 except Exception as e:
-                    logging.error(f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: {e}, will retry next cycle")
+                    # Fix 2: HTTP 400 means SENSE-O structurally prohibits this delete
+                    # (e.g. "Non-admin users cannot delete instance in its current state").
+                    # Retrying will never fix it — escalate immediately.
+                    if http_code(e) == 400:
+                        reason = f"SENSE-O refused discard with HTTP 400 (non-admin or bad state): {e}"
+                        logging.error(
+                            f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
+                            f"{e} — escalating immediately (HTTP 400 is not retryable)"
+                        )
+                        escalate(req, CREATE, "sense_error", reason, session)
+                        req.mark_failed(reason, session=session)
+                        release_endpoints_and_addresses(req, session)
+                        return False
+                    # Fix 1: count this failure toward the retry budget so the request
+                    # cannot loop forever when discard fails for other transient reasons.
+                    req.increment_sense_retries(session=session)
+                    retries = req.sense_retries or 0
+                    if retries >= result.max_retries:
+                        reason = f"Discard of SENSE instance {req.sense_uuid} failed {retries} time(s), giving up: {e}"
+                        logging.error(
+                            f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
+                            f"{e} — retry budget exhausted ({retries}/{result.max_retries}), marking as FAILED"
+                        )
+                        escalate(req, CREATE, result.kind, reason, session)
+                        req.mark_failed(reason, session=session)
+                        release_endpoints_and_addresses(req, session)
+                        return False
+                    logging.error(
+                        f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
+                        f"{e} — will retry next cycle ({retries}/{result.max_retries})"
+                    )
                     return False
                 logging.info(f"Discarded SENSE instance {req.sense_uuid} ({status}) of {req.rule_id}, restaging")
                 reset_circuit(req, session)
