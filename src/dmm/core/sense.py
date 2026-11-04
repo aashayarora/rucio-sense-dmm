@@ -180,6 +180,18 @@ def verify_instance(sense_uuid):
     logging.debug(f"SENSE verify response for {sense_uuid}: {json.dumps(response, default=str)}")
     return response
 
+def is_delete_refused(error):
+    """
+    Whether SENSE-O refused a delete because of the instance's state.
+
+    DMM's account is not a SENSE-O admin, and since 2026-11-03 SENSE-O lets a
+    non-admin delete an instance only once it has been cancelled (CANCEL -
+    READY). Before that the client's fallback (DELETE /service/<uuid>) still
+    deleted any instance. One that only compiled now can't be deleted by DMM at
+    all, and one being cancelled not until the cancel completes.
+    """
+    return "non-admin users cannot delete instance" in str(error).lower()
+
 def discard_instance(sense_uuid, status):
     """
     Remove an instance that cannot be recovered, so the request can start over.
@@ -404,6 +416,66 @@ def parse_circuit_vlans(response, src_uri, dst_uri, src_site_uri=None, dst_site_
         vlans.append(vlan)
     return tuple(vlans)
 
+# Every switch port an instance's circuit crosses, as SENSE-O's RTMon addon asks
+# for it (sense-rtmon SenseAPI.s_getManifest), without the host and address parts.
+# ?node_name? is the node's nml:name, which SiteRM sets to "<sitename>:<hostname>",
+# the same two labels it puts on interface_statistics.
+_PATH_MANIFEST = {
+    "Ports": [
+        {
+            "Port": "?terminal?",
+            "Name": "?port_name?",
+            "Vlan": "?vlan?",
+            "Node": "?node_name?",
+            "sparql": "SELECT DISTINCT  ?vlan_port  ?vlan  WHERE { ?subnet a mrs:SwitchingSubnet. ?subnet nml:hasBidirectionalPort ?vlan_port. ?vlan_port nml:hasLabel ?vlan_l. ?vlan_l nml:value ?vlan. }",
+            "sparql-ext": 'SELECT DISTINCT ?terminal ?port_name ?node_name WHERE { { ?node a nml:Node. ?node nml:name ?node_name. ?node nml:hasBidirectionalPort ?terminal. ?terminal nml:hasBidirectionalPort ?vlan_port. OPTIONAL { ?terminal mrs:hasNetworkAddress ?na_pn. ?na_pn mrs:type "sense-rtmon:name". ?na_pn mrs:value ?port_name. } } UNION { ?site a nml:Topology. ?site nml:name ?node_name. ?site nml:hasBidirectionalPort ?terminal. ?terminal nml:hasBidirectionalPort ?vlan_port. OPTIONAL { ?terminal mrs:hasNetworkAddress ?na_pn. ?na_pn mrs:type "sense-rtmon:name". ?na_pn mrs:value ?port_name. } } }',
+            "required": "true",
+        }
+    ]
+}
+
+
+def get_circuit_path(sense_uuid):
+    """
+    Every switch the instance's circuit crosses, with the VLAN it has there.
+
+    Raises when SENSE-O doesn't answer; see parse_circuit_path for the result.
+    """
+    workflow_api = WorkflowCombinedApi()
+    workflow_api.si_uuid = sense_uuid
+    response = workflow_api.manifest_create(json.dumps(_PATH_MANIFEST))
+    logging.debug(f"SENSE path manifest for {sense_uuid}: {json.dumps(response, default=str)}")
+    return parse_circuit_path(response)
+
+
+def parse_circuit_path(response):
+    """
+    The hops in a path manifest, as [{"site", "host", "vlan"}] in manifest order.
+
+    One entry per switch and VLAN: a switch the circuit enters and leaves on the
+    same tag lists two ports, but its VLAN interface counts the circuit once.
+    Ports are not kept, because a trunk port's counters carry every VLAN on it.
+    Nodes without a "<site>:<host>" name are left out - NSI domains such as ESnet
+    name the whole network, and their counters are not in SiteRM's Prometheus.
+    """
+    template = response.get("jsonTemplate") if isinstance(response, dict) else response
+    if not template:
+        return []
+    if isinstance(template, str):
+        template = json.loads(template)
+    hops = []
+    for port in template.get("Ports") or []:
+        if not isinstance(port, dict):
+            continue
+        site, _, host = str(port.get("Node") or "").partition(":")
+        vlan = str(port.get("Vlan") or "")
+        if not site or not host or site.startswith("?") or not vlan.isdigit():
+            continue
+        hop = {"site": site, "host": host, "vlan": int(vlan)}
+        if hop not in hops:
+            hops.append(hop)
+    return hops
+
 def provision_link(sense_uuid, profile_uuid, bandwidth_mbps, src_site, dst_site, 
                    src_ip_range, dst_ip_range, vlan_range, rule_id):
     """
@@ -599,6 +671,10 @@ def is_being_cancelled(status):
         SenseCircuitStatus.CANCEL_COMMITTING.value,
         SenseCircuitStatus.CANCEL_COMMITTED.value
     }
+
+def is_cancel_phase(status):
+    """Whether a cancel has been sent for the instance, whatever came of it since."""
+    return bool(status) and status.startswith("CANCEL - ")
 
 def is_being_modified(status):
     """Check if instance is currently being modified."""

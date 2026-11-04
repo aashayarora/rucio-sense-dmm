@@ -19,6 +19,7 @@ from dmm.core.sense import (
     is_being_modified,
     is_modify_failed,
     is_create_compiled,
+    is_cancel_phase,
 )
 
 class SENSEModifierDaemon(DaemonBase):
@@ -96,6 +97,13 @@ class SENSEModifierDaemon(DaemonBase):
                         "sense_retries": 0,
                         "transfer_status": RequestStatus.ALLOCATED,
                     }, session=session)
+                    continue
+
+                if is_cancel_phase(status):
+                    # Only a hard modify cancels a STALE request's circuit. SENSE-O
+                    # lets DMM delete the circuit once the cancel completes; carry
+                    # the rebuild on until then.
+                    hard_modify(req, status, f"rebuilding after cancel ({status})", session)
                     continue
 
                 if is_modify_failed(status):

@@ -6,7 +6,13 @@ from dmm.db.session import databased
 from dmm.models.request import Request, RequestStatus
 
 from dmm.core.recovery import retry_cancel
-from dmm.core.sense import delete_instance, is_cancel_failed, is_cancel_ready, is_create_compiled
+from dmm.core.sense import (
+    delete_instance,
+    is_cancel_failed,
+    is_cancel_ready,
+    is_create_compiled,
+    is_delete_refused,
+)
 
 class SENSEDeleterDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -48,7 +54,20 @@ class SENSEDeleterDaemon(DaemonBase):
                     continue
                     
                 logging.info(f"Deleting SENSE instance {req.sense_uuid} for request {req.rule_id}")
-                delete_instance(req.sense_uuid)
+                try:
+                    delete_instance(req.sense_uuid)
+                except Exception as e:
+                    # SENSE-O lets DMM delete only a cancelled instance, and one that
+                    # only compiled never is. It holds nothing at the sites, so
+                    # retrying every cycle would only repeat the refusal.
+                    if not (is_create_compiled(status) and is_delete_refused(e)):
+                        raise
+                    logging.warning(
+                        f"SENSE-O won't let DMM delete instance {req.sense_uuid} ({status}) of {req.rule_id}; "
+                        f"it was never provisioned, so it is left for a SENSE-O admin to remove"
+                    )
+                    req.set_status(status=RequestStatus.DELETED, session=session)
+                    continue
                 req.set_status(status=RequestStatus.DELETED, session=session)
                 logging.info(f"Successfully deleted SENSE instance for request {req.rule_id}")
                 
