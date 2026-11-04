@@ -949,7 +949,8 @@ async def liveness_check():
 
 @api.get("/health")
 async def health_check():
-    """Readiness: database reachable, sites known, daemons completing cycles.
+    """Readiness: database reachable, sites known, Rucio answering, daemons
+    completing cycles.
 
     Deliberately not @databased. That decorator commits on the way out and
     re-raises, which would turn an unreachable database into a 500 rather than

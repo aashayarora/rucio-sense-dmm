@@ -4,7 +4,7 @@ from dmm.daemons.base import DaemonBase
 from dmm.models.request import Request, RequestStatus
 from dmm.db.session import databased
 
-from dmm.core.rucio import get_rule_priority
+from dmm.core.rucio import get_rule_priority, rucio_unreachable
 
 from rucio.common.exception import RuleNotFound
 
@@ -14,6 +14,9 @@ class RucioModifierDaemon(DaemonBase):
 
     def process(self, **kwargs):
         self.run_once(**kwargs)
+
+    def waiting_for(self):
+        return "rucio" if rucio_unreachable(self.kwargs.get("client")) else None
 
     @databased
     def run_once(self, client=None, session=None):

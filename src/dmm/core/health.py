@@ -23,10 +23,10 @@ def _path(daemon):
     return os.path.join(HEARTBEAT_DIR, daemon)
 
 
-def write_heartbeat(daemon, frequency, started, last_success, running):
+def write_heartbeat(daemon, frequency, started, last_success, running, **extra):
     """
-    Publish one daemon's liveness. Never raises — a daemon must not die because
-    its heartbeat could not be written.
+    Publish one daemon's liveness, and anything in `extra` beside it. Never
+    raises — a daemon must not die because its heartbeat could not be written.
     """
     try:
         os.makedirs(HEARTBEAT_DIR, exist_ok=True)
@@ -35,6 +35,7 @@ def write_heartbeat(daemon, frequency, started, last_success, running):
             "started": started,
             "last_success": last_success,
             "running": bool(running),
+            **extra,
         })
         # Written to a side file and renamed so a reader mid-write sees the
         # previous heartbeat rather than half of this one.
@@ -92,6 +93,10 @@ def _classify(heartbeat, now):
         return "disabled", None
     if not heartbeat.get("running"):
         return "stopped", None
+    # Held back by something with a check of its own. Staleness would only
+    # repeat that check's verdict under every daemon that waits on it.
+    if heartbeat.get("waiting_for"):
+        return "waiting", None
 
     # Until the first cycle lands there is nothing to measure staleness from
     # except the start, which is what keeps a slow first cycle from reading as a
@@ -108,10 +113,11 @@ def _classify(heartbeat, now):
 UNHEALTHY_STATES = ("stopped", "stale")
 
 
-def daemon_report(now=None):
+def daemon_report(now=None, heartbeats=None):
     now = now if now is not None else time()
+    heartbeats = heartbeats if heartbeats is not None else read_heartbeats()
     report = []
-    for daemon, heartbeat in sorted(read_heartbeats().items()):
+    for daemon, heartbeat in sorted(heartbeats.items()):
         state, age = _classify(heartbeat, now)
         entry = {
             "daemon": daemon,
@@ -120,8 +126,26 @@ def daemon_report(now=None):
         }
         if age is not None:
             entry["seconds_since_success"] = round(age, 1)
+        if heartbeat.get("waiting_for"):
+            entry["waiting_for"] = heartbeat["waiting_for"]
         report.append(entry)
     return report
+
+
+def rucio_check(heartbeats, now):
+    """
+    Whether Rucio answered RucioHeartbeatDaemon's last probe, or None when that
+    daemon has published nothing about it.
+    """
+    rucio = heartbeats.get("RucioHeartbeatDaemon", {}).get("rucio")
+    if rucio is None:
+        return None
+    if rucio.get("reachable"):
+        return {"check": "rucio", "ok": True, "detail": None}
+    check = {"check": "rucio", "ok": False, "detail": rucio.get("error") or "unreachable"}
+    if rucio.get("unreachable_since"):
+        check["seconds_unreachable"] = round(now - rucio["unreachable_since"], 1)
+    return check
 
 
 def health_report(site_count=None, database_error=None, now=None):
@@ -130,7 +154,9 @@ def health_report(site_count=None, database_error=None, now=None):
     rather than queried here so this module stays free of database imports and
     stays testable without one.
     """
-    daemons = daemon_report(now=now)
+    now = now if now is not None else time()
+    heartbeats = read_heartbeats()
+    daemons = daemon_report(now=now, heartbeats=heartbeats)
     checks = []
 
     if database_error is not None:
@@ -149,6 +175,10 @@ def health_report(site_count=None, database_error=None, now=None):
             "sites": site_count,
             "detail": None if site_count else "no sites known; every Rucio rule will fail",
         })
+
+    rucio = rucio_check(heartbeats, now)
+    if rucio is not None:
+        checks.append(rucio)
 
     if not daemons:
         checks.append({

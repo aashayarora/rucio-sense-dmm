@@ -6,8 +6,8 @@ import threading
 import multiprocessing
 import uvicorn
 
-from rucio.client import Client
 from dmm.core.config import config_get, config_get_int
+from dmm.core.rucio import RucioConnection
 from dmm import follow_log_file_in_child
 from dmm.db.session import get_engine
 from dmm.core.health import reset_heartbeats
@@ -19,6 +19,7 @@ from dmm.daemons.core.sites import RefreshSiteDBDaemon
 from dmm.daemons.rucio.initializer import RucioInitDaemon
 from dmm.daemons.rucio.modifier import RucioModifierDaemon
 from dmm.daemons.rucio.finisher import RucioFinisherDaemon
+from dmm.daemons.rucio.heartbeat import RucioHeartbeatDaemon
 
 from dmm.daemons.fts.modifier import FTSModifierDaemon
 from dmm.daemons.fts.monitor import FTSMonitorDaemon
@@ -49,16 +50,18 @@ class DMM:
         self.monit_frequency = config_get_int("daemons", "monit", default=60, constraint="nonneg")
         self.sites_frequency = config_get_int("daemons", "db", default=7200, constraint="nonneg")
         self.fts_frequency = config_get_int("daemons", "fts", default=60)
+        # Not optional: daemons that need Rucio wait on its answer, and with
+        # nothing asking they would wait forever after one failed check.
+        self.rucio_heartbeat_frequency = config_get_int("daemons", "rucio_heartbeat", default=60, constraint="pos")
 
         self.lock = threading.Lock()
         self.running = True
         self.threads = []
 
-        try:
-            self.rucio_client = Client()
-        except Exception as e:
-            logging.error(f"Failed to initialize Rucio client: {e}")
-            raise ConnectionError("Failed to initialize Rucio client, exiting...")
+        # Connects on first use, so DMM starts whether or not Rucio is up.
+        self.rucio_client = RucioConnection(
+            probe_timeout=config_get_int("rucio", "heartbeat_timeout", default=30, constraint="pos"),
+        )
     
     @staticmethod
     def run_server(port):
@@ -98,13 +101,21 @@ class DMM:
         
         logging.info("Initializing site database - this must complete before other daemons start")
         sitedb = RefreshSiteDBDaemon(frequency=self.sites_frequency, kwargs={"client": self.rucio_client})
-        try:
-            sitedb.run_once(client=self.rucio_client, session=None)
-            logging.info("Site database initialization completed successfully")
-        except Exception as e:
-            logging.error(f"Failed to initialize site database: {e}", exc_info=True)
-            logging.warning("Continuing with daemon startup, but some daemons may fail without site data")
-        
+        if not self.rucio_client.check():
+            logging.warning("Starting without Rucio; the site database is initialized once it answers")
+        else:
+            try:
+                sitedb.run_once(client=self.rucio_client, session=None)
+                logging.info("Site database initialization completed successfully")
+            except Exception as e:
+                logging.error(f"Failed to initialize site database: {e}", exc_info=True)
+                logging.warning("Continuing with daemon startup, but some daemons may fail without site data")
+
+        rucio_heartbeat = RucioHeartbeatDaemon(frequency=self.rucio_heartbeat_frequency, kwargs={"client": self.rucio_client})
+        thread = rucio_heartbeat.start(threading.Lock())
+        if thread:
+            self.threads.append(thread)
+
         allocator = AllocatorDaemon(frequency=self.dmm_frequency)
         decider = DeciderDaemon(frequency=self.dmm_frequency)
 
