@@ -97,6 +97,8 @@ def request_to_dict(req, detail: bool = True) -> dict:
         data["sense_src_uri"] = req.sense_src_uri
         data["sense_dst_uri"] = req.sense_dst_uri
         data["circuit_vlans"] = {"src": req.src_vlan, "dst": req.dst_vlan}
+        path = req.circuit_path or {}
+        data["circuit_path"] = path.get("hops") if path.get("sense_uuid") == req.sense_uuid else None
         data["fts_jobs"] = req.fts_jobs
         data["sense_alloc_rule_id"] = req.sense_alloc_rule_id
         data["src_pool_site"] = req.src_pool_site
