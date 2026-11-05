@@ -26,6 +26,7 @@ class DeciderDaemon(DaemonBase):
     
     @databased
     def run_once(self, session=None):
+        self._record_pair_available(session)
         multi_graph = self._build_multi_graph(session)
         
         if not multi_graph.nodes:
@@ -76,23 +77,64 @@ class DeciderDaemon(DaemonBase):
                 continue
             self._add_site_node(multi_graph, req.src_site.name, link_capacity_mbps)
             self._add_site_node(multi_graph, req.dst_site.name, link_capacity_mbps)
-            # available_bandwidth_mbps comes from SENSE-O's total-block-maximum-bandwidth
-            # query at staging time and reflects live headroom after all existing
-            # reservations. Fall back to link_capacity when it is absent (e.g. FINISHED
-            # fixed reservations that were never re-staged, or pre-existing rows that
-            # predate the field).
-            avail_bw = req.available_bandwidth_mbps or link_capacity_mbps
+            # Without a pair_available (rows that predate it) a request adds its own
+            # available bandwidth, capped at the link, to what its pair may have.
+            max_bandwidth = link_capacity_mbps
+            if req.available_bandwidth_mbps is not None:
+                max_bandwidth = min(link_capacity_mbps, req.available_bandwidth_mbps)
             multi_graph.add_edge(
                 req.src_site.name, req.dst_site.name,
                 rule_id=req.rule_id,
                 priority=req.priority or 0,  # guard against None priority
                 bandwidth=req.allocated_bandwidth_mbps,
                 link_capacity=link_capacity_mbps,
-                available_bandwidth=avail_bw,
+                max_bandwidth=max_bandwidth,
+                pair_available=req.pair_available_mbps,
+                pair_available_at=req.pair_available_at,
                 fixed=is_fixed,
                 fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
             )
         return multi_graph
+
+    def _record_pair_available(self, session) -> None:
+        """
+        For each request staged since the last run, record what SENSE-O has free for
+        DMM on its site pair: the request's available bandwidth plus what DMM's
+        circuits on the pair hold.
+
+        SENSE-O's figure for a new rule is what its path has left after every circuit
+        on it, DMM's own included, and DMM shares a pair between its requests, so a
+        new rule adds its available bandwidth to what the pair already had. It adds
+        it to what DMM's circuits there hold, not to what they were offered: one not
+        up yet holds nothing, and SENSE-O reported its bandwidth as free again.
+        """
+        staged = [
+            r for r in Request.get_by_status(statuses=[RequestStatus.STAGED], session=session)
+            if r.available_bandwidth_mbps is not None and r.src_site_ and r.dst_site_
+        ]
+        if not staged:
+            return
+        holders = [
+            r for r in Request.get_by_status(
+                statuses=[RequestStatus.PROVISIONED, RequestStatus.STALE, RequestStatus.MODIFIED,
+                          RequestStatus.DECIDED, RequestStatus.FINISHED],
+                session=session, use_lock=False,
+            )
+            if self._holds_reservation(r)
+        ]
+        for req in staged:
+            pair = {req.src_site_, req.dst_site_}
+            held = sum(
+                self._held_on_sense(r) for r in holders
+                if r.rule_id != req.rule_id and r.sense_uuid != req.sense_uuid
+                and {r.src_site_, r.dst_site_} == pair
+            )
+            logging.info(
+                f"SENSE-O has {req.available_bandwidth_mbps + held:.0f} Mbps free for DMM on "
+                f"{req.src_site_}-{req.dst_site_}: {req.available_bandwidth_mbps:.0f} reported for "
+                f"{req.rule_id} + {held:.0f} held by DMM circuits on the pair"
+            )
+            req.set_pair_available(req.available_bandwidth_mbps + held, session=session)
 
     @staticmethod
     def _holds_reservation(req) -> bool:
@@ -134,27 +176,32 @@ class DeciderDaemon(DaemonBase):
             priority = 0 if data.get('fixed') else data['priority']
             fixed_bandwidth = data.get('fixed_bandwidth', 0)
             link_capacity = data['link_capacity']
-            available_bandwidth = data['available_bandwidth']
+            # Without a pair_available on the edge, its live requests' own available
+            # bandwidths added up; a finished reservation adds nothing.
+            max_bandwidth = 0 if data.get('fixed') else data.get('max_bandwidth', link_capacity)
+            pair_available, pair_available_at = data.get('pair_available'), data.get('pair_available_at')
             # What the edge's live requests hold now; NaN once any of them has
             # nothing decided yet, since there is then no allocation to keep.
             current = 0.0 if data.get('fixed') else (data['bandwidth'] if data['bandwidth'] is not None else np.nan)
             if simple_graph.has_edge(u, v):
-                simple_graph[u][v]['priority'] += priority
-                simple_graph[u][v]['fixed_bandwidth'] += fixed_bandwidth
-                simple_graph[u][v]['current'] += current
+                edge = simple_graph[u][v]
+                edge['priority'] += priority
+                edge['fixed_bandwidth'] += fixed_bandwidth
+                edge['current'] += current
+                edge['max_bandwidth'] += max_bandwidth
                 # The physical link capacity is fixed — take the max (not sum) so we
                 # don't artificially inflate the upper-bound constraint in the LP.
-                simple_graph[u][v]['link_capacity'] = max(
-                    simple_graph[u][v]['link_capacity'], link_capacity
-                )
-                # available_bandwidth is a live SENSE-O signal: take the min so the
-                # tightest constraint on the shared path wins.
-                simple_graph[u][v]['available_bandwidth'] = min(
-                    simple_graph[u][v]['available_bandwidth'], available_bandwidth
-                )
+                edge['link_capacity'] = max(edge['link_capacity'], link_capacity)
+                # The latest staging on the pair saw everything staged before it.
+                if pair_available is not None and (
+                    edge['pair_available_at'] is None or pair_available_at > edge['pair_available_at']
+                ):
+                    edge['pair_available'], edge['pair_available_at'] = pair_available, pair_available_at
             else:
                 simple_graph.add_edge(u, v, priority=priority, fixed_bandwidth=fixed_bandwidth,
-                                      link_capacity=link_capacity, available_bandwidth=available_bandwidth,
+                                      link_capacity=link_capacity, max_bandwidth=max_bandwidth,
+                                      pair_available=pair_available,
+                                      pair_available_at=pair_available_at if pair_available is not None else None,
                                       current=current)
 
         return simple_graph, list(simple_graph.nodes), list(simple_graph.edges(data=True))
@@ -181,12 +228,13 @@ class DeciderDaemon(DaemonBase):
             b[node_index[u]] -= data['fixed_bandwidth']
             b[node_index[v]] -= data['fixed_bandwidth']
 
-        # Cap the per-edge LP ceiling at available_bandwidth from SENSE-O staging.
-        # available_bandwidth reflects live headroom after all existing reservations;
-        # link_capacity is the static physical port speed. Using min() ensures we
-        # never ask SENSE to provision more than it actually has free.
+        # An edge carries no more than min(link_capacity, what SENSE-O has free for
+        # the pair) less finished reservations. pair_available counts those too (it
+        # adds back everything DMM held on the pair), so they come off both.
         edge_bounds = np.array(
-            [min(data['available_bandwidth'], data['link_capacity']) - data['fixed_bandwidth']
+            [min(data['link_capacity'], data['pair_available']) - data['fixed_bandwidth']
+             if data.get('pair_available') is not None
+             else min(data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth'])
              for _, _, data in edges], dtype=float
         )
 

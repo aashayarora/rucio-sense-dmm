@@ -697,6 +697,8 @@ _SENSE_STATE_RESET = {
     "fts_delete_retries": 0,
     "allocated_bandwidth_mbps": None,
     "available_bandwidth_mbps": None,
+    "pair_available_mbps": None,
+    "pair_available_at": None,
     "previous_bandwidth_mbps": None,
 }
 

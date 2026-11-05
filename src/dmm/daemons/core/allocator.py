@@ -132,6 +132,8 @@ class AllocatorDaemon(DaemonBase):
                     "dst_vlan": reused_dst_vlan,
                     "allocated_bandwidth_mbps": req_fin.allocated_bandwidth_mbps,
                     "available_bandwidth_mbps": req_fin.available_bandwidth_mbps,
+                    "pair_available_mbps": req_fin.pair_available_mbps,
+                    "pair_available_at": req_fin.pair_available_at,
                     "sense_circuit_status": req_fin.sense_circuit_status,
                     "sense_affiliated": req_fin.sense_affiliated,
                     "sense_alloc_rule_id": inherited_alloc_rule_id,

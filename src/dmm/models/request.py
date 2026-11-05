@@ -47,6 +47,10 @@ class Request(ModelBase, table=True):
     rule_size: Optional[float] = Field(default=None)
     modified_priority: Optional[int] = Field(default=None)
     available_bandwidth_mbps: Optional[float] = Field(default=None)  
+    # What SENSE-O had free for DMM on this request's site pair when it was staged:
+    # its own available bandwidth plus what DMM's circuits on the pair held then.
+    pair_available_mbps: Optional[float] = Field(default=None)
+    pair_available_at: Optional[datetime] = Field(default=None)
     allocated_bandwidth_mbps: Optional[float] = Field(default=None)  
     previous_bandwidth_mbps: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
@@ -264,6 +268,12 @@ class Request(ModelBase, table=True):
     def set_available_bandwidth(self, bandwidth_mbps: float, session=None):
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> available_bandwidth={bandwidth_mbps} Mbps")
         self.available_bandwidth_mbps = bandwidth_mbps
+        self.save(session)
+
+    def set_pair_available(self, bandwidth_mbps: float, session=None):
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> pair_available={bandwidth_mbps} Mbps")
+        self.pair_available_mbps = bandwidth_mbps
+        self.pair_available_at = utcnow()
         self.save(session)
 
     def set_sense_uuid(self, sense_uuid: str, session=None):

@@ -83,6 +83,8 @@ def reset_circuit(req, session, **extra):
         "sense_affiliated": False,
         "sense_provisioned_at": None,
         "available_bandwidth_mbps": None,
+        "pair_available_mbps": None,
+        "pair_available_at": None,
         "transfer_status": RequestStatus.ALLOCATED,
         **extra,
     }, session=session)

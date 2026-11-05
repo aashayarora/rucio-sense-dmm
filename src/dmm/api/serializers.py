@@ -71,6 +71,7 @@ def request_to_dict(req, detail: bool = True) -> dict:
         "bandwidth": {
             "allocated_mbps": req.allocated_bandwidth_mbps,
             "available_mbps": req.available_bandwidth_mbps,
+            "pair_available_mbps": req.pair_available_mbps,
             "previous_mbps": req.previous_bandwidth_mbps,
         },
         "fts": {
