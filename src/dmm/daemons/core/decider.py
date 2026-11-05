@@ -76,12 +76,19 @@ class DeciderDaemon(DaemonBase):
                 continue
             self._add_site_node(multi_graph, req.src_site.name, link_capacity_mbps)
             self._add_site_node(multi_graph, req.dst_site.name, link_capacity_mbps)
+            # available_bandwidth_mbps comes from SENSE-O's total-block-maximum-bandwidth
+            # query at staging time and reflects live headroom after all existing
+            # reservations. Fall back to link_capacity when it is absent (e.g. FINISHED
+            # fixed reservations that were never re-staged, or pre-existing rows that
+            # predate the field).
+            avail_bw = req.available_bandwidth_mbps or link_capacity_mbps
             multi_graph.add_edge(
                 req.src_site.name, req.dst_site.name,
                 rule_id=req.rule_id,
                 priority=req.priority or 0,  # guard against None priority
                 bandwidth=req.allocated_bandwidth_mbps,
                 link_capacity=link_capacity_mbps,
+                available_bandwidth=avail_bw,
                 fixed=is_fixed,
                 fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
             )
@@ -127,6 +134,7 @@ class DeciderDaemon(DaemonBase):
             priority = 0 if data.get('fixed') else data['priority']
             fixed_bandwidth = data.get('fixed_bandwidth', 0)
             link_capacity = data['link_capacity']
+            available_bandwidth = data['available_bandwidth']
             # What the edge's live requests hold now; NaN once any of them has
             # nothing decided yet, since there is then no allocation to keep.
             current = 0.0 if data.get('fixed') else (data['bandwidth'] if data['bandwidth'] is not None else np.nan)
@@ -139,9 +147,15 @@ class DeciderDaemon(DaemonBase):
                 simple_graph[u][v]['link_capacity'] = max(
                     simple_graph[u][v]['link_capacity'], link_capacity
                 )
+                # available_bandwidth is a live SENSE-O signal: take the min so the
+                # tightest constraint on the shared path wins.
+                simple_graph[u][v]['available_bandwidth'] = min(
+                    simple_graph[u][v]['available_bandwidth'], available_bandwidth
+                )
             else:
                 simple_graph.add_edge(u, v, priority=priority, fixed_bandwidth=fixed_bandwidth,
-                                      link_capacity=link_capacity, current=current)
+                                      link_capacity=link_capacity, available_bandwidth=available_bandwidth,
+                                      current=current)
 
         return simple_graph, list(simple_graph.nodes), list(simple_graph.edges(data=True))
 
@@ -167,8 +181,13 @@ class DeciderDaemon(DaemonBase):
             b[node_index[u]] -= data['fixed_bandwidth']
             b[node_index[v]] -= data['fixed_bandwidth']
 
+        # Cap the per-edge LP ceiling at available_bandwidth from SENSE-O staging.
+        # available_bandwidth reflects live headroom after all existing reservations;
+        # link_capacity is the static physical port speed. Using min() ensures we
+        # never ask SENSE to provision more than it actually has free.
         edge_bounds = np.array(
-            [data['link_capacity'] - data['fixed_bandwidth'] for _, _, data in edges], dtype=float
+            [min(data['available_bandwidth'], data['link_capacity']) - data['fixed_bandwidth']
+             for _, _, data in edges], dtype=float
         )
 
         A = np.vstack([A, np.eye(n_edges)])
