@@ -17,6 +17,10 @@ from dmm.core.sense import is_circuit_active, is_being_provisioned
 # it - flooring 99997 Mbps to 99000 turned search noise into SENSE modifies.
 _PRECISION_MBPS = 5
 
+
+def _whole_gbps(mbps):
+    return floor(mbps / 1000) * 1000
+
 class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
@@ -81,7 +85,7 @@ class DeciderDaemon(DaemonBase):
             # available bandwidth, capped at the link, to what its pair may have.
             max_bandwidth = link_capacity_mbps
             if req.available_bandwidth_mbps is not None:
-                max_bandwidth = min(link_capacity_mbps, req.available_bandwidth_mbps)
+                max_bandwidth = min(link_capacity_mbps, _whole_gbps(req.available_bandwidth_mbps))
             multi_graph.add_edge(
                 req.src_site.name, req.dst_site.name,
                 rule_id=req.rule_id,
@@ -130,8 +134,8 @@ class DeciderDaemon(DaemonBase):
                 and {r.src_site_, r.dst_site_} == pair
             )
             logging.info(
-                f"SENSE-O has {req.available_bandwidth_mbps + held:.0f} Mbps free for DMM on "
-                f"{req.src_site_}-{req.dst_site_}: {req.available_bandwidth_mbps:.0f} reported for "
+                f"SENSE-O has {req.available_bandwidth_mbps + held:.4f} Mbps free for DMM on "
+                f"{req.src_site_}-{req.dst_site_}: {req.available_bandwidth_mbps:.4f} reported for "
                 f"{req.rule_id} + {held:.0f} held by DMM circuits on the pair"
             )
             req.set_pair_available(req.available_bandwidth_mbps + held, session=session)
@@ -232,7 +236,7 @@ class DeciderDaemon(DaemonBase):
         # the pair) less finished reservations. pair_available counts those too (it
         # adds back everything DMM held on the pair), so they come off both.
         edge_bounds = np.array(
-            [min(data['link_capacity'], data['pair_available']) - data['fixed_bandwidth']
+            [min(data['link_capacity'], _whole_gbps(data['pair_available'])) - data['fixed_bandwidth']
              if data.get('pair_available') is not None
              else min(data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth'])
              for _, _, data in edges], dtype=float
