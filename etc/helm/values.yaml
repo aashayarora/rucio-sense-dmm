@@ -1,7 +1,7 @@
 replicaCount: 1
 
-nodeSelector:
-  kubernetes.io/hostname: "k8s-gen5-01.sdsc.optiputer.net"
+# nodeSelector:
+#   kubernetes.io/hostname: "k8s-gen5-01.sdsc.optiputer.net"
 
 tolerations:
   - key: "nautilus.io/reservation"
@@ -68,6 +68,7 @@ certs:
   certFile: hostcert.pem
   keyFile: hostcert.key.pem
   mountDir: /opt/certs
+  mountSecret: false
 
 paths:
   dmmConfig: /opt/dmm/dmm.cfg
