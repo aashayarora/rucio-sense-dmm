@@ -169,11 +169,14 @@ class SENSEHandlerDaemon(DaemonBase):
                 try:
                     discard_instance(req.sense_uuid, status)
                 except Exception as e:
-                    # Fix 2: HTTP 400 means SENSE-O structurally prohibits this delete
+                    # HTTP 400 means SENSE-O structurally prohibits this delete
                     # (e.g. "Non-admin users cannot delete instance in its current state").
                     # Retrying will never fix it — escalate immediately.
                     if http_code(e) == 400:
-                        reason = f"SENSE-O refused discard with HTTP 400 (non-admin or bad state): {e}"
+                        reason = (
+                            f"SENSE-O refused discard with HTTP 400 (non-admin or bad state): {e}. "
+                            f"Original failure: {req.failure_reason}"
+                        )
                         logging.error(
                             f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
                             f"{e} — escalating immediately (HTTP 400 is not retryable)"
@@ -182,7 +185,7 @@ class SENSEHandlerDaemon(DaemonBase):
                         req.mark_failed(reason, session=session)
                         release_endpoints_and_addresses(req, session)
                         return False
-                    # Fix 1: count this failure toward the retry budget so the request
+                    # count this failure toward the retry budget so the request
                     # cannot loop forever when discard fails for other transient reasons.
                     req.increment_sense_retries(session=session)
                     retries = req.sense_retries or 0
