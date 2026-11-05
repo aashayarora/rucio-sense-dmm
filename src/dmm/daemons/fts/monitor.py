@@ -8,7 +8,7 @@ from dmm.models.request import Request, RequestStatus
 from dmm.db.session import databased
 from dmm.core.config import config_get_int
 from dmm.core.fts import get_fts_job
-from dmm.core.rucio import get_fts_job_ids
+from dmm.core.rucio import get_fts_job_ids, rucio_unreachable
 
 # Requests with a live circuit, which is when their transfers are worth watching.
 _MONITORED_STATUSES = [
@@ -69,7 +69,9 @@ class FTSMonitorDaemon(DaemonBase):
         jobs = {job_id: dict(job) for job_id, job in (req.fts_jobs or {}).items()}
 
         search_history = not jobs or req.transfer_status in _RUCIO_DONE_STATUSES
-        found = get_fts_job_ids(
+        # Without Rucio no new jobs can be found, but FTS still answers for the
+        # ones already known. New ones are looked for again once Rucio does.
+        found = {} if rucio_unreachable(client) else get_fts_job_ids(
             client, src_rse, dst_rse, req.rule_id,
             history_pages=self.history_pages if search_history else 0,
         )

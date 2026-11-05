@@ -47,6 +47,10 @@ class Request(ModelBase, table=True):
     rule_size: Optional[float] = Field(default=None)
     modified_priority: Optional[int] = Field(default=None)
     available_bandwidth_mbps: Optional[float] = Field(default=None)  
+    # What SENSE-O had free for DMM on this request's site pair when it was staged:
+    # its own available bandwidth plus what DMM's circuits on the pair held then.
+    pair_available_mbps: Optional[float] = Field(default=None)
+    pair_available_at: Optional[datetime] = Field(default=None)
     allocated_bandwidth_mbps: Optional[float] = Field(default=None)  
     previous_bandwidth_mbps: Optional[float] = Field(default=None)
     sense_uuid: Optional[str] = Field(default=None)
@@ -54,6 +58,7 @@ class Request(ModelBase, table=True):
     sense_dst_uri: Optional[str] = Field(default=None)
     src_vlan: Optional[int] = Field(default=None)
     dst_vlan: Optional[int] = Field(default=None)
+    circuit_path: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     sense_circuit_status: Optional[str] = Field(default=None, index=True)
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_streams_current: Optional[int] = Field(default=0)
@@ -265,6 +270,12 @@ class Request(ModelBase, table=True):
         self.available_bandwidth_mbps = bandwidth_mbps
         self.save(session)
 
+    def set_pair_available(self, bandwidth_mbps: float, session=None):
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> pair_available={bandwidth_mbps} Mbps")
+        self.pair_available_mbps = bandwidth_mbps
+        self.pair_available_at = utcnow()
+        self.save(session)
+
     def set_sense_uuid(self, sense_uuid: str, session=None):
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> sense_uuid={sense_uuid}")
         self.sense_uuid = sense_uuid
@@ -281,6 +292,14 @@ class Request(ModelBase, table=True):
             logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit vlans src={src_vlan}, dst={dst_vlan}")
         self.src_vlan = src_vlan
         self.dst_vlan = dst_vlan
+        # Whatever compiled these VLANs may have routed the circuit differently too.
+        self.circuit_path = None
+        self.save(session)
+
+    def set_circuit_path(self, hops: list, session=None):
+        path = ", ".join(f"{hop['site']}:{hop['host']}/vlan{hop['vlan']}" for hop in hops)
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit path {path}")
+        self.circuit_path = {"sense_uuid": self.sense_uuid, "hops": hops}
         self.save(session)
 
     def set_allocated_bandwidth(self, bandwidth_mbps: float, session=None):

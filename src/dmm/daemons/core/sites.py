@@ -1,6 +1,7 @@
 from dmm.daemons.base import DaemonBase
 from dmm.db.session import databased
 from dmm.core.allocation import refresh_all_sites
+from dmm.core.rucio import rucio_unreachable
 
 class RefreshSiteDBDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -8,6 +9,9 @@ class RefreshSiteDBDaemon(DaemonBase):
     
     def process(self, **kwargs):
         self.run_once(**kwargs)
+
+    def waiting_for(self):
+        return "rucio" if rucio_unreachable(self.kwargs.get("client")) else None
 
     @databased
     def run_once(self, client=None, session=None) -> None:

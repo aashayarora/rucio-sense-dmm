@@ -8,8 +8,9 @@ from dmm.db.session import databased
 from dmm.core.config import config_get_float, config_get_int
 from dmm.core.monit import (
     PrometheusUtils, PrometheusNotConfigured,
-    circuit_ends, counter_increase, counter_rate_mbps,
+    circuit_ends, counter_increase, counter_rate_mbps, descr_vlan, on_path,
 )
+from dmm.core.sense import get_circuit_path
 
 # Values of Request.health. None - the column default - means "not measured", and
 # is what the frontend renders as UNKNOWN.
@@ -65,9 +66,16 @@ class MonitDaemon(DaemonBase):
     Inside the post-provisioning grace period it is left unknown rather than
     reported as unhealthy.
 
-    Not every site exports switch counters, and a circuit between two that don't
-    can't be measured at all. Then, and whenever else the counters give nothing to
-    go on - Prometheus refusing or not configured, no VLAN recorded - health falls
+    The counters are read on every switch the circuit crosses: SENSE-O's path
+    manifest (the one RTMon builds its dashboards from) names each one and the VLAN
+    it carries there, and the busiest counter among them is the circuit's
+    throughput. Until a manifest has been read - or when SENSE-O won't give one -
+    only the two end sites are read, on the VLANs the provision response reported.
+
+    Not every switch exports counters, and not every VLAN counter counts the
+    traffic a switch bridges through; a circuit with no hop that does can't be
+    measured at all. Then, and whenever else the counters give nothing to go on
+    - Prometheus refusing or not configured, no VLAN known - health falls
     back to the rule's FTS jobs: data is moving if delivered bytes keep growing.
     That is a weaker statement about the circuit, so health_source says which one
     a verdict came from, and an FTS view that is stale or empty stays unknown.
@@ -106,9 +114,15 @@ class MonitDaemon(DaemonBase):
         # An FTS summary older than this, or one FTS didn't fully answer, is not
         # judged - an FTS or monitor outage must not read as stalled transfers.
         self.fts_max_age_seconds = config_get_int("monit", "health_fts_max_age_seconds", default=600, constraint="pos")
+        # How long to wait before asking SENSE-O again for a circuit path it
+        # couldn't give.
+        self.path_retry_seconds = config_get_int("monit", "circuit_path_retry_seconds", default=600, constraint="nonneg")
 
-        # rule_id -> {(site, vlan, hostname, ifDescr, Key): _Series}
+        # rule_id -> {(sitename, hostname, ifDescr, Key): _Series}
         self._series = {}
+        # rule_id -> when SENSE-O was last asked for the circuit's path without
+        # giving one
+        self._path_tried = {}
         # rule_id -> timestamp of the newest sample health was last judged on
         self._judged = {}
         # rule_id -> consecutive bad samples, so a single blip doesn't flip the badge
@@ -145,9 +159,10 @@ class MonitDaemon(DaemonBase):
     def _forget_unmonitored(self, reqs):
         """Drop in-memory state for requests that are no longer being monitored."""
         live = {req.rule_id for req in reqs}
-        for rule_id in set(self._series) | set(self._judged) | set(self._strikes):
+        for rule_id in set(self._series) | set(self._judged) | set(self._strikes) | set(self._path_tried):
             if rule_id not in live:
                 self._forget(rule_id)
+                self._path_tried.pop(rule_id, None)
 
     @staticmethod
     def _clear_stale_health(session):
@@ -160,14 +175,14 @@ class MonitDaemon(DaemonBase):
             req.set_health(None, session=session)
 
     def _monitor(self, req, now, session=None):
-        ends = circuit_ends(req)
-        if not ends:
-            logging.warning(f"Request {req.rule_id} has no circuit VLAN recorded, judging health from FTS")
+        hops = self._hops(req, now, session)
+        if not hops:
+            logging.warning(f"Request {req.rule_id} has no circuit path or VLAN known, judging health from FTS")
             self._forget(req.rule_id)
             self._fall_back_to_fts(req, session)
             return
 
-        series = self._fetch(req, ends, now)
+        series = self._fetch(req, hops, now)
         if series is None:
             # Nothing measurable: say nothing rather than something wrong, and drop
             # what was collected so the next good read starts clean.
@@ -176,7 +191,18 @@ class MonitDaemon(DaemonBase):
             self._fall_back_to_fts(req, session)
             return
         if not series:
-            logging.info(f"No switch counters for {req.rule_id}'s circuit VLANs {ends}, judging health from FTS")
+            logging.info(f"No switch on {req.rule_id}'s circuit exports counters ({_describe(hops)}), judging health from FTS")
+            self._fall_back_to_fts(req, session)
+            return
+        # Many switches export a VLAN interface whose counters only see traffic the
+        # switch routes itself, not what it bridges through - CENIC's Arista reads
+        # 0 on a circuit Caltech counts at 50 Gbps. Such a counter stays at zero
+        # whatever the circuit does, so until one on the path has carried a rate
+        # window's worth of the health floor, there is nothing measured to judge.
+        floor_bytes = self.min_throughput_mbps * 1e6 / 8 * self.window_seconds
+        if not any(s.total >= floor_bytes and s.total > 0 for s in series.values()):
+            logging.info(f"No counter on {req.rule_id}'s circuit has counted its traffic yet "
+                         f"({len(series)} exported), judging health from FTS")
             self._fall_back_to_fts(req, session)
             return
 
@@ -186,9 +212,13 @@ class MonitDaemon(DaemonBase):
             return
         self._judged[req.rule_id] = newest
 
-        # Data leaves the source switch and enters the destination's; the counter
-        # that carried the most is that direction, the other only sees ACKs.
-        busiest = max(series.values(), key=lambda s: s.total)
+        # Every hop carries the same traffic, in one direction and ACKs in the
+        # other, so the counter that carried the most is the data direction on
+        # whichever switch counts it best. A switch that has stopped exporting
+        # keeps its total but no longer says anything about the current rate.
+        current = {key: s for key, s in series.items() if s.samples[-1][0] >= newest - self.window_seconds}
+        key, busiest = max(current.items(), key=lambda item: item[1].total)
+        logging.debug(f"{req.rule_id} measured on {key[0]}:{key[1]} {key[2]} {key[3]} ({len(series)} counters on the path)")
         throughput_mbps = counter_rate_mbps(busiest.samples)
         if throughput_mbps is None:
             # A single reading says nothing about rate.
@@ -238,18 +268,55 @@ class MonitDaemon(DaemonBase):
             return HEALTH_OK
         return HEALTH_BAD
 
-    def _fetch(self, req, ends, now):
+    def _hops(self, req, now, session):
+        """
+        The switches to read the circuit's counters on: every hop of its path, plus
+        the end sites' VLANs as the provision response gave them.
+
+        The path is read from SENSE-O once per circuit and kept on the request. The
+        ends stay in as well, so a site that names its switches differently in the
+        manifest from how it labels its counters is still read as it was before.
+        """
+        path = req.circuit_path or {}
+        hops = list(path.get("hops") or []) if path.get("sense_uuid") == req.sense_uuid else []
+        if not hops and req.sense_uuid:
+            tried = self._path_tried.get(req.rule_id)
+            if tried is None or now - tried >= self.path_retry_seconds:
+                hops = self._read_path(req, session)
+                if hops:
+                    self._path_tried.pop(req.rule_id, None)
+                else:
+                    self._path_tried[req.rule_id] = now
+        for end in circuit_ends(req):
+            if end not in hops:
+                hops.append(end)
+        return hops
+
+    @staticmethod
+    def _read_path(req, session):
+        try:
+            hops = get_circuit_path(req.sense_uuid)
+        except Exception as e:
+            logging.warning(f"Could not read the path of {req.rule_id}'s circuit {req.sense_uuid} from SENSE-O: {e}")
+            return []
+        if not hops:
+            logging.warning(f"SENSE-O gave no path for {req.rule_id}'s circuit {req.sense_uuid}, reading its end sites only")
+            return []
+        req.set_circuit_path(hops, session=session)
+        return hops
+
+    def _fetch(self, req, hops, now):
         """
         The circuit's counters since it came up, with whatever is new merged in.
 
         The first read reaches back to provisioning; later ones only as far as the
         newest sample already held. Returns the series that have samples, or None
-        when Prometheus refused a query.
+        when Prometheus refused the query.
         """
         series = self._series.setdefault(req.rule_id, {})
-        # A modify can move the circuit to another VLAN; the old one's counters
-        # stop describing it.
-        for key in [key for key in series if key[:2] not in ends]:
+        # A modify can move the circuit to other switches or VLANs; the old ones'
+        # counters stop describing it.
+        for key in [key for key in series if not on_path(hops, key[0], key[1], descr_vlan(key[2]))]:
             del series[key]
 
         provisioned = None
@@ -260,19 +327,18 @@ class MonitDaemon(DaemonBase):
         lookback = max(now - since, self.window_seconds) if since is not None else self.window_seconds
         lookback = min(lookback + _LOOKBACK_MARGIN_SECONDS, _MAX_LOOKBACK_SECONDS)
 
-        for site, vlan in ends:
-            fetched = self.prometheus.get_circuit_samples(site, vlan, lookback)
-            if fetched is None:
-                return None
-            for (hostname, descr, counter), samples in fetched.items():
-                held = series.setdefault((site, vlan, hostname, descr, counter), _Series())
-                if held.samples:
-                    fresh = [s for s in samples if s[0] > held.samples[-1][0]]
-                else:
-                    # VLAN tags are reused, so a counter's history before this
-                    # circuit came up belongs to whichever circuit had the tag then.
-                    fresh = [s for s in samples if provisioned is None or s[0] >= provisioned]
-                held.add(fresh, self.window_seconds)
+        fetched = self.prometheus.get_path_samples(hops, lookback)
+        if fetched is None:
+            return None
+        for key, samples in fetched.items():
+            held = series.setdefault(key, _Series())
+            if held.samples:
+                fresh = [s for s in samples if s[0] > held.samples[-1][0]]
+            else:
+                # VLAN tags are reused, so a counter's history before this
+                # circuit came up belongs to whichever circuit had the tag then.
+                fresh = [s for s in samples if provisioned is None or s[0] >= provisioned]
+            held.add(fresh, self.window_seconds)
 
         return {key: s for key, s in series.items() if s.samples}
 
@@ -313,6 +379,10 @@ class MonitDaemon(DaemonBase):
             f"over {strikes} consecutive polls"
         )
         return HEALTH_BAD
+
+
+def _describe(hops):
+    return ", ".join(f"{hop['site']}:{hop['host'] or '*'}/vlan{hop['vlan']}" for hop in hops)
 
 
 def _parse_utc(value):

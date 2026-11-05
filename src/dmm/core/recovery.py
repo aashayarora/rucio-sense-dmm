@@ -21,6 +21,9 @@ from dmm.core.sense import (
     cancel_link,
     delete_instance,
     get_instance_status,
+    is_being_cancelled,
+    is_cancel_failed,
+    is_cancel_ready,
     is_stalled_status,
     verify_instance,
 )
@@ -80,6 +83,8 @@ def reset_circuit(req, session, **extra):
         "sense_affiliated": False,
         "sense_provisioned_at": None,
         "available_bandwidth_mbps": None,
+        "pair_available_mbps": None,
+        "pair_available_at": None,
         "transfer_status": RequestStatus.ALLOCATED,
         **extra,
     }, session=session)
@@ -91,7 +96,12 @@ def hard_modify(req, status, why, session):
 
     Returns True if the request was sent back to be rebuilt. Escalates instead
     once the request has used up its hard modifies, and leaves it alone if the
-    old circuit could not be removed (tried again next cycle).
+    old circuit could not be removed yet (tried again next cycle).
+
+    SENSE-O lets DMM delete the circuit only once the cancel reaches CANCEL -
+    READY, which a sync cancel usually returns before. Then this takes several
+    cycles: the first sends the cancel, and the modifier calls again while the
+    circuit is cancelling until it can be deleted.
     """
     max_hard = config_get_int("sense", "max_hard_modifies", default=1, constraint="nonneg")
     if (req.sense_hard_modifies or 0) >= max_hard:
@@ -102,10 +112,26 @@ def hard_modify(req, status, why, session):
     live_status = get_instance_status(failed_uuid)
     if live_status == "UNKNOWN":
         logging.warning(f"Circuit {failed_uuid} of {req.rule_id} is already gone from SENSE, rebuilding")
+    elif is_cancel_failed(live_status):
+        retry_cancel(req, live_status, session)
+        return False
     else:
         try:
-            cancel_link(failed_uuid, live_status)
-            delete_instance(failed_uuid)
+            cancel_sent = False
+            if not (is_being_cancelled(live_status) or is_cancel_ready(live_status)):
+                cancel_link(failed_uuid, live_status)
+                cancel_sent = True
+                live_status = get_instance_status(failed_uuid)
+            if is_cancel_ready(live_status):
+                delete_instance(failed_uuid)
+            elif live_status != "UNKNOWN":
+                log = logging.info if cancel_sent else logging.debug
+                log(f"Hard modify of {req.rule_id}: deleting {failed_uuid} once its cancel completes ({live_status})")
+                if req.transfer_status != RequestStatus.STALE:
+                    # The modifier, which carries the rebuild on, only looks at STALE
+                    # requests; a stalled PROVISIONED one is no longer live either.
+                    req.set_status(RequestStatus.STALE, session=session)
+                return False
         except Exception as e:
             logging.error(
                 f"Hard modify of {req.rule_id}: failed to cancel/delete {failed_uuid}: {e}, will retry next cycle",

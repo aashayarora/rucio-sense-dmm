@@ -45,12 +45,18 @@ spec:
           subPath: rucio.cfg
         - name: ca-volume
           mountPath: {{ .Values.paths.caBundle }}
+        {{- if .Values.certs.mountSecret }}
+        - name: certs
+          mountPath: {{ .Values.certs.mountDir }}
+          readOnly: true
+        {{- else }}
         - name: certs
           mountPath: {{ .Values.certs.mountDir }}/key.pem
           subPath: {{ .Values.certs.keyFile }}
         - name: certs
           mountPath: {{ .Values.certs.mountDir }}/cert.pem
           subPath: {{ .Values.certs.certFile }}
+        {{- end }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       {{- with .Values.tolerations }}
@@ -77,11 +83,13 @@ spec:
       - name: certs
         secret:
           secretName: {{ .Values.secrets.certs }}
+          {{- if not .Values.certs.mountSecret }}
           items:
             - key: {{ .Values.certs.certFile }}
               path: {{ .Values.certs.certFile }}
             - key: {{ .Values.certs.keyFile }}
               path: {{ .Values.certs.keyFile }}
+          {{- end }}
       - name: ca-volume
         secret:
           defaultMode: 420

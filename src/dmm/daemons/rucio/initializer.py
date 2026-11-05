@@ -14,7 +14,8 @@ from dmm.core.rucio import (
     parse_rule_for_request,
     is_sense_rule,
     is_rule_ok,
-    is_rule_stuck
+    is_rule_stuck,
+    rucio_unreachable,
 )
 
 class RucioInitDaemon(DaemonBase):
@@ -26,6 +27,9 @@ class RucioInitDaemon(DaemonBase):
 
     def process(self, **kwargs):
         self.run_once(**kwargs)
+
+    def waiting_for(self):
+        return "rucio" if rucio_unreachable(self.kwargs.get("client")) else None
 
     @databased
     def run_once(self, client=None, session=None) -> None:

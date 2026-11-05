@@ -96,7 +96,7 @@ def allocate_address(pool_site, alloc_name):
         Allocated IPv6 address string
 
     Raises:
-        Exception: If allocation fails
+        RuntimeError: If allocation fails, with pool name and rule_id in the message
     """
     address_api = AddressApi()
     pool_name = subnet_pool_name(pool_site)
@@ -115,7 +115,10 @@ def allocate_address(pool_site, alloc_name):
                 f"allocate_address cleanup failed for pool={pool_name}, alloc_name={alloc_name}: {cleanup_err}",
                 exc_info=True,
             )
-        raise
+        raise RuntimeError(
+            f"SENSE-O address allocation failed for pool {pool_name} "
+            f"(rule_id={alloc_name}): {e}"
+        ) from e
 
 def free_address(pool_site, alloc_name):
     """
@@ -284,9 +287,46 @@ def _vlan_in_pool(vlan, pool):
             return True
     return False
 
+def _port_capacity(peer_point):
+    """A peer point's port capacity in Mbps, or None if SENSE didn't give a number."""
+    try:
+        return int(peer_point.get("port_capacity"))
+    except (TypeError, ValueError):
+        return None
+
+def _pool_has_vlans(pool):
+    """Whether a VLAN pool string ("3600-3619,3700") names any VLAN at all ("n/a" doesn't)."""
+    return any(token.strip().split("-")[0].isdigit() for token in str(pool).split(","))
+
+def _wan_peer_points(site_info):
+    """
+    The site's peer points a SENSE circuit can leave the site through: the peer is
+    outside the site's own domain, and offers a VLAN pool.
+
+    Sites also list ports that can't: SDSC lists 100G ports to its own k8s nodes
+    ahead of its 760G uplink (peer_uri inside nrp-nautilus.io), and Caltech lists a
+    port to its old ultralight.org domain; both have peer_vlan_pool "n/a". Those say
+    nothing about WAN capacity. If no peer point qualifies, every one is used.
+    """
+    peer_points = [pp for pp in (site_info.get("peer_points") or []) if _port_capacity(pp) is not None]
+    domain_uri = site_info.get("domain_uri") or ""
+    wan = [
+        pp for pp in peer_points
+        if _pool_has_vlans(pp.get("peer_vlan_pool"))
+        and not (domain_uri and str(pp.get("peer_uri") or "").startswith(domain_uri + ":"))
+    ]
+    if peer_points and not wan:
+        logging.warning(f"No peer point of {domain_uri or 'site'} leads out of it, using all {len(peer_points)}")
+        return peer_points
+    return wan
+
 def get_link_capacity(site_info, vlan_range):
     """
-    Get the link capacity for a given site and VLAN range.
+    Get one site's WAN capacity for a VLAN range.
+
+    Only peer points that leave the site's domain count. Of those, the ones whose
+    peer_vlan_pool holds the VLAN range are used (all of them for "any", or if none
+    holds it), and the largest port capacity among them is returned.
 
     Args:
         site_info: Site info dict from get_site_info
@@ -295,28 +335,30 @@ def get_link_capacity(site_info, vlan_range):
     Returns:
         Link capacity in Mbps
     """
-    peer_points = site_info.get("peer_points") or []
+    peer_points = _wan_peer_points(site_info)
     if not peer_points:
         raise ValueError("No peer points found in site info")
 
-    if vlan_range == "any":
-        port_capacity = int(peer_points[0]["port_capacity"])
-        logging.debug(f"Using port capacity {port_capacity} for vlan range 'any'")
-        return port_capacity
+    if vlan_range != "any":
+        vlan_range_start, vlan_range_end = _parse_vlan_range(vlan_range)
+        if vlan_range_start is not None:
+            matching = [
+                pp for pp in peer_points
+                if _vlan_in_pool(vlan_range_start, pp.get("peer_vlan_pool", ""))
+                and _vlan_in_pool(vlan_range_end, pp.get("peer_vlan_pool", ""))
+            ]
+            if matching:
+                peer_points = matching
+            else:
+                logging.debug(f"No peer point holds vlan range {vlan_range}, using all WAN peer points")
 
-    vlan_range_start, vlan_range_end = _parse_vlan_range(vlan_range)
-    if vlan_range_start is not None:
-        logging.debug(f"Using vlan range {vlan_range_start}-{vlan_range_end} for link capacity")
-        for peer_point in peer_points:
-            pool = peer_point.get("peer_vlan_pool", "")
-            if _vlan_in_pool(vlan_range_start, pool) and _vlan_in_pool(vlan_range_end, pool):
-                port_capacity = int(peer_point["port_capacity"])
-                logging.debug(f"Using port capacity {port_capacity} for vlan range {vlan_range_start}-{vlan_range_end}")
-                return port_capacity
-
-    port_capacity = int(peer_points[0]["port_capacity"])
-    logging.debug(f"Using default port capacity {port_capacity} for vlan range {vlan_range}")
+    port_capacity = max(_port_capacity(pp) for pp in peer_points)
+    logging.debug(f"Using port capacity {port_capacity} for vlan range {vlan_range}")
     return port_capacity
+
+def get_pair_link_capacity(site_info_a, site_info_b, vlan_range):
+    """Capacity of the link between two sites: the smaller of their WAN capacities, in Mbps."""
+    return min(get_link_capacity(site_info_a, vlan_range), get_link_capacity(site_info_b, vlan_range))
 
 def get_endpoints_for_site(sense_uri, site_name):
     """
@@ -342,7 +384,8 @@ def get_endpoints_for_site(sense_uri, site_name):
         
         # Determine the correct metadata tag based on site name
         # TODO: Make this configurable instead of hardcoded
-        metadata_tag = "/xrootd6" if "FNAL" in site_name else "/xrootd"
+        # metadata_tag = "/xrootd6" if "FNAL" in site_name else "/xrootd"
+        metadata_tag = "/xrootd"  # Default to /xrootd for now
         
         manifest_json = {
             "Metadata": "?metadata?",
@@ -377,9 +420,8 @@ def get_endpoints_for_site(sense_uri, site_name):
         return endpoint_list
         
     except Exception as e:
-        error_msg = f"Getting list of endpoints failed for {sense_uri}: {e}"
-        logging.error(error_msg, exc_info=True)
-        raise ValueError(error_msg)
+        # Logged once, by whoever gives up on the site.
+        raise ValueError(f"Getting list of endpoints failed for {sense_uri}: {e}") from e
 
 def refresh_all_sites(rucio_client, session):
     """
@@ -418,7 +460,12 @@ def refresh_all_sites(rucio_client, session):
             refreshed[physical_name] = rse_name
             _add_endpoints_for_site(site_, rucio_client, session, rse_name=rse_name)
         except Exception as e:
-            logging.error(f"Error occurred in refresh_sites for site {rse_name}: {str(e)}")
+            # SENSE and Rucio failures arrive as ValueErrors that say what failed;
+            # anything else is a bug, which the traceback locates.
+            logging.error(
+                f"Error occurred in refresh_sites for site {rse_name}: {str(e)}",
+                exc_info=not isinstance(e, ValueError),
+            )
 
     _ensure_mesh_links(site_objs, session, config_get)
 
@@ -494,29 +541,65 @@ def _get_or_create_site(site_name, session):
 
 def _ensure_mesh_links(site_objs, session, config_get_func):
     """
-    Create missing mesh links between every pair of known sites. Done as a separate
-    pass over all pairs (rather than only when a site is first created) so that a
-    site added to Rucio later still gets linked to every existing site, regardless
-    of the order the sites are processed in.
+    Create missing mesh links between every pair of known sites, and bring the
+    capacity of existing ones in line with SENSE. Done as a separate pass over all
+    pairs (rather than only when a site is first created) so that a site added to
+    Rucio later still gets linked to every existing site, regardless of the order
+    the sites are processed in.
+
+    A link's capacity is the smaller of the two sites' WAN capacities. An existing
+    link keeps its VLAN range, since live circuits were built on it.
+
+    A site SENSE can't give a WAN capacity for (its lookup fails, or it lists no
+    peer points) is reported once, and its existing links keep their capacity.
     """
     site_info_cache = {}
+
+    def site_info_for(site_):
+        """The site's SENSE info, or None if it has no usable WAN capacity."""
+        if site_.name not in site_info_cache:
+            site_info = None
+            try:
+                _, root_uri = get_site_uris(site_.name)
+                site_info = get_site_info(root_uri)
+                if not any(_port_capacity(pp) is not None for pp in site_info.get("peer_points") or []):
+                    raise ValueError("SENSE lists no peer points with a port capacity for it")
+            except Exception as e:
+                logging.warning(
+                    f"Cannot read the WAN capacity of {site_.name} from SENSE: {e}; "
+                    f"its existing mesh links keep their capacity"
+                )
+                site_info = None
+            site_info_cache[site_.name] = site_info
+        return site_info_cache[site_.name]
+
     for i, site_a in enumerate(site_objs):
         for site_b in site_objs[i + 1:]:
             try:
-                if Mesh.get_by_sites(site_a, site_b, session=session, use_lock=False) is not None:
+                mesh = Mesh.get_by_sites(site_a, site_b, session=session, use_lock=False)
+                info_a, info_b = site_info_for(site_a), site_info_for(site_b)
+                if info_a is None or info_b is None:
+                    if mesh is None:
+                        logging.error(
+                            f"Cannot create mesh link {site_a.name}-{site_b.name}: "
+                            f"no WAN capacity from SENSE for {site_a.name if info_a is None else site_b.name}"
+                        )
                     continue
-                vlan_range = _get_vlan_range_for_pair(site_a, site_b, config_get_func)
-                site_info = site_info_cache.get(site_b.name)
-                if site_info is None:
-                    _, root_uri = get_site_uris(site_b.name)
-                    site_info = get_site_info(root_uri)
-                    site_info_cache[site_b.name] = site_info
-                link_capacity = get_link_capacity(site_info, vlan_range)
-                mesh = Mesh(site1=site_a, site2=site_b, vlan_range=vlan_range, link_capacity_mbps=link_capacity)
-                mesh.save(session=session)
-                logging.info(f"Created mesh link {site_a.name}-{site_b.name} (vlan={vlan_range}, capacity={link_capacity} Mbps)")
+                vlan_range = (mesh.vlan_range if mesh else None) or \
+                    _get_vlan_range_for_pair(site_a, site_b, config_get_func)
+                link_capacity = get_pair_link_capacity(info_a, info_b, vlan_range)
+                if mesh is None:
+                    mesh = Mesh(site1=site_a, site2=site_b, vlan_range=vlan_range, link_capacity_mbps=link_capacity)
+                    mesh.save(session=session)
+                    logging.info(f"Created mesh link {site_a.name}-{site_b.name} (vlan={vlan_range}, capacity={link_capacity} Mbps)")
+                elif mesh.link_capacity_mbps != link_capacity:
+                    logging.info(
+                        f"Mesh link {site_a.name}-{site_b.name} capacity "
+                        f"{mesh.link_capacity_mbps} -> {link_capacity} Mbps (vlan={vlan_range})"
+                    )
+                    mesh.update({"link_capacity_mbps": link_capacity}, session=session)
             except Exception as e:
-                logging.error(f"Failed to create mesh link between {site_a.name} and {site_b.name}: {str(e)}")
+                logging.error(f"Failed to create or update mesh link between {site_a.name} and {site_b.name}: {str(e)}")
 
 def _get_vlan_range_for_pair(site_obj, site_, config_get_func):
     """Get VLAN range for a site pair."""
@@ -540,45 +623,40 @@ def _add_endpoints_for_site(site_, rucio_client, session, rse_name=None):
         rse_name: Rucio site name to read the protocol from (defaults to the site name)
     """
     rse_name = rse_name or site_.name
-    try:
-        if not site_.sense_uri:
-            logging.warning(f"Site {site_.name} has no SENSE URI, skipping endpoint creation")
-            return
+    # Failures propagate to refresh_all_sites, which logs them once per site.
+    if not site_.sense_uri:
+        logging.warning(f"Site {site_.name} has no SENSE URI, skipping endpoint creation")
+        return
 
-        endpoint_list = get_endpoints_for_site(site_.sense_uri, site_.name)
-        if not endpoint_list:
-            logging.warning(f"No endpoints found for {site_.name}")
-            return
+    endpoint_list = get_endpoints_for_site(site_.sense_uri, site_.name)
+    if not endpoint_list:
+        logging.warning(f"No endpoints found for {site_.name}")
+        return
 
-        logging.info(f"Getting protocol for the registered endpoints for {rse_name}")
-        protocol = get_rse_protocol(rucio_client, rse_name)
-        if not protocol:
-            raise ValueError(f"No protocol found for RSE {rse_name}")
+    logging.info(f"Getting protocol for the registered endpoints for {rse_name}")
+    protocol = get_rse_protocol(rucio_client, rse_name)
+    if not protocol:
+        raise ValueError(f"No protocol found for RSE {rse_name}")
 
-        endpoints_added = 0
-        for iprange, hostname in endpoint_list.items():
-            try:
-                iprange_compressed = format_ipv6_compressed(iprange)
-                
-                if Endpoint.get_by_ip_range(ip_range=iprange_compressed, session=session, use_lock=False) is None:
-                    new_endpoint = Endpoint(
-                        site=site_,
-                        protocol=protocol,
-                        ip_range=iprange_compressed,
-                        hostname=hostname,
-                        is_allocated=False
-                    )
-                    new_endpoint.save(session=session)
-                    endpoints_added += 1
-                else:
-                    logging.debug(f"Endpoint {iprange_compressed} already exists, skipping")
-            except Exception as endpoint_err:
-                logging.error(f"Failed to add endpoint {iprange} for site {site_.name}: {endpoint_err}")
-                continue
-                
-        logging.info(f"Added {endpoints_added} new endpoints for {site_.name}")
-        
-    except Exception as e:
-        error_msg = f"Getting list of endpoints failed for {site_.sense_uri}: {e}"
-        logging.error(error_msg, exc_info=True)
-        raise ValueError(error_msg)
+    endpoints_added = 0
+    for iprange, hostname in endpoint_list.items():
+        try:
+            iprange_compressed = format_ipv6_compressed(iprange)
+            
+            if Endpoint.get_by_ip_range(ip_range=iprange_compressed, session=session, use_lock=False) is None:
+                new_endpoint = Endpoint(
+                    site=site_,
+                    protocol=protocol,
+                    ip_range=iprange_compressed,
+                    hostname=hostname,
+                    is_allocated=False
+                )
+                new_endpoint.save(session=session)
+                endpoints_added += 1
+            else:
+                logging.debug(f"Endpoint {iprange_compressed} already exists, skipping")
+        except Exception as endpoint_err:
+            logging.error(f"Failed to add endpoint {iprange} for site {site_.name}: {endpoint_err}")
+            continue
+            
+    logging.info(f"Added {endpoints_added} new endpoints for {site_.name}")

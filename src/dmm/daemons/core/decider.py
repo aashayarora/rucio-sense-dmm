@@ -12,6 +12,15 @@ from dmm.db.session import databased
 from dmm.core.config import config_get_float
 from dmm.core.sense import is_circuit_active, is_being_provisioned
 
+# How close the binary search gets the floor to its best value. An allocation that
+# sits on the floor is up to this far below a round number, so rounding allows for
+# it - flooring 99997 Mbps to 99000 turned search noise into SENSE modifies.
+_PRECISION_MBPS = 5
+
+
+def _whole_gbps(mbps):
+    return floor(mbps / 1000) * 1000
+
 class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
@@ -21,6 +30,7 @@ class DeciderDaemon(DaemonBase):
     
     @databased
     def run_once(self, session=None):
+        self._record_pair_available(session)
         multi_graph = self._build_multi_graph(session)
         
         if not multi_graph.nodes:
@@ -28,7 +38,8 @@ class DeciderDaemon(DaemonBase):
 
         simple_graph, nodes, edges = self._simplify_graph(multi_graph)
         A, c, b, edge_index = self._prepare_optimization_matrices(simple_graph, nodes, edges)
-        optim_result = self._optimize_bandwidth(A, b, c, edges)
+        current = np.array([data['current'] for _, _, data in edges], dtype=float)
+        optim_result = self._optimize_bandwidth(A, b, c, edges, current)
 
         self._allocate_bandwidth(multi_graph, simple_graph, edges, edge_index, optim_result)
 
@@ -70,16 +81,64 @@ class DeciderDaemon(DaemonBase):
                 continue
             self._add_site_node(multi_graph, req.src_site.name, link_capacity_mbps)
             self._add_site_node(multi_graph, req.dst_site.name, link_capacity_mbps)
+            # Without a pair_available (rows that predate it) a request adds its own
+            # available bandwidth, capped at the link, to what its pair may have.
+            max_bandwidth = link_capacity_mbps
+            if req.available_bandwidth_mbps is not None:
+                max_bandwidth = min(link_capacity_mbps, _whole_gbps(req.available_bandwidth_mbps))
             multi_graph.add_edge(
                 req.src_site.name, req.dst_site.name,
                 rule_id=req.rule_id,
                 priority=req.priority or 0,  # guard against None priority
                 bandwidth=req.allocated_bandwidth_mbps,
                 link_capacity=link_capacity_mbps,
+                max_bandwidth=max_bandwidth,
+                pair_available=req.pair_available_mbps,
+                pair_available_at=req.pair_available_at,
                 fixed=is_fixed,
                 fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
             )
         return multi_graph
+
+    def _record_pair_available(self, session) -> None:
+        """
+        For each request staged since the last run, record what SENSE-O has free for
+        DMM on its site pair: the request's available bandwidth plus what DMM's
+        circuits on the pair hold.
+
+        SENSE-O's figure for a new rule is what its path has left after every circuit
+        on it, DMM's own included, and DMM shares a pair between its requests, so a
+        new rule adds its available bandwidth to what the pair already had. It adds
+        it to what DMM's circuits there hold, not to what they were offered: one not
+        up yet holds nothing, and SENSE-O reported its bandwidth as free again.
+        """
+        staged = [
+            r for r in Request.get_by_status(statuses=[RequestStatus.STAGED], session=session)
+            if r.available_bandwidth_mbps is not None and r.src_site_ and r.dst_site_
+        ]
+        if not staged:
+            return
+        holders = [
+            r for r in Request.get_by_status(
+                statuses=[RequestStatus.PROVISIONED, RequestStatus.STALE, RequestStatus.MODIFIED,
+                          RequestStatus.DECIDED, RequestStatus.FINISHED],
+                session=session, use_lock=False,
+            )
+            if self._holds_reservation(r)
+        ]
+        for req in staged:
+            pair = {req.src_site_, req.dst_site_}
+            held = sum(
+                self._held_on_sense(r) for r in holders
+                if r.rule_id != req.rule_id and r.sense_uuid != req.sense_uuid
+                and {r.src_site_, r.dst_site_} == pair
+            )
+            logging.info(
+                f"SENSE-O has {req.available_bandwidth_mbps + held:.4f} Mbps free for DMM on "
+                f"{req.src_site_}-{req.dst_site_}: {req.available_bandwidth_mbps:.4f} reported for "
+                f"{req.rule_id} + {held:.0f} held by DMM circuits on the pair"
+            )
+            req.set_pair_available(req.available_bandwidth_mbps + held, session=session)
 
     @staticmethod
     def _holds_reservation(req) -> bool:
@@ -121,16 +180,33 @@ class DeciderDaemon(DaemonBase):
             priority = 0 if data.get('fixed') else data['priority']
             fixed_bandwidth = data.get('fixed_bandwidth', 0)
             link_capacity = data['link_capacity']
+            # Without a pair_available on the edge, its live requests' own available
+            # bandwidths added up; a finished reservation adds nothing.
+            max_bandwidth = 0 if data.get('fixed') else data.get('max_bandwidth', link_capacity)
+            pair_available, pair_available_at = data.get('pair_available'), data.get('pair_available_at')
+            # What the edge's live requests hold now; NaN once any of them has
+            # nothing decided yet, since there is then no allocation to keep.
+            current = 0.0 if data.get('fixed') else (data['bandwidth'] if data['bandwidth'] is not None else np.nan)
             if simple_graph.has_edge(u, v):
-                simple_graph[u][v]['priority'] += priority
-                simple_graph[u][v]['fixed_bandwidth'] += fixed_bandwidth
+                edge = simple_graph[u][v]
+                edge['priority'] += priority
+                edge['fixed_bandwidth'] += fixed_bandwidth
+                edge['current'] += current
+                edge['max_bandwidth'] += max_bandwidth
                 # The physical link capacity is fixed — take the max (not sum) so we
                 # don't artificially inflate the upper-bound constraint in the LP.
-                simple_graph[u][v]['link_capacity'] = max(
-                    simple_graph[u][v]['link_capacity'], link_capacity
-                )
+                edge['link_capacity'] = max(edge['link_capacity'], link_capacity)
+                # The latest staging on the pair saw everything staged before it.
+                if pair_available is not None and (
+                    edge['pair_available_at'] is None or pair_available_at > edge['pair_available_at']
+                ):
+                    edge['pair_available'], edge['pair_available_at'] = pair_available, pair_available_at
             else:
-                simple_graph.add_edge(u, v, priority=priority, fixed_bandwidth=fixed_bandwidth, link_capacity=link_capacity)
+                simple_graph.add_edge(u, v, priority=priority, fixed_bandwidth=fixed_bandwidth,
+                                      link_capacity=link_capacity, max_bandwidth=max_bandwidth,
+                                      pair_available=pair_available,
+                                      pair_available_at=pair_available_at if pair_available is not None else None,
+                                      current=current)
 
         return simple_graph, list(simple_graph.nodes), list(simple_graph.edges(data=True))
 
@@ -156,8 +232,14 @@ class DeciderDaemon(DaemonBase):
             b[node_index[u]] -= data['fixed_bandwidth']
             b[node_index[v]] -= data['fixed_bandwidth']
 
+        # An edge carries no more than min(link_capacity, what SENSE-O has free for
+        # the pair) less finished reservations. pair_available counts those too (it
+        # adds back everything DMM held on the pair), so they come off both.
         edge_bounds = np.array(
-            [data['link_capacity'] - data['fixed_bandwidth'] for _, _, data in edges], dtype=float
+            [min(data['link_capacity'], _whole_gbps(data['pair_available'])) - data['fixed_bandwidth']
+             if data.get('pair_available') is not None
+             else min(data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth'])
+             for _, _, data in edges], dtype=float
         )
 
         A = np.vstack([A, np.eye(n_edges)])
@@ -166,7 +248,7 @@ class DeciderDaemon(DaemonBase):
 
         return A, c, b, edge_index
 
-    def _optimize_bandwidth(self, A, b, c, edges) -> object:
+    def _optimize_bandwidth(self, A, b, c, edges, current=None) -> object:
         """
         Optimize the bandwidth allocation using linear programming.
         Binary-searches over the minimum per-edge lower bound to find the highest
@@ -176,9 +258,17 @@ class DeciderDaemon(DaemonBase):
         nothing but finished reservations is pinned to 0: nobody can be given its
         bandwidth, and flooring it would take that share away from the live edges
         sharing its sites.
+
+        The floor and the weighted total rarely pin down one allocation: two edges
+        sharing a site can usually trade capacity without changing either. The
+        solver then returns whichever corner it reaches first, which depends on the
+        order requests came out of the database, so a re-run after an unrelated
+        change could swap 150/50 for 50/150 - two SENSE modifies for nothing. Among
+        the equally good allocations, _keep_current picks the one closest to what
+        the edges hold now (current, NaN for an edge with no allocation yet).
         """
         n_edges = len(edges)
-        precision_mbps = 5
+        precision_mbps = _PRECISION_MBPS
         live = c < 0
 
         def floored(floor):
@@ -207,7 +297,42 @@ class DeciderDaemon(DaemonBase):
             else:
                 hi = mid
 
-        return optim_result.x
+        if current is None:
+            return optim_result.x
+        return self._keep_current(A, b, c, floored(lo), optim_result.x, current)
+
+    @staticmethod
+    def _keep_current(A, b, c, bounds, x, current):
+        """
+        An allocation as good as x - same floor, same weighted total to within the
+        search precision - that moves the edges with a current allocation as little
+        as possible (sum of |x - current|), or x itself if the LP won't say.
+        """
+        n_edges = len(x)
+        sticky = (~np.isnan(current)) & (c < 0)
+        if not sticky.any():
+            return x
+        current = np.nan_to_num(current)
+        # Variables: x (n_edges), then one deviation d_e >= |x_e - current_e| each.
+        objective = np.concatenate([np.zeros(n_edges), sticky.astype(float)])
+        rows = [np.hstack([A, np.zeros((A.shape[0], n_edges))])]
+        limits = [b]
+        # Keep the weighted total: c.x <= c.x* + slack.
+        slack = _PRECISION_MBPS * float(np.max(np.abs(c)))
+        rows.append(np.concatenate([c, np.zeros(n_edges)])[None, :])
+        limits.append([float(c @ x) + slack])
+        eye = np.eye(n_edges)
+        rows.append(np.hstack([eye, -eye])[sticky])
+        limits.append(current[sticky])
+        rows.append(np.hstack([-eye, -eye])[sticky])
+        limits.append(-current[sticky])
+        d_bounds = [(0, None) if sticky[i] else (0, 0) for i in range(n_edges)]
+        result = linprog(objective, A_ub=np.vstack(rows), b_ub=np.concatenate([np.ravel(l) for l in limits]),
+                         bounds=list(bounds) + d_bounds, method='highs')
+        if not result.success:
+            logging.warning(f"Could not keep current allocations ({result.message}), using the first solution found")
+            return x
+        return result.x[:n_edges]
 
     def _allocate_bandwidth(self, multi_graph, simple_graph, edges, edge_index, bandwidths) -> None:
         """
@@ -225,8 +350,10 @@ class DeciderDaemon(DaemonBase):
             if total_priority > 0:
                 proportion = data['priority'] / total_priority
                 bandwidth = bandwidths[edge_index[(u, v)]] * proportion
-                # Round to lowest 1000 Mbps, but ensure minimum of 1000 if bandwidth > 0
-                rounded_bandwidth = floor(bandwidth // 1000) * 1000
+                # Round to lowest 1000 Mbps, but ensure minimum of 1000 if bandwidth > 0.
+                # The search leaves the floor up to _PRECISION_MBPS short, which is
+                # not a reason to give up a whole Gbps.
+                rounded_bandwidth = floor((bandwidth + _PRECISION_MBPS) // 1000) * 1000
                 if bandwidth > 0 and rounded_bandwidth == 0:
                     rounded_bandwidth = 1000  # Minimum bandwidth
                 multi_graph[u][v][key]['bandwidth'] = rounded_bandwidth

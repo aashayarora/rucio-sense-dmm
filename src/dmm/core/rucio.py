@@ -1,7 +1,103 @@
 import json
 import logging
+import threading
+from time import time
 
+from rucio.client import Client
 from rucio.common.exception import RuleNotFound
+
+
+class RucioConnection:
+    """
+    DMM's Rucio client, built on first use, and whether Rucio is answering.
+
+    rucio.client.Client authenticates in its constructor, so it cannot be built
+    while Rucio is down, and DMM used to exit when the one it built at startup
+    failed. This is passed wherever a Client was and builds the real one the
+    first time anything is asked of it, so a Rucio outage at startup costs the
+    calls made during it and nothing more.
+
+    `check` is RucioHeartbeatDaemon's probe. Daemons that need Rucio read
+    `reachable` and wait while it is False, rather than each finding the outage
+    for itself with the shared daemon lock held through every timeout.
+    """
+
+    def __init__(self, probe_timeout=30, factory=Client):
+        self._factory = factory
+        self._probe_timeout = probe_timeout
+        self._client = None
+        self._probe = None
+        self._lock = threading.Lock()
+        self.reachable = True
+        self.last_error = None
+        self.unreachable_since = None
+
+    def __getattr__(self, name):
+        # Only reached for names this class does not define, i.e. the Client's
+        # own methods. Private names are refused so that a half-built instance
+        # cannot recurse looking for _client.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        with self._lock:
+            if self._client is None:
+                self._client = self._factory()
+            client = self._client
+        return getattr(client, name)
+
+    def check(self):
+        """
+        Ask Rucio who DMM is: a round trip that needs the server up and DMM's
+        credentials accepted, as every daemon call does.
+
+        The probe has a client of its own with a short timeout, so it can run
+        beside a daemon call hung on the same outage and report it within one
+        timeout rather than after Rucio's default ten minutes.
+
+        Returns:
+            Whether Rucio answered
+        """
+        try:
+            if self._probe is None:
+                self._probe = self._factory(timeout=self._probe_timeout)
+            self._probe.whoami()
+        except Exception as e:
+            # Built afresh next time, so a probe that could not authenticate is
+            # not retried with whatever it was holding.
+            self._probe = None
+            error = f"{type(e).__name__}: {e}"
+            if self.reachable:
+                self.unreachable_since = time()
+                logging.error(f"Rucio is unreachable, daemons that need it wait until it answers: {error}")
+            self.reachable = False
+            self.last_error = error
+            return False
+
+        if not self.reachable:
+            logging.info(f"Rucio is reachable again after {time() - self.unreachable_since:.0f}s")
+            with self._lock:
+                # Rebuilt on next use the way it is at startup, so nothing from
+                # before the outage, connection or token, is carried over.
+                self._client = None
+        self.reachable = True
+        self.last_error = None
+        self.unreachable_since = None
+        return True
+
+    def state(self):
+        """What /health reports about Rucio."""
+        return {
+            "reachable": self.reachable,
+            "error": self.last_error,
+            "unreachable_since": self.unreachable_since,
+        }
+
+
+def rucio_unreachable(client):
+    """
+    Whether `client` is a RucioConnection whose last check failed. A plain
+    Client knows nothing of the kind and is always tried.
+    """
+    return getattr(client, "reachable", True) is False
 
 def list_replication_rules(client):
     """

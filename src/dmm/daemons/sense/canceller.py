@@ -170,3 +170,9 @@ class SENSECancellerDaemon(DaemonBase):
 
             except Exception as e:
                 logging.error(f"Failed to cancel link for {req.rule_id}: {e}", exc_info=True)
+                # Even if the SENSE-O cancel call failed, free the DMM endpoint
+                # flags so they don't become permanent orphans that block future
+                # allocations.  The request stays FINISHED and will be retried
+                # next cycle; release_endpoints_and_addresses() is idempotent so
+                # calling it here is safe even if it was already called above.
+                release_endpoints_and_addresses(req, session)

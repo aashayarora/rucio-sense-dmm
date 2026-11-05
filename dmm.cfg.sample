@@ -25,6 +25,10 @@ profile_uuid=
 sense_keep_alive_seconds=60
 finished_r_hold_seconds=120
 keep_failed_instances=false
+; After a NO_RESOURCES staging failure, fetch GET /model and run a local path
+; search to refine the failure reason into NO_CAPACITY / NO_VLANS / NO_TOPOLOGY
+; / FEASIBLE_IN_MODEL. Set to false to skip the probe (e.g. if SENSE-O is slow).
+; path_check_enabled=true
 
 [rtmon]
 ; The RTMon deployment to register each ready circuit with, named exactly as

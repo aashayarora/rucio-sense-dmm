@@ -9,6 +9,8 @@ from dmm.models.mesh import Mesh
 from dmm.core.config import config_get
 from dmm.core.sense import stage_link, parse_staging_response, delete_instance
 from dmm.core.utils import release_endpoints_and_addresses
+from dmm.core.sense_triage import triage, NO_RESOURCES, NO_CAPACITY, NO_VLANS, NO_TOPOLOGY
+from dmm.core.sense_model import check_path
 
 class SENSEStagerDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -81,6 +83,60 @@ class SENSEStagerDaemon(DaemonBase):
                     req.set_sense_uuid(failed_uuid, session=session)
                     req.update({"available_bandwidth_mbps": None}, session=session)
                 req.mark_retry(f"Staging failed: {e}", session=session)
+                t = triage(e)
+                if t.kind == NO_RESOURCES:
+                    self._probe_path_on_no_resources(req, session)
+
+    @staticmethod
+    def _probe_path_on_no_resources(req, session):
+        """After a NO_RESOURCES staging failure, probe the local model to refine the diagnosis.
+
+        Runs check_path() (GET /model + local NML graph search; read-only, no side
+        effects) and refines the failure_reason written by mark_retry() with the
+        more specific verdict:
+
+          NO_CAPACITY   — topology joined; bottleneck Mbps is the problem.
+                          Also writes available_bandwidth_mbps so the optimizer
+                          can see what the network actually has free.
+          NO_VLANS      — topology joined at zero rate; VLAN ids are exhausted.
+          NO_TOPOLOGY   — endpoints not joined in the model at all.
+          FEASIBLE_IN_MODEL — model says it fits; SENSE-O refused for another reason.
+          UNKNOWN       — fetch or parse failed; failure_reason is left as-is.
+        """
+        src = req.src_site.name if req.src_site else None
+        dst = req.dst_site.name if req.dst_site else None
+        need = req.allocated_bandwidth_mbps or 0.0
+
+        if not src or not dst:
+            return
+
+        result = check_path(src_site=src, dst_site=dst, need_mbps=need)
+
+        if result.verdict == "UNKNOWN":
+            # Model fetch or parse failed; leave failure_reason from mark_retry as-is.
+            logging.warning(
+                f"sense_model probe for {req.rule_id} returned UNKNOWN: {result.detail}"
+            )
+            return
+
+        logging.info(
+            f"sense_model probe for {req.rule_id}: "
+            f"verdict={result.verdict} | {result.detail}"
+        )
+
+        # Map verdict -> triage kind constant (for the refined failure_reason string).
+        verdict_kind = {
+            "NO_CAPACITY":       NO_CAPACITY,
+            "NO_VLANS":          NO_VLANS,
+            "NO_TOPOLOGY":       NO_TOPOLOGY,
+            "FEASIBLE_IN_MODEL": "feasible_in_model",
+        }.get(result.verdict, result.verdict.lower())
+
+        refined_reason = f"[{verdict_kind}] {result.detail}"
+        req.set_failure_reason(refined_reason, session=session)
+
+        if result.verdict == "NO_CAPACITY" and result.bottleneck_free_mbps is not None:
+            req.set_available_bandwidth(result.bottleneck_free_mbps, session=session)
 
     @staticmethod
     def _discard_failed_instance(req, session):

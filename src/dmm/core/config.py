@@ -47,12 +47,15 @@ def get_config() -> ConfigParser.ConfigParser:
                 __CONFIG = Config()
     return __CONFIG.parser
 
-def config_get(section, option, default=_UNSET, extract_function=ConfigParser.ConfigParser.get) -> str:
+def config_get(section, option, default=_UNSET, extract_function=ConfigParser.ConfigParser.get, quiet=False) -> str:
     """
     Get a string from the configuration file.
 
     Pass ``default=None`` to return ``None`` when the key is absent (valid fallback).
     Omit ``default`` entirely to raise an exception when the key is absent.
+    ``quiet`` leaves logging a missing key to the caller - the typed getters below,
+    which know their own default and would otherwise log an ERROR for every
+    option that falls back to it.
     """
     global __CONFIG
     logging.debug(f"Getting config option {option} from section {section}")
@@ -62,13 +65,15 @@ def config_get(section, option, default=_UNSET, extract_function=ConfigParser.Co
         if default is not _UNSET:
             return default
         else:
-            logging.error(f"No section '{section}' found, and no default provided")
+            if not quiet:
+                logging.error(f"No section '{section}' found, and no default provided")
             raise
     except ConfigParser.NoOptionError:
         if default is not _UNSET:
             return default
         else:
-            logging.error(f"No option '{option}' found in section '{section}', and no default provided")
+            if not quiet:
+                logging.error(f"No option '{option}' found in section '{section}', and no default provided")
             raise
 
 def config_get_bool(section, option, default=_UNSET) -> bool:
@@ -79,7 +84,7 @@ def config_get_bool(section, option, default=_UNSET) -> bool:
     Omit ``default`` entirely to raise an exception when the key is absent.
     """
     try:
-        return config_get(section, option, extract_function=ConfigParser.ConfigParser.getboolean)
+        return config_get(section, option, extract_function=ConfigParser.ConfigParser.getboolean, quiet=True)
     except ConfigParser.NoSectionError:
         if default is not _UNSET:
             return default
@@ -104,7 +109,7 @@ def config_get_int(section, option, default=_UNSET, constraint=None) -> int:
     Omit ``default`` entirely to raise an exception when the key is absent.
     """
     try:
-        value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getint)
+        value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getint, quiet=True)
         if constraint:
             if constraint == "pos" and value <= 0:
                 raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint 'positive'")
@@ -135,7 +140,7 @@ def config_get_float(section, option, default=_UNSET, constraint=None) -> float:
     Omit ``default`` entirely to raise an exception when the key is absent.
     """
     try:
-        value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getfloat)
+        value = config_get(section, option, extract_function=ConfigParser.ConfigParser.getfloat, quiet=True)
         if constraint:
             if constraint == "pos" and value <= 0:
                 raise ValueError(f"Value {value} for option '{option}' in section '{section}' does not satisfy constraint 'positive'")
