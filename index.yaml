@@ -1,0 +1,14 @@
+apiVersion: v1
+entries:
+  dmm:
+  - apiVersion: v2
+    appVersion: latest
+    created: "2026-11-05T21:11:12.330153627Z"
+    description: A Helm chart for the Data Movement Manager (DMM)
+    digest: e9ffd4b3c7f0de84a1d547c4ee22163f6bc4aeccb0dd6fd9ff019c8a995844d2
+    name: dmm
+    type: application
+    urls:
+    - https://github.com/aashayarora/rucio-sense-dmm/releases/download/dmm-0.2.0/dmm-0.2.0.tgz
+    version: 0.2.0
+generated: "2026-11-05T21:11:12.33016221Z"
