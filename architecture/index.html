@@ -1,0 +1,1514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DMM Architecture</title>
+<meta name="description" content="Technical reference for the Data Movement Manager: daemons, data models, request lifecycle, bandwidth optimisation and SENSE/Rucio/FTS integration.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232457c5'/%3E%3Cpath d='M8 22V10h5.5a6 6 0 010 12H8zm3-3h2.4a3 3 0 000-6H11v6zM19 22V10h3l2 6 2-6h3v12h-3v-6l-2 5-2-5v6h-3z' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fbfbfa; --surface: #ffffff; --sunken: #f3f3f1; --text: #1f2328; --muted: #5d636b;
+  --faint: #8a9099; --border: #e2e2de; --accent: #2457c5; --accent-soft: #e8eefb;
+  --callout: #f4f7fd; --callout-edge: #9db5ea;
+  --tok-k: #a3218f; --tok-s: #0b7a3e; --tok-c: #6e7781; --tok-n: #0550ae; --tok-f: #8250df; --tok-t: #953800;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317; --surface: #171a1f; --sunken: #1c2027; --text: #e4e6ea; --muted: #a2a8b1;
+    --faint: #737a85; --border: #2b3038; --accent: #7aa7ff; --accent-soft: #1b2a47;
+    --callout: #151d2c; --callout-edge: #3b5893;
+    --tok-k: #ff8fd8; --tok-s: #7ee2a8; --tok-c: #8b949e; --tok-n: #8cc4ff; --tok-f: #d2a8ff; --tok-t: #ffb77c;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 4.5rem; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.65 var(--sans); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.topbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1rem;
+  height: 3.25rem; padding: 0 1.25rem; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.brand { font-weight: 650; color: var(--text); letter-spacing: -0.01em; }
+.brand span { color: var(--muted); font-weight: 450; }
+.topbar nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: 0.9rem; }
+.topbar nav a { color: var(--muted); }
+.topbar nav a:hover, .topbar nav a[aria-current] { color: var(--text); text-decoration: none; }
+
+.layout { display: grid; grid-template-columns: 17rem minmax(0, 1fr); max-width: 82rem; margin: 0 auto; }
+.sidebar { position: sticky; top: 3.25rem; height: calc(100vh - 3.25rem); overflow-y: auto;
+  padding: 1.75rem 1rem 3rem 1.25rem; border-right: 1px solid var(--border); font-size: 0.85rem; }
+.sidebar h2 { margin: 0 0 0.75rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); }
+.sidebar ol { list-style: none; margin: 0; padding: 0; }
+.sidebar li > a { display: block; padding: 0.22rem 0.6rem; border-radius: 6px; color: var(--muted); line-height: 1.4; }
+.sidebar li > a:hover { background: var(--sunken); color: var(--text); text-decoration: none; }
+.sidebar li > a.active { background: var(--accent-soft); color: var(--accent); }
+.sidebar .l2 { margin-top: 0.6rem; }
+.sidebar .l2 > a { color: var(--text); font-weight: 600; }
+.sidebar .l3 > a { padding-left: 1.4rem; }
+.sidebar code { font-size: 0.95em; background: none; padding: 0; }
+
+main { min-width: 0; padding: 2.5rem 3rem 6rem; }
+.doc { max-width: 52rem; }
+.doc-head { margin-bottom: 2.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+.doc-head h1 { margin: 0 0 0.5rem; font-size: 2.1rem; line-height: 1.2; letter-spacing: -0.02em; }
+.doc-head p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+
+.doc h2 { margin: 3.5rem 0 1rem; padding-top: 0.5rem; font-size: 1.6rem; line-height: 1.25; letter-spacing: -0.015em; }
+.doc h3 { margin: 2.5rem 0 0.75rem; font-size: 1.22rem; line-height: 1.3; }
+.doc h4 { margin: 2rem 0 0.5rem; font-size: 1.02rem; }
+.doc h2, .doc h3, .doc h4 { position: relative; }
+.anchor { position: absolute; left: -1.1em; width: 1em; color: var(--faint); opacity: 0; font-weight: 400; }
+h2:hover .anchor, h3:hover .anchor, h4:hover .anchor, .anchor:focus { opacity: 1; text-decoration: none; }
+.doc p, .doc ul, .doc ol { margin: 0 0 1rem; }
+.doc li { margin: 0.2rem 0; }
+.doc li > ul, .doc li > ol { margin: 0.2rem 0 0; }
+.doc hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+.doc strong { font-weight: 650; }
+
+code { font-family: var(--mono); font-size: 0.86em; background: var(--sunken); padding: 0.12em 0.38em; border-radius: 5px; }
+.doc p code, .doc li code { overflow-wrap: anywhere; }
+.code { position: relative; margin: 0 0 1.25rem; background: var(--sunken); border: 1px solid var(--border); border-radius: 10px; }
+.code pre { margin: 0; padding: 1rem 1.1rem; overflow-x: auto; font: 0.82rem/1.6 var(--mono); }
+.code pre code { background: none; padding: 0; font-size: inherit; }
+.code-lang { position: absolute; top: 0.4rem; right: 0.6rem; font: 0.68rem var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.code .k, .code .kn, .code .kd, .code .kr, .code .kp, .code .ow { color: var(--tok-k); }
+.code .kc, .code .kt, .code .nb, .code .bp { color: var(--tok-t); }
+.code .s, .code .s1, .code .s2, .code .sd, .code .sa, .code .si, .code .se, .code .dl { color: var(--tok-s); }
+.code .c, .code .c1, .code .cm, .code .ch, .code .cs, .code .sd { color: var(--tok-c); font-style: italic; }
+.code .m, .code .mi, .code .mf, .code .mh, .code .il, .code .nt, .code .na { color: var(--tok-n); }
+.code .nf, .code .nc, .code .fm, .code .nd { color: var(--tok-f); }
+
+.table-wrap { margin: 0 0 1.5rem; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+th, td { padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--sunken); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+
+blockquote { margin: 0 0 1.25rem; padding: 0.8rem 1.1rem; background: var(--callout); border-left: 3px solid var(--callout-edge); border-radius: 0 8px 8px 0; }
+blockquote p:last-child { margin-bottom: 0; }
+
+.diagram { margin: 0 0 1.5rem; padding: 1.25rem; overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.diagram pre.mermaid { margin: 0; font: 0.78rem/1.5 var(--mono); color: var(--muted); white-space: pre; text-align: center; }
+.diagram pre.mermaid[data-processed] { white-space: normal; font-family: var(--sans); color: inherit; }
+.diagram svg { display: block; margin: 0 auto; height: auto; }
+
+@media (max-width: 1000px) {
+  .layout { display: block; }
+  .sidebar { display: none; }
+  main { padding: 1.75rem 16px 4rem; }
+  .doc-head h1 { font-size: 1.65rem; }
+  .doc h2 { font-size: 1.4rem; }
+  .anchor { display: none; }
+  .topbar { padding: 0 16px; }
+  .mobile-hide { display: none; }
+}
+
+/* landing */
+.landing { max-width: 46rem; margin: 0 auto; padding: 4rem 16px 6rem; }
+.landing h1 { margin: 0 0 0.75rem; font-size: 2.4rem; line-height: 1.15; letter-spacing: -0.025em; }
+.landing .lede { margin: 0 0 2.5rem; color: var(--muted); font-size: 1.08rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; margin-bottom: 3rem; }
+.card { display: block; padding: 1.2rem 1.3rem; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; color: var(--text); }
+.card:hover { border-color: var(--accent); text-decoration: none; }
+.card strong { display: block; margin-bottom: 0.3rem; font-size: 1.02rem; }
+.card span { color: var(--muted); font-size: 0.9rem; }
+.landing h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
+.landing p { margin: 0 0 1rem; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../">DMM <span class="mobile-hide">Data Movement Manager</span></a>
+  <nav><a href="../">Home</a><a href="../architecture/" aria-current="page">Architecture</a><a href="https://github.com/aashayarora/rucio-sense-dmm">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar"><h2>On this page</h2><ol><li class="l2"><a href="#1-architecture-how-dmm-is-built">1. Architecture: How DMM is Built</a></li><li class="l3"><a href="#11-the-architecture-pattern-state-machine-micro-daemons">1.1 The Architecture Pattern: State-Machine Micro-Daemons</a></li><li class="l3"><a href="#12-technology-stack">1.2 Technology Stack</a></li><li class="l3"><a href="#13-the-15-daemons-at-a-glance">1.3 The 15 Daemons at a Glance</a></li><li class="l3"><a href="#14-full-daemon-architecture-diagram">1.4 Full Daemon Architecture Diagram</a></li><li class="l2"><a href="#2-the-data-models">2. The Data Models</a></li><li class="l3"><a href="#21-the-request-model--the-source-of-truth">2.1 The <code>Request</code> Model — The Source of Truth</a></li><li class="l3"><a href="#211-request-status--failure-helper-methods">2.1.1 Request Status &amp; Failure Helper Methods</a></li><li class="l3"><a href="#22-the-requeststatus-enum--all-13-states">2.2 The <code>RequestStatus</code> Enum — All 13 States</a></li><li class="l3"><a href="#23-the-sensecircuitstatus-enum--sense-circuit-states">2.3 The <code>SenseCircuitStatus</code> Enum — SENSE Circuit States</a></li><li class="l3"><a href="#24-the-site-model">2.4 The <code>Site</code> Model</a></li><li class="l3"><a href="#25-the-endpoint-model">2.5 The <code>Endpoint</code> Model</a></li><li class="l3"><a href="#26-the-mesh-model">2.6 The <code>Mesh</code> Model</a></li><li class="l3"><a href="#27-entity-relationship-diagram">2.7 Entity-Relationship Diagram</a></li><li class="l3"><a href="#28-complete-request-state-machine">2.8 Complete Request State Machine</a></li><li class="l2"><a href="#3-the-complete-request-lifecycle">3. The Complete Request Lifecycle</a></li><li class="l3"><a href="#31-happy-path-step-by-step-narrative">3.1 Happy Path: Step-by-Step Narrative</a></li><li class="l3"><a href="#32-circuit-reuse-fast-path">3.2 Circuit Reuse Fast-Path</a></li><li class="l3"><a href="#33-error-paths-and-recovery">3.3 Error Paths and Recovery</a></li><li class="l2"><a href="#4-daemon-deep-dives">4. Daemon Deep Dives</a></li><li class="l3"><a href="#41-rucio-group">4.1 Rucio Group</a></li><li class="l3"><a href="#42-core-group">4.2 Core Group</a></li><li class="l3"><a href="#43-sense-group">4.3 SENSE Group</a></li><li class="l3"><a href="#44-fts-group">4.4 FTS Group</a></li><li class="l2"><a href="#5-the-optimization-engine-deciderdaemon">5. The Optimization Engine (DeciderDaemon)</a></li><li class="l3"><a href="#51-the-problem">5.1 The Problem</a></li><li class="l3"><a href="#52-graph-construction">5.2 Graph Construction</a></li><li class="l3"><a href="#53-linear-programming-lp-formulation">5.3 Linear Programming (LP) Formulation</a></li><li class="l3"><a href="#54-binary-search-optimization">5.4 Binary Search Optimization</a></li><li class="l3"><a href="#55-proportional-allocation-by-priority">5.5 Proportional Allocation by Priority</a></li><li class="l3"><a href="#56-bandwidth-rounding-and-caps">5.6 Bandwidth Rounding and Caps</a></li><li class="l3"><a href="#57-lp-optimization-flow">5.7 LP Optimization Flow</a></li><li class="l2"><a href="#6-external-system-integration">6. External System Integration</a></li><li class="l3"><a href="#61-sense-integration">6.1 SENSE Integration</a></li><li class="l3"><a href="#62-rucio-integration">6.2 Rucio Integration</a></li><li class="l3"><a href="#63-fts-integration">6.3 FTS Integration</a></li></ol></aside>
+<main>
+<article class="doc">
+<header class="doc-head"><h1>DMM (Data Movement Manager) — Complete Technical Reference</h1><p>Last updated 13 October 2026 &middot; generated from <code>DMM_Architecture.md</code></p></header>
+<h2 id="table-of-contents"><a class="anchor" href="#table-of-contents" aria-label="Link to this section">#</a>Table of Contents</h2>
+<ol>
+<li><a href="#1-architecture-how-dmm-is-built">Architecture: How DMM is Built</a></li>
+<li><a href="#2-the-data-models">The Data Models</a></li>
+<li><a href="#3-the-complete-request-lifecycle">The Complete Request Lifecycle</a></li>
+<li><a href="#4-daemon-deep-dives">Daemon Deep Dives</a></li>
+<li><a href="#5-the-optimization-engine-deciderdaemon">The Optimization Engine (DeciderDaemon)</a></li>
+<li><a href="#6-external-system-integration">External System Integration</a></li>
+</ol>
+<hr />
+<h2 id="1-architecture-how-dmm-is-built"><a class="anchor" href="#1-architecture-how-dmm-is-built" aria-label="Link to this section">#</a>1. Architecture: How DMM is Built</h2>
+<h3 id="11-the-architecture-pattern-state-machine-micro-daemons"><a class="anchor" href="#11-the-architecture-pattern-state-machine-micro-daemons" aria-label="Link to this section">#</a>1.1 The Architecture Pattern: State-Machine Micro-Daemons</h3>
+<p>DMM uses a pattern called <strong>State-Machine-based Choreography</strong> (also known as the Kubernetes Controller pattern). Here is the core idea:</p>
+<blockquote>
+<p><strong>Every transfer request has a &quot;status&quot; field in the database. Each daemon has a simple job: look for requests in a specific status, do one thing to them, and update their status.</strong></p>
+</blockquote>
+<p>This is powerful for three reasons:</p>
+<ol>
+<li><strong>Reliability (Idempotency)</strong>: If SENSE goes offline for 10 minutes, DMM just keeps retrying. When SENSE comes back, daemons pick up exactly where they left off — because the status is saved in the database, not in memory.</li>
+<li><strong>Asynchrony</strong>: Provisioning a SENSE circuit can take 30–120 seconds. One daemon &quot;fires&quot; the request; another daemon &quot;checks&quot; if it's done later. No blocking.</li>
+<li><strong>Separation of Concerns</strong>: The engineer writing <code>RucioInitDaemon</code> doesn't need to know anything about Linear Programming. They just need to write rules into the database.</li>
+</ol>
+<h3 id="12-technology-stack"><a class="anchor" href="#12-technology-stack" aria-label="Link to this section">#</a>1.2 Technology Stack</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">Layer</th>
+<th style="text-align:left">Technology</th>
+<th style="text-align:left">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>Language</strong></td>
+<td style="text-align:left">Python 3.10+</td>
+<td style="text-align:left">All DMM code</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Database ORM</strong></td>
+<td style="text-align:left">SQLModel + SQLAlchemy</td>
+<td style="text-align:left">Python ↔ SQL bridge</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Database (prod)</strong></td>
+<td style="text-align:left">PostgreSQL (psycopg2)</td>
+<td style="text-align:left">Persistent state storage</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Database (dev)</strong></td>
+<td style="text-align:left">SQLite</td>
+<td style="text-align:left">Lightweight local testing</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Web Framework</strong></td>
+<td style="text-align:left">FastAPI + Uvicorn</td>
+<td style="text-align:left">The monitoring frontend UI</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>SENSE Client</strong></td>
+<td style="text-align:left"><code>sense-client</code> Python library</td>
+<td style="text-align:left">Talks to SENSE-O REST API</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Rucio Client</strong></td>
+<td style="text-align:left"><code>rucio-client</code> Python library</td>
+<td style="text-align:left">Talks to Rucio REST API</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Math Library</strong></td>
+<td style="text-align:left">SciPy + NumPy + NetworkX</td>
+<td style="text-align:left">LP optimization and graph analysis</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="13-the-15-daemons-at-a-glance"><a class="anchor" href="#13-the-15-daemons-at-a-glance" aria-label="Link to this section">#</a>1.3 The 15 Daemons at a Glance</h3>
+<p>DMM runs <strong>15 independent daemon threads</strong> simultaneously. They all share the same PostgreSQL database.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">#</th>
+<th style="text-align:left">Daemon</th>
+<th style="text-align:left">Group</th>
+<th style="text-align:left">Runs Every</th>
+<th style="text-align:left">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left">1</td>
+<td style="text-align:left"><code>RefreshSiteDBDaemon</code></td>
+<td style="text-align:left">Core</td>
+<td style="text-align:left">2 hours</td>
+<td style="text-align:left">Bootstraps Site/Endpoint/Mesh tables</td>
+</tr>
+<tr>
+<td style="text-align:left">2</td>
+<td style="text-align:left"><code>RucioInitDaemon</code></td>
+<td style="text-align:left">Rucio</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Discovers new Rucio rules, creates <code>INIT</code> requests</td>
+</tr>
+<tr>
+<td style="text-align:left">3</td>
+<td style="text-align:left"><code>RucioModifierDaemon</code></td>
+<td style="text-align:left">Rucio</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Detects Rucio priority changes → <code>MODIFIED</code></td>
+</tr>
+<tr>
+<td style="text-align:left">4</td>
+<td style="text-align:left"><code>RucioFinisherDaemon</code></td>
+<td style="text-align:left">Rucio</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Detects completed rules → <code>FINISHED</code></td>
+</tr>
+<tr>
+<td style="text-align:left">5</td>
+<td style="text-align:left"><code>AllocatorDaemon</code></td>
+<td style="text-align:left">Core</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Reserves IPv6 endpoints via SENSE-O; implements circuit reuse</td>
+</tr>
+<tr>
+<td style="text-align:left">6</td>
+<td style="text-align:left"><code>DeciderDaemon</code></td>
+<td style="text-align:left">Core</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Runs LP optimization → assigns bandwidth</td>
+</tr>
+<tr>
+<td style="text-align:left">7</td>
+<td style="text-align:left"><code>MonitDaemon</code></td>
+<td style="text-align:left">Core</td>
+<td style="text-align:left">60s</td>
+<td style="text-align:left">Polls Prometheus switch counters for circuit throughput and health</td>
+</tr>
+<tr>
+<td style="text-align:left">8</td>
+<td style="text-align:left"><code>FTSMonitorDaemon</code></td>
+<td style="text-align:left">FTS</td>
+<td style="text-align:left">60s</td>
+<td style="text-align:left">Polls Rucio + FTS API for per-rule job status and byte counts</td>
+</tr>
+<tr>
+<td style="text-align:left">9</td>
+<td style="text-align:left"><code>SENSEStagerDaemon</code></td>
+<td style="text-align:left">SENSE</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Creates SENSE service intent (no bandwidth yet)</td>
+</tr>
+<tr>
+<td style="text-align:left">10</td>
+<td style="text-align:left"><code>SENSEProvisionerDaemon</code></td>
+<td style="text-align:left">SENSE</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Commits bandwidth and activates SENSE circuit</td>
+</tr>
+<tr>
+<td style="text-align:left">11</td>
+<td style="text-align:left"><code>SENSEModifierDaemon</code></td>
+<td style="text-align:left">SENSE</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Modifies live circuit bandwidth (STALE), throttles finished circuits</td>
+</tr>
+<tr>
+<td style="text-align:left">12</td>
+<td style="text-align:left"><code>SENSEHandlerDaemon</code></td>
+<td style="text-align:left">SENSE</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Polls circuit status, handles retries, affiliates endpoints, rebalances FTS</td>
+</tr>
+<tr>
+<td style="text-align:left">13</td>
+<td style="text-align:left"><code>SENSECancellerDaemon</code></td>
+<td style="text-align:left">SENSE</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Cancels SENSE circuits for finished transfers</td>
+</tr>
+<tr>
+<td style="text-align:left">14</td>
+<td style="text-align:left"><code>SENSEDeleterDaemon</code></td>
+<td style="text-align:left">SENSE</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Deletes SENSE instances, retires records</td>
+</tr>
+<tr>
+<td style="text-align:left">15</td>
+<td style="text-align:left"><code>FTSModifierDaemon</code></td>
+<td style="text-align:left">FTS</td>
+<td style="text-align:left">10–60s</td>
+<td style="text-align:left">Sets/clears FTS stream limits</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="14-full-daemon-architecture-diagram"><a class="anchor" href="#14-full-daemon-architecture-diagram" aria-label="Link to this section">#</a>1.4 Full Daemon Architecture Diagram</h3>
+<figure class="diagram"><pre class="mermaid">graph LR
+    subgraph &quot;Rucio Daemons&quot;
+        RINIT[RucioInitDaemon]
+        RMOD[RucioModifierDaemon]
+        RFIN[RucioFinisherDaemon]
+    end
+
+    subgraph &quot;Core Daemons&quot;
+        SITEDB[RefreshSiteDBDaemon]
+        ALLOC[AllocatorDaemon]
+        DECID[DeciderDaemon]
+        MONIT[MonitDaemon]
+    end
+
+    subgraph &quot;SENSE Daemons&quot;
+        STAGE[SENSEStagerDaemon]
+        PROV[SENSEProvisionerDaemon]
+        SMOD[SENSEModifierDaemon]
+        HAND[SENSEHandlerDaemon]
+        CANC[SENSECancellerDaemon]
+        DEL[SENSEDeleterDaemon]
+    end
+
+    subgraph &quot;FTS Daemons&quot;
+        FTSM[FTSModifierDaemon]
+        FTSMON[FTSMonitorDaemon]
+    end
+
+    DB[(PostgreSQL&lt;br/&gt;Database)]
+
+    RINIT &lt;--&gt;|INIT| DB
+    RMOD &lt;--&gt;|MODIFIED| DB
+    RFIN &lt;--&gt;|FINISHED| DB
+    SITEDB &lt;--&gt;|Site/Endpoint/Mesh| DB
+    ALLOC &lt;--&gt;|ALLOCATED| DB
+    DECID &lt;--&gt;|DECIDED/STALE| DB
+    MONIT &lt;--&gt;|metrics| DB
+    STAGE &lt;--&gt;|STAGED| DB
+    PROV &lt;--&gt;|PROVISIONED| DB
+    SMOD &lt;--&gt;|STALE-to-FINISHED| DB
+    HAND &lt;--&gt;|circuit status| DB
+    CANC &lt;--&gt;|CANCELED| DB
+    DEL &lt;--&gt;|DELETED| DB
+    FTSM &lt;--&gt;|FTS limits| DB
+    FTSMON &lt;--&gt;|FTS job status| DB
+
+    RINIT --&gt;|list_replication_rules| RucioAPI[Rucio API]
+    RMOD --&gt;|get_replication_rule| RucioAPI
+    RFIN --&gt;|get_rule_status| RucioAPI
+    FTSMON --&gt;|list_requests + get_job| RucioAPI
+
+    ALLOC --&gt;|allocate_address| SENSEAPI[SENSE-O API]
+    STAGE --&gt;|instance_create| SENSEAPI
+    PROV --&gt;|instance_operate provision| SENSEAPI
+    SMOD --&gt;|instance_modify| SENSEAPI
+    HAND --&gt;|instance_get_status| SENSEAPI
+    CANC --&gt;|instance_operate cancel| SENSEAPI
+    DEL --&gt;|instance_delete| SENSEAPI
+
+    FTSM --&gt;|modify_fts_config| FTSAPI[FTS REST API]
+    FTSMON --&gt;|get_job| FTSAPI
+</pre></figure>
+<hr />
+<h2 id="2-the-data-models"><a class="anchor" href="#2-the-data-models" aria-label="Link to this section">#</a>2. The Data Models</h2>
+<blockquote>
+<p><strong>What is a Database Model?</strong> A database model is a Python class that defines the structure of a table in the database. DMM uses a library called <strong>SQLModel</strong>, which lets you write Python classes and automatically creates SQL tables from them. Think of a model as the &quot;library card&quot; template — it defines what fields every card must have. An actual row in the table is a filled-out card.</p>
+</blockquote>
+<h3 id="21-the-request-model--the-source-of-truth"><a class="anchor" href="#21-the-request-model--the-source-of-truth" aria-label="Link to this section">#</a>2.1 The <code>Request</code> Model — The Source of Truth</h3>
+<p>Every transfer in DMM is represented by one row in the <code>request</code> table. This is the most important model.</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="c1"># src/dmm/models/request.py (annotated)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Request</span><span class="p">(</span><span class="n">ModelBase</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="n">rule_id</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># PRIMARY KEY — the Rucio rule UUID (e.g., "abc123...")</span>
+    <span class="n">transfer_status</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># The current STATE in the state machine (see below)</span>
+    <span class="n">priority</span><span class="p">:</span> <span class="nb">int</span>             <span class="c1"># Rucio rule priority (higher = more bandwidth)</span>
+    <span class="n">rule_size</span><span class="p">:</span> <span class="nb">float</span>          <span class="c1"># Total dataset size in bytes</span>
+    
+    <span class="c1"># SENSE circuit information</span>
+    <span class="n">sense_uuid</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># UUID of the SENSE circuit instance</span>
+    <span class="n">sense_src_uri</span><span class="p">:</span> <span class="nb">str</span>        <span class="c1"># SENSE endpoint URI for the source site</span>
+    <span class="n">sense_dst_uri</span><span class="p">:</span> <span class="nb">str</span>        <span class="c1"># SENSE endpoint URI for the destination site</span>
+    <span class="n">src_vlan</span><span class="p">:</span> <span class="nb">int</span>             <span class="c1"># VLAN tag at source (from provision/modify response; used for monitoring)</span>
+    <span class="n">dst_vlan</span><span class="p">:</span> <span class="nb">int</span>             <span class="c1"># VLAN tag at destination (from provision/modify response)</span>
+    <span class="n">sense_circuit_status</span><span class="p">:</span> <span class="nb">str</span> <span class="c1"># Real-time status from SENSE-O (e.g., "CREATE - READY")</span>
+    <span class="n">sense_affiliated</span><span class="p">:</span> <span class="nb">bool</span>    <span class="c1"># Whether endpoints have been affiliated with the circuit</span>
+    <span class="n">sense_alloc_rule_id</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># rule_id of the original allocating request (for circuit reuse)</span>
+    <span class="n">sense_provisioned_at</span><span class="p">:</span> <span class="n">dt</span>  <span class="c1"># Timestamp when circuit first became READY</span>
+    <span class="n">sense_retries</span><span class="p">:</span> <span class="nb">int</span>        <span class="c1"># Number of retry attempts</span>
+    <span class="n">sense_status_since</span><span class="p">:</span> <span class="n">dt</span>    <span class="c1"># When sense_circuit_status last changed (for stall detection)</span>
+    <span class="n">sense_next_attempt_at</span><span class="p">:</span> <span class="n">dt</span> <span class="c1"># Earliest time to retry a backoff-delayed SENSE call</span>
+    <span class="n">sense_escalation</span><span class="p">:</span> <span class="nb">str</span>     <span class="c1"># Active escalation label (set when admin intervention needed)</span>
+    <span class="n">sense_escalated_at</span><span class="p">:</span> <span class="n">dt</span>    <span class="c1"># When the escalation was raised</span>
+    <span class="n">sense_verify_sent_at</span><span class="p">:</span> <span class="n">dt</span>  <span class="c1"># When the last verify request was sent to SENSE-O</span>
+    
+    <span class="c1"># Bandwidth</span>
+    <span class="n">available_bandwidth_mbps</span><span class="p">:</span> <span class="nb">float</span>   <span class="c1"># What SENSE reported as available (from staging response)</span>
+    <span class="n">allocated_bandwidth_mbps</span><span class="p">:</span> <span class="nb">float</span>   <span class="c1"># What the LP optimizer decided to give this transfer</span>
+    <span class="n">previous_bandwidth_mbps</span><span class="p">:</span> <span class="nb">float</span>    <span class="c1"># Previous allocation (before a STALE update)</span>
+    
+    <span class="c1"># FTS stream limits</span>
+    <span class="n">fts_streams_current</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Current stream limit applied in FTS</span>
+    <span class="n">fts_streams_desired</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Target stream limit (set by SENSEHandlerDaemon)</span>
+    <span class="n">fts_delete_retries</span><span class="p">:</span> <span class="nb">int</span>   <span class="c1"># How many times FTSModifierDaemon tried (and failed) to remove the FTS config</span>
+    
+    <span class="c1"># FTS monitoring (JSON columns; populated by FTSMonitorDaemon)</span>
+    <span class="n">fts_jobs</span><span class="p">:</span> <span class="nb">dict</span>            <span class="c1"># Per-job-id dict of state, file counts, byte counts, timestamps</span>
+    <span class="n">fts_summary</span><span class="p">:</span> <span class="nb">dict</span>         <span class="c1"># Rolled-up progress across all jobs for this rule</span>
+    
+    <span class="c1"># Monitoring (circuit counters; populated by MonitDaemon)</span>
+    <span class="n">prometheus_throughput</span><span class="p">:</span> <span class="nb">float</span>  <span class="c1"># Last measured throughput in Mbps (from switch counters)</span>
+    <span class="n">prometheus_bytes</span><span class="p">:</span> <span class="nb">float</span>       <span class="c1"># Cumulative bytes seen on switch counters since circuit came up</span>
+    <span class="n">health</span><span class="p">:</span> <span class="nb">str</span>                   <span class="c1"># Health verdict: "1" (healthy), "0" (unhealthy), or None (unknown)</span>
+    <span class="n">health_source</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># Which signal produced the verdict: "circuit" or "fts"</span>
+    
+    <span class="c1"># Priority tracking</span>
+    <span class="n">modified_priority</span><span class="p">:</span> <span class="nb">int</span>    <span class="c1"># Priority value after a RucioModifierDaemon update (used by DeciderDaemon)</span>
+
+    <span class="c1"># Error tracking</span>
+    <span class="n">failure_reason</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># Why the request failed (truncated to 2000 chars)</span>
+    <span class="n">failed_at</span><span class="p">:</span> <span class="n">datetime</span>       <span class="c1"># When it failed</span>
+    <span class="n">rucio_finished_at</span><span class="p">:</span> <span class="n">datetime</span> <span class="c1"># When the Rucio rule completed</span>
+    
+    <span class="c1"># Logical site names (FEATURE-001: multi-logical-site support)</span>
+    <span class="n">src_logical_site</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># Rucio RSE name submitted — always populated by RucioInitDaemon.</span>
+    <span class="n">dst_logical_site</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># Rucio RSE name submitted — always populated by RucioInitDaemon.</span>
+    <span class="c1"># Optional[str] with default=None only to accommodate legacy records created before</span>
+    <span class="c1"># this feature was added, not because the field is ever conditionally omitted.</span>
+    <span class="c1"># src_pool_site / dst_pool_site are computed @properties (not stored columns):</span>
+    <span class="c1">#   return src_logical_site or src_site.name (logical name always wins if present)</span>
+    <span class="c1"># They select the SENSE-O pool: RUCIO_Site_BGP_Subnet_Pool-&lt;pool_site&gt;</span>
+
+    <span class="c1"># Foreign keys (relationships to other tables)</span>
+    <span class="n">src_site</span><span class="p">:</span> <span class="n">Site</span>            <span class="c1"># Source storage site (physical SENSE site)</span>
+    <span class="n">dst_site</span><span class="p">:</span> <span class="n">Site</span>            <span class="c1"># Destination storage site (physical SENSE site)</span>
+    <span class="n">src_endpoint</span><span class="p">:</span> <span class="n">Endpoint</span>    <span class="c1"># Source IPv6 endpoint range</span>
+    <span class="n">dst_endpoint</span><span class="p">:</span> <span class="n">Endpoint</span>    <span class="c1"># Destination IPv6 endpoint range</span>
+</code></pre></div>
+<h3 id="211-request-status--failure-helper-methods"><a class="anchor" href="#211-request-status--failure-helper-methods" aria-label="Link to this section">#</a>2.1.1 Request Status &amp; Failure Helper Methods</h3>
+<p>Instead of setting fields directly, daemons always call these methods on a <code>Request</code> object. Each one writes to the database atomically, keeping the record consistent.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:left">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>set_status(status)</code></td>
+<td style="text-align:left">Changes <code>transfer_status</code> and saves. Used for routine forward progress (e.g., <code>STAGED → DECIDED</code>).</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>mark_failed(reason)</code></td>
+<td style="text-align:left">Sets <code>transfer_status = FAILED</code>, records <code>failure_reason</code> (trimmed to 2 000 chars), and stamps <code>failed_at</code>. Use for <strong>permanent</strong> failures — the request will not be retried.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>mark_retry(reason)</code></td>
+<td style="text-align:left">Sets <code>transfer_status = RETRY</code> and records <code>failure_reason</code>. Use for <strong>transient</strong> errors (timeouts, temporary SENSE errors). <code>SENSEHandlerDaemon</code> will move the request back to <code>ALLOCATED</code> on the next cycle to try again.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>set_failure_reason(reason)</code></td>
+<td style="text-align:left">Records <code>failure_reason</code> without changing <code>transfer_status</code>. Useful for annotating an in-progress request with why a sub-step failed, while keeping it eligible to continue.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>clear_failure_reason()</code></td>
+<td style="text-align:left">Erases <code>failure_reason</code> and <code>failed_at</code>. Called when a request successfully recovers, so stale error messages don't show in the UI.</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><strong>Why a 2 000 character cap?</strong> SENSE error blobs and Python tracebacks can be very long. The cap (<code>FAILURE_REASON_MAX_LEN = 2000</code>) prevents runaway database row sizes while still keeping enough detail to diagnose most problems. The tail is replaced with <code>&quot;...&quot;</code>.</p>
+</blockquote>
+<h3 id="22-the-requeststatus-enum--all-13-states"><a class="anchor" href="#22-the-requeststatus-enum--all-13-states" aria-label="Link to this section">#</a>2.2 The <code>RequestStatus</code> Enum — All 13 States</h3>
+<p>This is the <strong>complete list</strong> of all states a request can be in. Understanding these is key to understanding DMM.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">Status</th>
+<th style="text-align:left">Plain English</th>
+<th style="text-align:left">Which Daemon sets it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>INIT</code></td>
+<td style="text-align:left">New Rucio rule detected, processing not yet started</td>
+<td style="text-align:left"><code>RucioInitDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>NOT_SENSE</code></td>
+<td style="text-align:left">This rule doesn't need a SENSE circuit (activity doesn't contain &quot;sense&quot;)</td>
+<td style="text-align:left"><code>RucioInitDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>ALLOCATED</code></td>
+<td style="text-align:left">IPv6 subnet addresses reserved; ready for SENSE circuit creation</td>
+<td style="text-align:left"><code>AllocatorDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>RETRY</code></td>
+<td style="text-align:left">A transient error occurred (SENSE timeout, etc.); will try again</td>
+<td style="text-align:left"><code>SENSEHandlerDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>FAILED</code></td>
+<td style="text-align:left">Permanently failed — max retries exhausted, bad configuration, or same-site guard</td>
+<td style="text-align:left"><code>RucioInitDaemon</code> (same-site guard, record created directly as FAILED) or <code>SENSEHandlerDaemon</code> (retries exhausted)</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>STAGED</code></td>
+<td style="text-align:left">SENSE circuit instance created and has a UUID; no bandwidth committed yet</td>
+<td style="text-align:left"><code>SENSEStagerDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>DECIDED</code></td>
+<td style="text-align:left">LP optimizer calculated the bandwidth share; ready to provision</td>
+<td style="text-align:left"><code>DeciderDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>PROVISIONED</code></td>
+<td style="text-align:left">SENSE circuit is live and carrying traffic at the allocated bandwidth</td>
+<td style="text-align:left"><code>SENSEProvisionerDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>STALE</code></td>
+<td style="text-align:left">Bandwidth needs to change (new transfer arrived or one finished — re-optimization result)</td>
+<td style="text-align:left"><code>DeciderDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MODIFIED</code></td>
+<td style="text-align:left">Rucio rule priority changed; triggers a re-optimization run</td>
+<td style="text-align:left"><code>RucioModifierDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>FINISHED</code></td>
+<td style="text-align:left">Rucio rule is done (OK/STUCK/deleted); SENSE circuit is being throttled/cancelled</td>
+<td style="text-align:left"><code>RucioFinisherDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CANCELED</code></td>
+<td style="text-align:left">SENSE circuit successfully cancelled; IPv6 endpoints freed</td>
+<td style="text-align:left"><code>SENSECancellerDaemon</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>DELETED</code></td>
+<td style="text-align:left">SENSE instance deleted; database record is fully retired</td>
+<td style="text-align:left"><code>SENSEDeleterDaemon</code></td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><strong>Note</strong>: There is no <code>FINISHED_R</code> state in the codebase. The <code>RucioFinisherDaemon</code> moves requests directly from <code>PROVISIONED</code>/<code>STALE</code>/<code>MODIFIED</code> to <code>FINISHED</code>. The <code>AllocatorDaemon</code> circuit reuse logic checks for <code>FINISHED</code> requests (not a separate <code>FINISHED_R</code> state). The single <code>FINISHED</code> status covers both the reuse-window and the throttle-then-cancel pipeline.</p>
+</blockquote>
+<h3 id="23-the-sensecircuitstatus-enum--sense-circuit-states"><a class="anchor" href="#23-the-sensecircuitstatus-enum--sense-circuit-states" aria-label="Link to this section">#</a>2.3 The <code>SenseCircuitStatus</code> Enum — SENSE Circuit States</h3>
+<p>These are the statuses that SENSE-O reports about a circuit. They are stored in <code>request.sense_circuit_status</code>.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">Status</th>
+<th style="text-align:left">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>CREATE - COMPILED</code></td>
+<td style="text-align:left">SENSE validated the intent but hasn't activated it yet</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CREATE - READY</code></td>
+<td style="text-align:left">Circuit is <strong>live and carrying traffic</strong> ✅</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CREATE - COMMITTING</code></td>
+<td style="text-align:left">SENSE is in the process of activating the circuit</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CREATE - COMMITTED</code></td>
+<td style="text-align:left">Activation committed, waiting for READY confirmation</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CREATE - FAILED</code></td>
+<td style="text-align:left">Circuit creation failed ❌</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MODIFY - READY</code></td>
+<td style="text-align:left">A bandwidth modification completed successfully ✅</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MODIFY - COMMITTING</code></td>
+<td style="text-align:left">SENSE is applying a bandwidth change</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MODIFY - COMMITTED</code></td>
+<td style="text-align:left">Modification committed, waiting for READY</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MODIFY - FAILED</code></td>
+<td style="text-align:left">Modification failed ❌ (circuit will be rebuilt)</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>REINSTATE - READY</code></td>
+<td style="text-align:left">Circuit reinstated after a temporary failure ✅</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CANCEL - COMPILED</code></td>
+<td style="text-align:left">Cancel was planned but failed during propagate to site RMs ❌ (force-retry; Issue #109 B1)</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CANCEL - COMMITTING</code></td>
+<td style="text-align:left">SENSE has accepted the cancel and is processing it internally</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CANCEL - COMMITTED</code></td>
+<td style="text-align:left">Cancel committed, waiting for READY confirmation</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CANCEL - READY</code></td>
+<td style="text-align:left">Circuit has been cancelled ✅</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>CANCEL - FAILED</code></td>
+<td style="text-align:left">Cancel failed after propagate ❌ (force-retry; Issue #109 B2)</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><strong>Note on <code>UNKNOWN</code></strong>: <code>UNKNOWN</code> is <strong>not</strong> a member of the <code>SenseCircuitStatus</code> Python enum. It is a raw string sentinel returned by <code>get_instance_status()</code> when SENSE-O returns <code>None</code> for a UUID it no longer recognizes (zombie circuit). <code>SENSEModifierDaemon</code> compares against this string directly (<code>if status == &quot;UNKNOWN&quot;</code>) and resets the request to <code>ALLOCATED</code> for re-staging.</p>
+</blockquote>
+<h3 id="24-the-site-model"><a class="anchor" href="#24-the-site-model" aria-label="Link to this section">#</a>2.4 The <code>Site</code> Model</h3>
+<p>Represents a storage site (RSE — Rucio Storage Element).</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="k">class</span><span class="w"> </span><span class="nc">Site</span><span class="p">(</span><span class="n">ModelBase</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># e.g., "T2_US_SDSC" — matches Rucio RSE name, PRIMARY KEY</span>
+    <span class="n">sense_uri</span><span class="p">:</span> <span class="nb">str</span>     <span class="c1"># e.g., "urn:ogf:network:sdsc.edu:2013:..."  — used in SENSE API calls</span>
+    <span class="n">query_url</span><span class="p">:</span> <span class="nb">str</span>     <span class="c1"># URL for querying site information</span>
+</code></pre></div>
+<h3 id="25-the-endpoint-model"><a class="anchor" href="#25-the-endpoint-model" aria-label="Link to this section">#</a>2.5 The <code>Endpoint</code> Model</h3>
+<p>Represents an IPv6 subnet range that can be assigned to a transfer. Each site has multiple endpoints in a pool; the Allocator picks one when a request starts.</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="k">class</span><span class="w"> </span><span class="nc">Endpoint</span><span class="p">(</span><span class="n">ModelBase</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>            <span class="c1"># Auto-incremented primary key</span>
+    <span class="n">ip_range</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># e.g., "2001:48d0:4001:1::0/64" — the IPv6 subnet (unique)</span>
+    <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># SENSE-provisioned XRootD hostname (e.g., "xrootd-sense.sdsc.edu")</span>
+                       <span class="c1"># This is what GET /query/{rule_id} returns to Rucio</span>
+    <span class="n">protocol</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># XRootD protocol info from Rucio (scheme, port, prefix)</span>
+    <span class="n">is_allocated</span><span class="p">:</span> <span class="nb">bool</span> <span class="c1"># True if currently in use by an active request</span>
+    <span class="n">site</span><span class="p">:</span> <span class="n">Site</span>         <span class="c1"># Which site this endpoint belongs to</span>
+</code></pre></div>
+<h3 id="26-the-mesh-model"><a class="anchor" href="#26-the-mesh-model" aria-label="Link to this section">#</a>2.6 The <code>Mesh</code> Model</h3>
+<p>Defines the &quot;road map&quot; — what network links exist between sites, their bandwidth capacity, and which VLAN tags to use.</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="k">class</span><span class="w"> </span><span class="nc">Mesh</span><span class="p">(</span><span class="n">ModelBase</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>                  <span class="c1"># Auto-incremented primary key</span>
+    <span class="n">site_1</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># e.g., "T2_US_SDSC"</span>
+    <span class="n">site_2</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># e.g., "T1_US_FNAL"</span>
+    <span class="n">vlan_range</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># e.g., "3602-3606" — VLAN tags for this link</span>
+    <span class="n">link_capacity_mbps</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># e.g., 100000 (100 Gbps) — physical link maximum</span>
+</code></pre></div>
+<p>DMM checks this to enforce: <em>&quot;I can't give this transfer 80 Gbps if the link between SDSC and FNAL only has 100 Gbps and 40 Gbps is already reserved.&quot;</em></p>
+<h3 id="27-entity-relationship-diagram"><a class="anchor" href="#27-entity-relationship-diagram" aria-label="Link to this section">#</a>2.7 Entity-Relationship Diagram</h3>
+<figure class="diagram"><pre class="mermaid">erDiagram
+    SITE {
+        string name PK
+        string sense_uri
+        string query_url
+    }
+    ENDPOINT {
+        int id PK
+        string ip_range
+        bool is_allocated
+        string site_name FK
+    }
+    MESH {
+        int id PK
+        string site_1 FK
+        string site_2 FK
+        string vlan_range
+        int link_capacity_mbps
+    }
+    REQUEST {
+        string rule_id PK
+        string transfer_status
+        int priority
+        float rule_size
+        string sense_uuid
+        string sense_circuit_status
+        float available_bandwidth_mbps
+        float allocated_bandwidth_mbps
+        int fts_streams_current
+        int fts_streams_desired
+        string failure_reason
+        string src_logical_site
+        string dst_logical_site
+        string src_site_ FK
+        string dst_site_ FK
+        int src_endpoint_ FK
+        int dst_endpoint_ FK
+    }
+
+    SITE ||--o{ ENDPOINT : &quot;has&quot;
+    SITE ||--o{ REQUEST : &quot;source of&quot;
+    SITE ||--o{ REQUEST : &quot;destination of&quot;
+    SITE ||--o{ MESH : &quot;connected via&quot;
+    ENDPOINT ||--o{ REQUEST : &quot;assigned to (src)&quot;
+    ENDPOINT ||--o{ REQUEST : &quot;assigned to (dst)&quot;
+</pre></figure>
+<h3 id="28-complete-request-state-machine"><a class="anchor" href="#28-complete-request-state-machine" aria-label="Link to this section">#</a>2.8 Complete Request State Machine</h3>
+<figure class="diagram"><pre class="mermaid">stateDiagram-v2
+    [*] --&gt; INIT : RucioInitDaemon discovers rule
+    INIT --&gt; NOT_SENSE : Activity does not contain &#x27;sense&#x27;
+    INIT --&gt; ALLOCATED : AllocatorDaemon reserves IPv6 endpoints
+    INIT --&gt; PROVISIONED : AllocatorDaemon finds live circuit&lt;br/&gt;for same site-pair (Circuit Reuse)
+
+    ALLOCATED --&gt; STAGED : SENSEStagerDaemon creates intent
+
+    STAGED --&gt; DECIDED : DeciderDaemon runs LP optimization
+
+    DECIDED --&gt; PROVISIONED : SENSEProvisionerDaemon activates circuit
+    DECIDED --&gt; RETRY : Provisioning error
+
+    PROVISIONED --&gt; STALE : DeciderDaemon recalculates&lt;br/&gt;(new transfer arrived or one finished)
+    PROVISIONED --&gt; MODIFIED : RucioModifierDaemon detects priority change
+    PROVISIONED --&gt; FINISHED : RucioFinisherDaemon sees rule OK/STUCK
+
+    STALE --&gt; PROVISIONED : SENSEModifierDaemon applies bandwidth change&lt;br/&gt;SENSEHandlerDaemon confirms
+    MODIFIED --&gt; STALE : DeciderDaemon re-runs LP
+
+    FINISHED --&gt; CANCELED : SENSECancellerDaemon cancels circuit
+    CANCELED --&gt; DELETED : SENSEDeleterDaemon deletes instance
+
+    RETRY --&gt; ALLOCATED : SENSEHandlerDaemon (no UUID yet)
+    RETRY --&gt; DECIDED : SENSEHandlerDaemon (UUID exists, re-provision)
+    [*] --&gt; FAILED : RucioInitDaemon same-site guard&lt;br/&gt;(created directly as FAILED)
+    RETRY --&gt; FAILED : Max retries exhausted
+
+    FAILED --&gt; [*]
+    DELETED --&gt; [*]
+    NOT_SENSE --&gt; [*]
+</pre></figure>
+<hr />
+<h2 id="3-the-complete-request-lifecycle"><a class="anchor" href="#3-the-complete-request-lifecycle" aria-label="Link to this section">#</a>3. The Complete Request Lifecycle</h2>
+<h3 id="31-happy-path-step-by-step-narrative"><a class="anchor" href="#31-happy-path-step-by-step-narrative" aria-label="Link to this section">#</a>3.1 Happy Path: Step-by-Step Narrative</h3>
+<p><em>Imagine: At 10:00 AM, a user submits a Rucio rule to copy a 5 TB dataset from SDSC to FNAL, with <code>activity=&quot;SENSE Test&quot;</code>. Here's exactly what happens:</em></p>
+<hr />
+<p><strong>Step 1: Discovery (10:00:15 AM)</strong></p>
+<p><code>RucioInitDaemon</code> is running every 10 seconds. It calls <code>client.list_replication_rules()</code> and scans each rule. It sees the new rule. It checks:</p>
+<ul>
+<li>Is this rule already in the DMM database? <strong>No.</strong></li>
+<li>Is the rule's state OK or STUCK? <strong>No</strong> (it's REPLICATING).</li>
+<li>Does the activity contain &quot;sense&quot;? <strong>Yes</strong> → this is a SENSE rule.</li>
+</ul>
+<p>It looks up <code>T2_US_SDSC</code> and <code>T1_US_FNAL</code> in the <code>Site</code> table, creates a <code>Request</code> record, and saves it with <code>transfer_status = INIT</code>.</p>
+<hr />
+<p><strong>Step 2: Endpoint Allocation (10:00:25 AM)</strong></p>
+<p><code>AllocatorDaemon</code> finds the request with status <code>INIT</code>. It first checks: <em>is there a <code>FINISHED</code> request for the same site pair?</em> No — this is a new site pair. So it:</p>
+<ol>
+<li>Calls SENSE-O's Address API to reserve a unique IPv6 subnet for SDSC and another for FNAL</li>
+<li>Finds matching <code>Endpoint</code> records in the database</li>
+<li>Marks both endpoints as <code>is_allocated = True</code></li>
+<li>Updates the request with the endpoints and sets <code>transfer_status = ALLOCATED</code></li>
+</ol>
+<hr />
+<p><strong>Step 3: SENSE Staging (10:00:35 AM)</strong></p>
+<p><code>SENSEStagerDaemon</code> finds the request with status <code>ALLOCATED</code>. It:</p>
+<ol>
+<li>Looks up the VLAN range for the SDSC↔FNAL link from the <code>Mesh</code> table (e.g., <code>&quot;3602-3606&quot;</code>)</li>
+<li>Sends a JSON &quot;intent&quot; to SENSE-O's <code>WorkflowCombinedApi</code>:<div class="code"><span class="code-lang">json</span><pre><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"service_profile_uuid"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"queries"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"ask"</span><span class="p">:</span><span class="w"> </span><span class="s2">"edit"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"options"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">        </span><span class="p">{</span><span class="nt">"data.connections[0].terminals[0].uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urn:ogf:network:sdsc.edu:..."</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="nt">"data.connections[0].terminals[0].ipv6_prefix_list"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2001:48d0:4001:1::0/64"</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="nt">"data.connections[0].terminals[1].uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urn:ogf:network:fnal.gov:..."</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="nt">"data.connections[0].terminals[1].ipv6_prefix_list"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2001:48d0:4002:1::0/64"</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="nt">"data.connections[0].terminals[0].vlan_tag"</span><span class="p">:</span><span class="w"> </span><span class="s2">"3602-3606"</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="nt">"data.connections[0].terminals[1].vlan_tag"</span><span class="p">:</span><span class="w"> </span><span class="s2">"3602-3606"</span><span class="p">}</span>
+<span class="w">      </span><span class="p">]</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"ask"</span><span class="p">:</span><span class="w"> </span><span class="s2">"total-block-maximum-bandwidth"</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">"alias"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abc123-rule-id"</span>
+<span class="p">}</span>
+</code></pre></div>
+</li>
+<li>SENSE-O responds with a <code>service_uuid</code> and the available bandwidth (e.g., 100,000 Mbps)</li>
+<li>DMM saves the UUID and available bandwidth, sets <code>transfer_status = STAGED</code></li>
+</ol>
+<hr />
+<p><strong>Step 4: Bandwidth Decision (10:00:45 AM)</strong></p>
+<p><code>DeciderDaemon</code> finds all requests in states <code>STAGED</code>, <code>PROVISIONED</code>, <code>STALE</code>, etc. It builds a network graph and runs a Linear Programming optimization (see Part 6) to decide how much bandwidth each transfer gets. For our transfer, let's say it gets <strong>80,000 Mbps (80 Gbps)</strong>.</p>
+<p>It updates <code>allocated_bandwidth_mbps = 80000</code> and sets <code>transfer_status = DECIDED</code>.</p>
+<hr />
+<p><strong>Step 5: SENSE Provisioning (10:00:55 AM)</strong></p>
+<p><code>SENSEProvisionerDaemon</code> finds the request with status <code>DECIDED</code>. It first checks: are there any <code>STALE</code> requests? No. It then checks the circuit's status in SENSE-O. If it's <code>CREATE - COMPILED</code> (ready to go), it:</p>
+<ol>
+<li>Sends a second intent to SENSE-O that includes the bandwidth:<div class="code"><span class="code-lang">json</span><pre><code><span class="p">{</span><span class="nt">"data.connections[0].bandwidth.capacity"</span><span class="p">:</span><span class="w"> </span><span class="s2">"80000"</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">}</span>
+</code></pre></div>
+</li>
+<li>Calls <code>instance_operate(&quot;provision&quot;, sync=&quot;true&quot;)</code> — telling SENSE-O to activate the circuit</li>
+<li>Sets <code>transfer_status = PROVISIONED</code></li>
+</ol>
+<hr />
+<p><strong>Step 6: FTS Throttling (10:01:05 AM)</strong></p>
+<p><code>SENSEHandlerDaemon</code> polls SENSE-O and sees the circuit is now <code>CREATE - READY</code> (active). It affiliates the endpoints with the circuit.</p>
+<p>Meanwhile, <code>FTSModifierDaemon</code> sees the request is <code>PROVISIONED</code> with <code>fts_streams_current (0) ≠ fts_streams_desired (120)</code>. It calls the FTS REST API to set <code>max_active = 120</code> streams for the SDSC→FNAL pair. FTS immediately starts using the dedicated SENSE lane.</p>
+<hr />
+<p><strong>Step 7: Completion (6:30 PM)</strong></p>
+<p><code>RucioFinisherDaemon</code> polls the rule's status and sees it changed to <code>OK</code>. It:</p>
+<ol>
+<li>Sets <code>transfer_status = FINISHED</code> (Rucio is done; circuit enters keep-alive + throttle pipeline)</li>
+<li>Stamps <code>rucio_finished_at = utcnow()</code> (used by the hold-period and keep-alive timers)</li>
+</ol>
+<blockquote>
+<p>Note: <code>RucioFinisherDaemon</code> does <strong>not</strong> touch <code>fts_streams_current</code>. The FTS stream cap cleanup happens later via <code>FTSModifierDaemon</code> when the request reaches <code>DELETED</code>.</p>
+</blockquote>
+<p><code>SENSEModifierDaemon</code> sees the <code>FINISHED</code> request. After a configurable <strong>hold period</strong> (<code>finished_r_hold_seconds</code>, default: 120 seconds) to allow circuit reuse, it throttles the circuit down to 1 Gbps by calling <code>modify_link(bandwidth_mbps=1000, ...)</code>. The throttle is submitted asynchronously; <code>SENSEHandlerDaemon</code> confirms completion when SENSE transitions to <code>MODIFY_READY</code>. The request remains in <code>FINISHED</code> status throughout — no status change is needed since <code>SENSECancellerDaemon</code> already picks up <code>FINISHED</code> requests.</p>
+<p>After the configurable <strong>keep-alive window</strong> (<code>sense_keep_alive_seconds</code>, default: 60 seconds), <code>SENSECancellerDaemon</code> cancels the SENSE circuit. Then <code>SENSEDeleterDaemon</code> deletes the instance. The record is set to <code>DELETED</code> and the lifecycle is complete.</p>
+<hr />
+<h3 id="32-circuit-reuse-fast-path"><a class="anchor" href="#32-circuit-reuse-fast-path" aria-label="Link to this section">#</a>3.2 Circuit Reuse Fast-Path</h3>
+<p><strong>What if a second transfer arrives for the same site pair while the first is in <code>FINISHED</code>?</strong></p>
+<p><code>AllocatorDaemon</code> checks for <code>FINISHED</code> requests with the same <strong>logical</strong> source and destination sites (<code>src_pool_site</code>/<code>dst_pool_site</code> must match exactly — a <code>T2_US_UCSD</code> rule cannot reuse a <code>T2_US_UCSD_Blackhole</code> circuit because the endpoint hostname handed to Rucio would be wrong). If found (and the SENSE UUID is still valid), it <strong>skips the entire staging/deciding/provisioning sequence</strong>:</p>
+<figure class="diagram"><pre class="mermaid">sequenceDiagram
+    participant AI as AllocatorDaemon
+    participant DB as Database
+    participant P as SENSEProvisionerDaemon
+
+    AI-&gt;&gt;DB: Find FINISHED requests for same site pair
+    DB--&gt;&gt;AI: Found req_fin with live circuit UUID
+    AI-&gt;&gt;DB: New request inherits sense_uuid, endpoints, bandwidth
+    AI-&gt;&gt;DB: new_request.status = PROVISIONED ⚡
+    AI-&gt;&gt;DB: req_fin.status = DELETED
+    Note over AI,P: Skipped: ALLOCATED→STAGED→DECIDED→PROVISIONED (saves ~2 minutes)
+</pre></figure>
+<p>The new transfer <strong>immediately reuses the live SENSE circuit</strong>. This is a significant optimization when the same site pair is frequently active.</p>
+<hr />
+<h3 id="33-error-paths-and-recovery"><a class="anchor" href="#33-error-paths-and-recovery" aria-label="Link to this section">#</a>3.3 Error Paths and Recovery</h3>
+<h4 id="retry--failed-flow"><a class="anchor" href="#retry--failed-flow" aria-label="Link to this section">#</a>RETRY / FAILED Flow</h4>
+<p>When a SENSE operation fails (timeout, API error), the daemon calls <code>req.mark_retry()</code>. <code>SENSEHandlerDaemon</code> then decides what to do:</p>
+<div class="code"><pre><code>RETRY (&lt; max_retries)
+  ├── If request already has a sense_uuid → set status to DECIDED (try re-provisioning)
+  └── If no sense_uuid → set status to ALLOCATED (try re-staging)
+
+RETRY (≥ max_retries) → FAILED (permanent, operator must investigate)
+</code></pre></div>
+<h4 id="zombie-circuit-recovery"><a class="anchor" href="#zombie-circuit-recovery" aria-label="Link to this section">#</a>Zombie Circuit Recovery</h4>
+<p>When SENSE-O's ConsistencyService cleans up an orphaned circuit, <code>get_instance_status()</code> returns <code>&quot;UNKNOWN&quot;</code>. <code>SENSEModifierDaemon</code> detects this and resets the request back to <code>ALLOCATED</code>:</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="n">req</span><span class="o">.</span><span class="n">update</span><span class="p">({</span>
+    <span class="s2">"sense_uuid"</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="s2">"sense_src_uri"</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="s2">"sense_affiliated"</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="s2">"transfer_status"</span><span class="p">:</span> <span class="n">RequestStatus</span><span class="o">.</span><span class="n">ALLOCATED</span><span class="p">,</span>
+<span class="p">})</span>
+</code></pre></div>
+<p>The stager then creates a <strong>fresh</strong> SENSE instance using the already-allocated IPv6 endpoints.</p>
+<h4 id="504-timeout-handling"><a class="anchor" href="#504-timeout-handling" aria-label="Link to this section">#</a>504 Timeout Handling</h4>
+<p>When SENSE API calls return 504 (gateway timeout), it usually means the operation is still in-flight. DMM handles this gracefully:</p>
+<ul>
+<li>For <code>provision</code>: marks as <code>PROVISIONED</code> (handler will confirm via status polling)</li>
+<li>For <code>modify</code> (STALE queue): marks circuit status as <code>MODIFY_COMMITTING</code> (handler confirms when SENSE reaches <code>MODIFY_READY</code>)</li>
+<li>For <code>modify</code> / throttle (<code>FINISHED</code> queue): same 504 treatment as above — marks <code>MODIFY_COMMITTING</code> and defers to handler. <strong>Non-transient errors</strong> (e.g., HTTP 500) are handled differently: the throttle is skipped entirely and the request is advanced directly to <code>FINISHED</code> so the cancellation pipeline is not blocked. (BUG-009)</li>
+</ul>
+<hr />
+<h2 id="4-daemon-deep-dives"><a class="anchor" href="#4-daemon-deep-dives" aria-label="Link to this section">#</a>4. Daemon Deep Dives</h2>
+<h3 id="41-rucio-group"><a class="anchor" href="#41-rucio-group" aria-label="Link to this section">#</a>4.1 Rucio Group</h3>
+<h4 id="rucioinitdaemon"><a class="anchor" href="#rucioinitdaemon" aria-label="Link to this section">#</a><code>RucioInitDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/rucio/initializer.py</code><br />
+<strong>Runs every</strong>: <code>rucio</code> frequency (default 10s)
+<strong>Input</strong>: Rucio API + database<br />
+<strong>Output</strong>: New <code>Request</code> records with status <code>INIT</code> (or <code>NOT_SENSE</code>)</p>
+<p><strong>Key logic</strong>:</p>
+<ul>
+<li><code>is_sense_rule(rule)</code>: checks if <code>rule['activity']</code> contains the string <code>&quot;sense&quot;</code> (case-insensitive)</li>
+<li>Skips rules already in DB, already OK, or already stuck</li>
+<li>Calls <code>resolve_physical_site(logical_name, session)</code> (from <code>src/dmm/core/sitemap.py</code>) to translate each Rucio RSE name (e.g., <code>T2_US_UCSD_Blackhole</code>) to its physical SENSE site (e.g., <code>T2_US_UCSD</code>)</li>
+<li>Looks up the physical <code>Site</code> record by the resolved name; if not found → skips (site must be registered via <code>RefreshSiteDBDaemon</code> first)</li>
+<li><strong>Same-physical-site guard</strong>: if <code>src_site == dst_site</code> after resolution (SENSE cannot provision a self-loop circuit), immediately sets <code>transfer_status = FAILED</code> with a descriptive <code>failure_reason</code></li>
+<li>Always records <code>src_logical_site</code> and <code>dst_logical_site</code> on every new <code>Request</code>, set to the raw Rucio RSE name (e.g., <code>T2_US_UCSD_Blackhole</code>). The fields are <code>Optional[str]</code> with <code>default=None</code> only to support legacy records predating this feature — <code>RucioInitDaemon</code> unconditionally stores them in <code>request_kwargs</code></li>
+<li>Calculates <code>rule_size</code> by summing file sizes in the dataset</li>
+</ul>
+<h4 id="ruciomodifierdaemon"><a class="anchor" href="#ruciomodifierdaemon" aria-label="Link to this section">#</a><code>RucioModifierDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/rucio/modifier.py</code><br />
+<strong>Runs every</strong>: <code>rucio</code> frequency<br />
+<strong>Purpose</strong>: Detects when a Rucio rule's priority changes and triggers re-optimization</p>
+<p>When a priority change is detected:</p>
+<ol>
+<li>Updates <code>request.priority</code> and <code>request.modified_priority</code></li>
+<li>Sets <code>transfer_status = MODIFIED</code></li>
+<li><code>DeciderDaemon</code> sees <code>MODIFIED</code> as an active request and re-runs the LP, which then sets <code>STALE</code> to trigger a bandwidth adjustment</li>
+</ol>
+<h4 id="ruciofinisherdaemon"><a class="anchor" href="#ruciofinisherdaemon" aria-label="Link to this section">#</a><code>RucioFinisherDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/rucio/finisher.py</code><br />
+<strong>Runs every</strong>: <code>rucio</code> frequency<br />
+<strong>Purpose</strong>: Monitors active transfers for completion</p>
+<p>Watches requests in statuses: <code>ALLOCATED</code>, <code>STAGED</code>, <code>DECIDED</code>, <code>PROVISIONED</code>, <code>STALE</code>, <code>MODIFIED</code>.</p>
+<p>Handles three Rucio terminal conditions:</p>
+<ul>
+<li><code>OK</code> → transfer complete normally → <code>FINISHED</code>; sets <code>rucio_finished_at</code> timestamp</li>
+<li><code>STUCK</code> → transfer stalled in Rucio → <code>FINISHED</code>; sets <code>rucio_finished_at</code> timestamp</li>
+<li><code>RuleNotFound</code> (Rucio reaper deleted it) → <code>FINISHED</code>; sets <code>rucio_finished_at</code> timestamp</li>
+</ul>
+<p><strong>Important</strong>: <code>RucioFinisherDaemon</code> does <strong>not</strong> reset <code>fts_streams_current</code> — the FTS stream cap is managed independently by <code>FTSModifierDaemon</code>. When the request eventually reaches <code>DELETED</code>, <code>FTSModifierDaemon._delete_request()</code> calls <code>delete_fts_config()</code> to remove the FTS cap, but only if <code>fts_streams_current != 0</code> and the endpoints are not in use by another request. If <code>delete_fts_config()</code> fails, it is retried up to <code>[fts] max_delete_retries</code> (default 3) times. The transfer still completes normally — FTS continues using the last-applied stream count until the cap is removed or expires.</p>
+<hr />
+<h3 id="42-core-group"><a class="anchor" href="#42-core-group" aria-label="Link to this section">#</a>4.2 Core Group</h3>
+<h4 id="refreshsitedbdaemon"><a class="anchor" href="#refreshsitedbdaemon" aria-label="Link to this section">#</a><code>RefreshSiteDBDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/core/sites.py</code><br />
+<strong>Runs every</strong>: 2 hours (<code>db</code> frequency), but <strong>runs once synchronously at startup before all other daemons</strong><br />
+<strong>Purpose</strong>: Populates <code>Site</code>, <code>Endpoint</code>, and <code>Mesh</code> tables from configuration</p>
+<p><code>run_once()</code> is called synchronously in <code>DMM.start()</code> before any daemon threads are launched. If it fails, startup logs a warning and <strong>continues anyway</strong> (non-fatal) — other daemons start up but may fail to process rules if site data is missing. Without site data, <code>RucioInitDaemon</code> cannot look up source/destination sites for new rules.</p>
+<h4 id="allocatordaemon"><a class="anchor" href="#allocatordaemon" aria-label="Link to this section">#</a><code>AllocatorDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/core/allocator.py</code><br />
+<strong>Runs every</strong>: <code>dmm</code> frequency<br />
+<strong>Input</strong>: <code>INIT</code> requests<br />
+<strong>Output</strong>: <code>ALLOCATED</code> requests (or <code>PROVISIONED</code> for circuit reuse)</p>
+<p><strong>Two code paths</strong>:</p>
+<p><em>Path 1 — Circuit Reuse</em> (checked first):</p>
+<div class="code"><pre><code>Find FINISHED requests for same logical site pair (src_pool_site + dst_pool_site)
+  → Logical pair must match exactly: T2_US_UCSD ≠ T2_US_UCSD_Blackhole
+  → Inherit sense_uuid, endpoints, URIs, bandwidth from the finished request
+  → Skip directly to PROVISIONED
+  → Mark finished request as DELETED
+</code></pre></div>
+<p><em>Path 2 — Fresh Allocation</em>:</p>
+<div class="code"><pre><code>Call SENSE-O AddressAPI to reserve IPv6 subnet, using the logical site name (src_pool_site)
+  → Pool name: RUCIO_Site_BGP_Subnet_Pool-&lt;src_pool_site&gt;  (logical, not physical)
+  → Find matching Endpoint records
+  → Mark endpoints as is_allocated=True
+  → Update request with endpoints
+  → Set status = ALLOCATED
+</code></pre></div>
+<p>On any error: rolls back DB changes, frees the SENSE-O address allocation, marks request as FAILED.</p>
+<h4 id="deciderdaemon"><a class="anchor" href="#deciderdaemon" aria-label="Link to this section">#</a><code>DeciderDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/core/decider.py</code><br />
+<strong>Runs every</strong>: <code>dmm</code> frequency<br />
+<strong>Purpose</strong>: Runs bandwidth optimization across all active transfers</p>
+<p><em>(See Part 6 for the full deep dive)</em></p>
+<p><strong>High-level flow</strong>:</p>
+<ol>
+<li>Build a MultiGraph from requests in statuses: <code>MODIFIED</code>, <code>DECIDED</code>, <code>STALE</code>, <code>STAGED</code>, <code>PROVISIONED</code>, <code>FINISHED</code> (note: <code>FINISHED</code> is included so throttling-down circuits still participate in bandwidth accounting — they continue to hold their reserved capacity on the link until cancelled)</li>
+<li>Simplify to a Graph (one edge per site-pair link)</li>
+<li>Build LP matrices (constraints: link capacity, available bandwidth)</li>
+<li>Solve LP with binary search to find maximum feasible minimum floor</li>
+<li>Distribute bandwidth proportionally by priority within each link</li>
+<li>For new (<code>STAGED</code>) requests: set bandwidth → <code>DECIDED</code></li>
+<li>For existing (<code>PROVISIONED</code>, <code>MODIFIED</code>) requests: if bandwidth changed → <code>STALE</code></li>
+</ol>
+<h4 id="monitdaemon"><a class="anchor" href="#monitdaemon" aria-label="Link to this section">#</a><code>MonitDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/core/monit.py</code><br />
+<strong>Runs every</strong>: <code>monit</code> frequency (default 60s)<br />
+<strong>Purpose</strong>: Reads switch counters from Prometheus to compute circuit throughput and a health verdict; falls back to FTS job data when switch counters are unavailable</p>
+<hr />
+<h3 id="43-sense-group"><a class="anchor" href="#43-sense-group" aria-label="Link to this section">#</a>4.3 SENSE Group</h3>
+<h4 id="sensestagerdaemon"><a class="anchor" href="#sensestagerdaemon" aria-label="Link to this section">#</a><code>SENSEStagerDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/sense/stager.py</code><br />
+<strong>Input</strong>: <code>ALLOCATED</code> requests<br />
+<strong>Output</strong>: <code>STAGED</code> requests</p>
+<p><strong>Key behaviors</strong>:</p>
+<ul>
+<li>Sends a SENSE &quot;intent&quot; that describes the circuit topology (sites, IPs, VLANs) but does NOT commit bandwidth</li>
+<li>SENSE responds with a <code>service_uuid</code> — this is the circuit identifier for all future operations</li>
+<li>Also receives the <strong>available bandwidth</strong> from SENSE's <code>total-block-maximum-bandwidth</code> query</li>
+<li><strong>Safety cap</strong>: If SENSE reports available BW &gt; mesh link capacity, caps it to mesh capacity (prevents SENSE from reporting stale data)</li>
+</ul>
+<h4 id="senseprovisionerdaemon"><a class="anchor" href="#senseprovisionerdaemon" aria-label="Link to this section">#</a><code>SENSEProvisionerDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/sense/provisioner.py</code><br />
+<strong>Input</strong>: <code>DECIDED</code> requests<br />
+<strong>Output</strong>: <code>PROVISIONED</code> requests</p>
+<p><strong>Key guards</strong>:</p>
+<ul>
+<li><strong>Will not run if any STALE requests exist</strong> — waits for all bandwidth adjustments to complete before provisioning new circuits (prevents over-committing link capacity)</li>
+<li>Will not provision if circuit is already in a &quot;committing&quot; state (avoids duplicate calls)</li>
+<li>Handles <code>CREATE_READY</code> (already active) → marks <code>PROVISIONED</code> without calling SENSE</li>
+<li>Handles <code>CREATE_FAILED</code> → marks <code>RETRY</code></li>
+</ul>
+<h4 id="sensemodifierdaemon"><a class="anchor" href="#sensemodifierdaemon" aria-label="Link to this section">#</a><code>SENSEModifierDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/sense/modifier.py</code><br />
+<strong>Input</strong>: <code>STALE</code> requests (bandwidth change) + <code>FINISHED</code> requests (cleanup)<br />
+<strong>Output</strong>: <code>PROVISIONED</code> (after modify) / <code>FINISHED</code> (after throttle, or if throttle fails with a non-transient error) / <code>ALLOCATED</code> (zombie reset)</p>
+<p><strong>Processes two separate queues</strong>:</p>
+<ol>
+<li>
+<p><strong><code>FINISHED</code> queue</strong> — throttle circuits down to 1 Gbps to release capacity:</p>
+<ul>
+<li><strong>Grace period</strong>: Holds for <code>finished_r_hold_seconds</code> (default: 120s) after <code>rucio_finished_at</code> before throttling — gives circuit reuse a chance to happen first</li>
+<li><strong>Reuse detection</strong>: If the circuit UUID is now owned by another <code>PROVISIONED</code> request, marks this request as <code>DELETED</code> directly — bypasses the throttle entirely since the circuit is actively used by the new transfer</li>
+<li>Calls <code>modify_link(bandwidth_mbps=1000, ...)</code> — submitted asynchronously; <code>SENSEHandlerDaemon</code> confirms when SENSE reaches <code>MODIFY_READY</code>, then sets status to <code>FINISHED</code></li>
+<li><strong>Non-transient failure</strong> (e.g., HTTP 500 MCE routing-policy error): throttle is skipped; request is advanced <strong>directly to <code>FINISHED</code></strong> so <code>SENSECancellerDaemon</code> can proceed with cancellation at whatever bandwidth the circuit currently holds. The error is fully logged with traceback. (BUG-009)</li>
+<li><strong>504 timeout</strong>: circuit status set to <code>MODIFY_COMMITTING</code>; <code>SENSEHandlerDaemon</code> confirms via polling — same as a successful submit</li>
+</ul>
+</li>
+<li>
+<p><strong><code>STALE</code> queue</strong> — apply new bandwidth from optimizer:</p>
+<ul>
+<li><strong>Sorts by <code>allocated - previous</code> bandwidth</strong> (ascending) — processes bandwidth-reducing modifications <em>first</em>, making capacity available before expanding others</li>
+<li>Calls <code>modify_link(bandwidth_mbps=req.allocated_bandwidth_mbps, ...)</code></li>
+<li>Sets <code>sense_circuit_status = MODIFY_COMMITTING</code> optimistically</li>
+<li><code>SENSEHandlerDaemon</code> confirms by polling until <code>MODIFY_READY</code> → sets <code>PROVISIONED</code></li>
+</ul>
+</li>
+</ol>
+<p><strong>Zombie recovery</strong>: If <code>sense_circuit_status == &quot;UNKNOWN&quot;</code> → resets to <code>ALLOCATED</code> for re-staging.</p>
+<h4 id="sensehandlerdaemon"><a class="anchor" href="#sensehandlerdaemon" aria-label="Link to this section">#</a><code>SENSEHandlerDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/sense/handler.py</code><br />
+<strong>Runs every</strong>: <code>sense</code> frequency<br />
+<strong>Purpose</strong>: The &quot;heartbeat&quot; — the most multifunctional daemon</p>
+<p>Handles requests in statuses: <code>RETRY</code>, <code>STAGED</code>, <code>PROVISIONED</code>, <code>CANCELED</code>, <code>STALE</code>, <code>DECIDED</code>, <code>FINISHED</code></p>
+<p><strong>Responsibilities</strong>:</p>
+<ol>
+<li>
+<p><strong>Retry Management</strong>: If <code>RETRY</code> and <code>sense_retries &lt; max_retries</code> → increment retries, move to <code>ALLOCATED</code> or <code>DECIDED</code>. If <code>sense_retries &gt;= max_retries</code> → <code>FAILED</code>.</p>
+</li>
+<li>
+<p><strong>Status Polling</strong>: For every request with a <code>sense_uuid</code>, calls <code>get_instance_status()</code> and updates <code>sense_circuit_status</code> in the database.</p>
+</li>
+<li>
+<p><strong>Endpoint Affiliation</strong>: When circuit reaches <code>CREATE_COMPILED</code> or later, calls SENSE-O to &quot;affiliate&quot; the IP endpoints with the circuit. Sets <code>sense_affiliated = True</code>.</p>
+</li>
+<li>
+<p><strong>Provisioning Timestamp</strong>: When circuit first reaches <code>CREATE_READY</code>, records <code>sense_provisioned_at</code>.</p>
+</li>
+<li>
+<p><strong>Failure Detection</strong>:</p>
+<ul>
+<li><code>CREATE_FAILED</code> while <code>PROVISIONED</code> → mark <code>RETRY</code></li>
+<li><code>MODIFY_FAILED</code> while <code>PROVISIONED</code> → re-queue as <code>STALE</code> for modifier to rebuild</li>
+<li><code>MODIFY_COMMITTING</code> → <code>MODIFY_READY</code> transition → confirm <code>PROVISIONED</code></li>
+</ul>
+</li>
+<li>
+<p><strong>FTS Stream Rebalancing</strong>: After processing all status updates, calls <code>_rebalance_fts_streams()</code>:</p>
+<ul>
+<li>Groups all <code>PROVISIONED</code> requests with active circuits by site-pair</li>
+<li>For each site-pair, reads the maximum stream cap from config (e.g., <code>T2_US_SDSC-T1_US_FNAL=200</code>)</li>
+<li>Distributes streams proportionally by priority (using largest-remainder method for fairness)</li>
+<li>Updates <code>fts_streams_desired</code> on each request</li>
+</ul>
+</li>
+</ol>
+<h4 id="sensecancellerdaemon"><a class="anchor" href="#sensecancellerdaemon" aria-label="Link to this section">#</a><code>SENSECancellerDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/sense/canceller.py</code>
+<strong>Input</strong>: <code>FINISHED</code> requests
+<strong>Output</strong>: <code>CANCELED</code> requests</p>
+<p><strong>Key behaviors</strong>:</p>
+<ul>
+<li><strong>Keep-Alive Window</strong>: Waits <code>sense_keep_alive_seconds</code> (default 60s) after <code>rucio_finished_at</code> before cancelling — gives circuit reuse a chance to happen</li>
+<li><strong>Reuse Safety Check</strong>: If another <code>PROVISIONED</code>/<code>STAGED</code> request shares the same <code>sense_uuid</code>, skips cancellation (the circuit is being reused) and directly marks <code>DELETED</code></li>
+<li><strong>Live Status Fetch</strong>: Before every cancel attempt, calls <code>get_instance_status()</code> to retrieve the real-time circuit status from SENSE (not the potentially stale DB column). Persists the refreshed value back to <code>sense_circuit_status</code> in the DB.</li>
+<li><strong>Cancel-in-Progress Guard (Issue #109 B3)</strong>: If the live status is <code>CANCEL-COMMITTING</code> or <code>CANCEL-COMMITTED</code>, skips this cycle and waits for <code>CANCEL-READY</code> — prevents the 500 BadRequest storm that occurs when a prior cancel timed out (504) but was already accepted by SENSE. Calls <code>check_stall()</code> to verify after 15 min and escalate to admin after 30 min.</li>
+<li><strong>CANCEL - COMPILED handling (Issue #109 B1)</strong>: If the live status is <code>CANCEL - COMPILED</code> (cancel was planned but failed during propagate, before reaching site RMs), calls <code>retry_cancel()</code> with force=True — same recovery path as <code>CANCEL - FAILED</code>. Bounded by <code>cancel_max_retries</code> (default 3); escalates to admin if exhausted.</li>
+<li><strong>CANCEL - FAILED handling (Issue #109 B2)</strong>: If the live status is <code>CANCEL - FAILED</code> (cancel failed after propagate), calls <code>retry_cancel()</code> with force=True. Triage classifies the error: transient errors (e.g., 503 RM unreachable) are retried with backoff; non-retriable errors (e.g., 401) escalate immediately. Bounded by <code>cancel_max_retries</code> (default 3).</li>
+<li><strong>CREATE - COMPILED shortcut</strong>: If the live status is <code>CREATE - COMPILED</code> (circuit was never provisioned, holds no site resources), marks <code>CANCELED</code> directly without issuing a cancel API call.</li>
+<li>Calls <code>instance_operate(&quot;cancel&quot;, ...)</code> with <code>force=True</code> only when the live status is actually cancel-eligible (<code>CREATE-READY</code>, <code>MODIFY-READY</code>, or <code>REINSTATE-READY</code>)</li>
+<li>Releases IPv6 endpoints (sets <code>is_allocated = False</code>) and frees SENSE-O address allocations</li>
+</ul>
+<h4 id="sensedeleterdaemon"><a class="anchor" href="#sensedeleterdaemon" aria-label="Link to this section">#</a><code>SENSEDeleterDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/sense/deleter.py</code>
+<strong>Input</strong>: <code>CANCELED</code> requests
+<strong>Output</strong>: <code>DELETED</code> requests</p>
+<p><strong>Fast path — no SENSE UUID</strong>: If the request was canceled before a circuit was ever created (e.g., canceled from <code>ALLOCATED</code>), there is nothing to delete in SENSE-O. The record is retired directly.</p>
+<p><strong>Cancel-ready guard</strong>: If the circuit is still in <code>CANCEL - COMMITTING</code> or <code>CANCEL - COMMITTED</code>, the deleter <strong>skips this cycle</strong> and waits. This prevents a <code>instance_delete()</code> call on a circuit that SENSE-O has not finished canceling internally.</p>
+<p><strong>Deletion</strong>: Calls <code>instance_delete(si_uuid)</code> on SENSE-O. On success: marks <code>DELETED</code>. Once <code>DELETED</code>, no other daemon processes this record again.</p>
+<p><strong>On exception</strong>: Logs the error and does <strong>not</strong> change the status — the request stays in <code>CANCELED</code> and will be retried on the next cycle automatically (no explicit retry counter, no <code>mark_retry()</code> call).</p>
+<hr />
+<h3 id="44-fts-group"><a class="anchor" href="#44-fts-group" aria-label="Link to this section">#</a>4.4 FTS Group</h3>
+<h4 id="ftsmodifierdaemon"><a class="anchor" href="#ftsmodifierdaemon" aria-label="Link to this section">#</a><code>FTSModifierDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/fts/modifier.py</code>
+<strong>Input</strong>: <code>PROVISIONED</code> requests (to set limits) + <code>DELETED</code> requests (to clear limits)
+<strong>Output</strong>: Updated <code>fts_streams_current</code> values</p>
+<p>Two separate queues are processed per cycle — first <code>PROVISIONED</code>, then <code>DELETED</code>.</p>
+<p><strong>Modify path (<code>PROVISIONED</code> requests)</strong>: Triggered only when <code>fts_streams_current ≠ fts_streams_desired</code> — avoids no-op API calls. <code>modify_fts_config()</code> passes the full <code>Endpoint</code> objects; <code>set_fts_streams(current=desired)</code> is called <strong>only if <code>modify_fts_config()</code> returns <code>True</code></strong> (success-gated). If the FTS API call fails, <code>fts_streams_current</code> remains unchanged and the daemon retries on the next cycle.</p>
+<p><strong>Delete path (<code>DELETED</code> requests)</strong>: Triggered only when <code>fts_streams_current ≠ 0</code>. Calls <code>delete_fts_config(src_endpoint, dst_endpoint)</code> to remove the FTS stream cap. If <code>delete_fts_config()</code> fails, it is retried up to <code>[fts] max_delete_retries</code> (default 3) times — tracked in <code>fts_delete_retries</code>. After exhausting retries, the failure is logged but the request is not blocked from being fully retired.</p>
+<h4 id="ftsmonitordaemon"><a class="anchor" href="#ftsmonitordaemon" aria-label="Link to this section">#</a><code>FTSMonitorDaemon</code></h4>
+<p><strong>File</strong>: <code>src/dmm/daemons/fts/monitor.py</code>
+<strong>Runs every</strong>: <code>monit</code> frequency (default 60s)
+<strong>Purpose</strong>: Polls Rucio and the FTS REST API for per-rule job status and byte counts; populates <code>fts_jobs</code> and <code>fts_summary</code> on each request</p>
+<p>For each <code>PROVISIONED</code> request, <code>FTSMonitorDaemon</code>:</p>
+<ol>
+<li>Calls Rucio's <code>list_requests(rule_id=...)</code> to get the FTS job IDs associated with the rule</li>
+<li>For each job ID, calls the FTS REST API <code>get_job(job_id)</code> to retrieve current state, file counts, and byte counts</li>
+<li>Stores raw per-job data in <code>request.fts_jobs</code> (JSON dict keyed by job ID)</li>
+<li>Rolls up a summary across all jobs for the rule into <code>request.fts_summary</code> (total files done/failed, total bytes transferred)</li>
+</ol>
+<p>This data is used by:</p>
+<ul>
+<li><code>MonitDaemon</code> as a health fallback when Prometheus switch counters are unavailable</li>
+<li>The DMM monitoring UI to show transfer progress per rule</li>
+</ul>
+<hr />
+<h2 id="5-the-optimization-engine-deciderdaemon"><a class="anchor" href="#5-the-optimization-engine-deciderdaemon" aria-label="Link to this section">#</a>5. The Optimization Engine (DeciderDaemon)</h2>
+<p>This is the most mathematically sophisticated part of DMM. Here's a step-by-step explanation for readers at any level.</p>
+<h3 id="51-the-problem"><a class="anchor" href="#51-the-problem" aria-label="Link to this section">#</a>5.1 The Problem</h3>
+<p>Suppose 3 transfers are all using the same 100 Gbps physical link:</p>
+<ul>
+<li>Transfer A: SDSC → FNAL, priority 5</li>
+<li>Transfer B: SDSC → FNAL, priority 3</li>
+<li>Transfer C: SDSC → FNAL, priority 2</li>
+</ul>
+<p>How do you fairly divide 100 Gbps? Without an optimizer, you'd have to guess. DMM uses math.</p>
+<h3 id="52-graph-construction"><a class="anchor" href="#52-graph-construction" aria-label="Link to this section">#</a>5.2 Graph Construction</h3>
+<p>The Decider first builds a <strong>MultiGraph</strong> (think: a map of roads with cars):</p>
+<ul>
+<li><strong>Nodes</strong> = sites (e.g., <code>SDSC</code>, <code>FNAL</code>, <code>Caltech</code>)</li>
+<li><strong>Edges</strong> = active transfer requests (each transfer is one edge between its source and destination nodes)</li>
+<li><strong>Node attribute</strong> = <code>link_capacity_mbps</code> (from the <code>Mesh</code> table — the physical maximum)</li>
+<li><strong>Edge attributes</strong> = <code>priority</code>, current <code>bandwidth</code>, <code>available_bandwidth</code></li>
+</ul>
+<figure class="diagram"><pre class="mermaid">graph LR
+    SDSC ---|Transfer A: priority=5| FNAL
+    SDSC ---|Transfer B: priority=3| FNAL
+    SDSC ---|Transfer C: priority=2| FNAL
+    Caltech ---|Transfer D: priority=7| FNAL
+</pre></figure>
+<p>It then simplifies this <strong>MultiGraph</strong> into a <strong>SimpleGraph</strong> (one edge per unique site-pair link) by merging edges:</p>
+<ul>
+<li><code>priority</code> = sum of all transfer priorities on that link</li>
+<li><code>available_bandwidth</code> = max of available bandwidths (the physical link is shared, not summed)</li>
+</ul>
+<h3 id="53-linear-programming-lp-formulation"><a class="anchor" href="#53-linear-programming-lp-formulation" aria-label="Link to this section">#</a>5.3 Linear Programming (LP) Formulation</h3>
+<p><strong>What is Linear Programming?</strong> LP is a mathematical technique for finding the best possible outcome (the &quot;optimum&quot;) given a set of constraints. Think of it as finding the best way to pack items into a suitcase: maximize what fits, given the size constraint.</p>
+<p>For DMM, the LP problem is:</p>
+<p><strong>Objective</strong> (what we want to maximize):</p>
+<div class="code"><pre><code>Maximize: Σ (priority[i] × bandwidth[i])  for each edge i
+</code></pre></div>
+<p>(i.e., give the most bandwidth to the highest-priority transfers)</p>
+<p><strong>Constraints</strong> (the rules we can't break):</p>
+<div class="code"><pre><code>For each node (site):   Σ bandwidth[all edges at this node] ≤ link_capacity_mbps
+For each edge:          bandwidth[i] ≤ available_bandwidth[i]
+For each edge:          bandwidth[i] ≥ 0
+</code></pre></div>
+<p>The result is a bandwidth value for each site-pair link that maximizes priority-weighted throughput without exceeding any physical limit.</p>
+<h3 id="54-binary-search-optimization"><a class="anchor" href="#54-binary-search-optimization" aria-label="Link to this section">#</a>5.4 Binary Search Optimization</h3>
+<p>A pure LP solution might give some transfers 0 bandwidth (starvation). DMM prevents this with a <strong>binary search</strong> over a minimum bandwidth floor:</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="n">lo</span> <span class="o">=</span> <span class="mi">0</span>          <span class="c1"># Minimum possible floor (Mbps)</span>
+<span class="n">hi</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">link_capacity</span><span class="p">)</span>  <span class="c1"># Maximum possible floor</span>
+<span class="n">precision</span> <span class="o">=</span> <span class="mi">5</span>   <span class="c1"># Mbps precision</span>
+
+<span class="k">while</span> <span class="n">hi</span> <span class="o">-</span> <span class="n">lo</span> <span class="o">&gt;</span> <span class="n">precision</span><span class="p">:</span>
+    <span class="n">mid</span> <span class="o">=</span> <span class="p">(</span><span class="n">lo</span> <span class="o">+</span> <span class="n">hi</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span>
+    <span class="c1"># Can every edge get at least 'mid' Mbps?</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">linprog</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">bounds</span><span class="o">=</span><span class="p">[(</span><span class="n">mid</span><span class="p">,</span> <span class="kc">None</span><span class="p">)]</span> <span class="o">*</span> <span class="n">n_edges</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">success</span><span class="p">:</span>
+        <span class="n">lo</span> <span class="o">=</span> <span class="n">mid</span>  <span class="c1"># This floor is feasible, try higher</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">hi</span> <span class="o">=</span> <span class="n">mid</span>  <span class="c1"># This floor is too high, try lower</span>
+</code></pre></div>
+<p><strong>Result</strong>: Every transfer is guaranteed at least <code>lo</code> Mbps, and the overall allocation is still priority-optimal within that constraint.</p>
+<h3 id="55-proportional-allocation-by-priority"><a class="anchor" href="#55-proportional-allocation-by-priority" aria-label="Link to this section">#</a>5.5 Proportional Allocation by Priority</h3>
+<p>The LP runs on the <strong>simplified graph</strong> (one value per site-pair link). But multiple transfers might share a link. The optimizer's result is then split proportionally:</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="c1"># If Transfer A has priority 5 and Transfer B has priority 3 on a link getting 80 Gbps:</span>
+<span class="n">total_priority</span> <span class="o">=</span> <span class="mi">5</span> <span class="o">+</span> <span class="mi">3</span> <span class="o">=</span> <span class="mi">8</span>
+<span class="n">Transfer_A_bandwidth</span> <span class="o">=</span> <span class="mi">80</span><span class="p">,</span><span class="mi">000</span> <span class="err">×</span> <span class="p">(</span><span class="mi">5</span><span class="o">/</span><span class="mi">8</span><span class="p">)</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span><span class="mi">000</span> <span class="n">Mbps</span>
+<span class="n">Transfer_B_bandwidth</span> <span class="o">=</span> <span class="mi">80</span><span class="p">,</span><span class="mi">000</span> <span class="err">×</span> <span class="p">(</span><span class="mi">3</span><span class="o">/</span><span class="mi">8</span><span class="p">)</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span><span class="mi">000</span> <span class="n">Mbps</span>
+</code></pre></div>
+<h3 id="56-bandwidth-rounding-and-caps"><a class="anchor" href="#56-bandwidth-rounding-and-caps" aria-label="Link to this section">#</a>5.6 Bandwidth Rounding and Caps</h3>
+<p>The final allocated bandwidth is:</p>
+<ol>
+<li>Rounded <strong>down</strong> to the nearest 1,000 Mbps (1 Gbps) — avoids confusing SENSE-O with odd values</li>
+<li>Minimum <strong>1,000 Mbps</strong> if any positive bandwidth was allocated</li>
+<li><strong>Capped</strong> when increasing existing circuits: checks total bandwidth already reserved by co-tenant circuits on the same link (prevents over-commitment in edge cases)</li>
+</ol>
+<h3 id="57-lp-optimization-flow"><a class="anchor" href="#57-lp-optimization-flow" aria-label="Link to this section">#</a>5.7 LP Optimization Flow</h3>
+<figure class="diagram"><pre class="mermaid">flowchart TD
+    A[Start DeciderDaemon run] --&gt; B[Query all active requests&lt;br/&gt;STAGED, PROVISIONED, STALE, etc.]
+    B --&gt; C{Any requests?}
+    C --&gt;|No| Z[Return - nothing to do]
+    C --&gt;|Yes| D[Build MultiGraph&lt;br/&gt;Nodes=Sites, Edges=Requests]
+    D --&gt; E[Simplify to Graph&lt;br/&gt;Merge parallel edges per link]
+    E --&gt; F[Build LP matrices&lt;br/&gt;A=incidence, b=capacities, c=priorities]
+    F --&gt; G[Binary search for max feasible&lt;br/&gt;minimum bandwidth floor]
+    G --&gt; H[Run linprog with optimal floor bounds]
+    H --&gt; I[Distribute edge bandwidth&lt;br/&gt;proportionally by priority]
+    I --&gt; J[Round to nearest 1 Gbps&lt;br/&gt;minimum 1 Gbps]
+    J --&gt; K[For STAGED requests:&lt;br/&gt;set bandwidth → DECIDED]
+    J --&gt; L[For PROVISIONED/MODIFIED requests:&lt;br/&gt;if bandwidth changed → STALE]
+    K --&gt; M[End]
+    L --&gt; M
+</pre></figure>
+<hr />
+<h2 id="6-external-system-integration"><a class="anchor" href="#6-external-system-integration" aria-label="Link to this section">#</a>6. External System Integration</h2>
+<h3 id="61-sense-integration"><a class="anchor" href="#61-sense-integration" aria-label="Link to this section">#</a>6.1 SENSE Integration</h3>
+<h4 id="sense-circuit-state-machine"><a class="anchor" href="#sense-circuit-state-machine" aria-label="Link to this section">#</a>SENSE Circuit State Machine</h4>
+<figure class="diagram"><pre class="mermaid">stateDiagram-v2
+    [*] --&gt; CREATE_COMPILED : instance_create() succeeds
+    CREATE_COMPILED --&gt; CREATE_COMMITTING : instance_operate(&quot;provision&quot;)
+    CREATE_COMMITTING --&gt; CREATE_COMMITTED : SENSE internal step
+    CREATE_COMMITTED --&gt; CREATE_READY : Circuit activated ✅
+    CREATE_READY --&gt; MODIFY_COMMITTING : instance_modify() called
+    MODIFY_COMMITTING --&gt; MODIFY_COMMITTED : SENSE internal step
+    MODIFY_COMMITTED --&gt; MODIFY_READY : Modification confirmed ✅
+    MODIFY_READY --&gt; MODIFY_COMMITTING : Next modification
+    CREATE_READY --&gt; CANCEL_COMMITTING : instance_operate(&quot;cancel&quot;) called
+    MODIFY_READY --&gt; CANCEL_COMMITTING : instance_operate(&quot;cancel&quot;) called
+    REINSTATE_READY --&gt; CANCEL_COMMITTING : instance_operate(&quot;cancel&quot;) called
+    CANCEL_COMMITTING --&gt; CANCEL_COMMITTED : SENSE internal step
+    CANCEL_COMMITTED --&gt; CANCEL_READY : Cancel finalized
+    CREATE_COMMITTING --&gt; CREATE_FAILED : SENSE internal error ❌
+    MODIFY_COMMITTING --&gt; MODIFY_FAILED : SENSE internal error ❌
+    CANCEL_READY --&gt; [*] : instance_delete()
+    note right of CREATE_READY : Circuit is live and carrying traffic
+    note right of CREATE_COMPILED : Validated but not active
+</pre></figure>
+<h4 id="sense-api-sequence-diagram"><a class="anchor" href="#sense-api-sequence-diagram" aria-label="Link to this section">#</a>SENSE API Sequence Diagram</h4>
+<figure class="diagram"><pre class="mermaid">sequenceDiagram
+    participant ST as SENSEStagerDaemon
+    participant PR as SENSEProvisionerDaemon
+    participant SM as SENSEModifierDaemon
+    participant SC as SENSECancellerDaemon
+    participant SD as SENSEDeleterDaemon
+    participant SO as SENSE-O API
+
+    Note over ST,SO: STAGING (no bandwidth yet)
+    ST-&gt;&gt;SO: instance_new()
+    ST-&gt;&gt;SO: instance_create(intent with IPs/VLANs)
+    SO--&gt;&gt;ST: {service_uuid, queries:[bandwidth, uris]}
+    ST-&gt;&gt;ST: Parse: extract sense_uuid, available_bw, src_uri, dst_uri
+
+    Note over PR,SO: PROVISIONING (commit bandwidth)
+    PR-&gt;&gt;SO: instance_create(intent with bandwidth=80000Mbps)
+    PR-&gt;&gt;SO: instance_operate(&quot;provision&quot;, sync=&quot;true&quot;)
+    SO--&gt;&gt;PR: 200 OK (or 504 timeout, treated as in-flight)
+
+    Note over SM,SO: MODIFYING (bandwidth change)
+    SM-&gt;&gt;SO: instance_modify(new_bandwidth, sync=&quot;true&quot;)
+    SO--&gt;&gt;SM: 200 OK (circuit enters MODIFY_COMMITTING)
+
+    Note over SC,SO: CANCELLATION
+    SC-&gt;&gt;SO: instance_operate(&quot;cancel&quot;, si_uuid=uuid, sync=&quot;true&quot;)
+    SO--&gt;&gt;SC: 200 OK (circuit enters CANCEL_READY)
+
+    Note over SD,SO: DELETION
+    SD-&gt;&gt;SO: instance_delete(si_uuid=uuid)
+    SO--&gt;&gt;SD: 200 OK
+</pre></figure>
+<h4 id="circuit-lifecycle"><a class="anchor" href="#circuit-lifecycle" aria-label="Link to this section">#</a>Circuit Lifecycle</h4>
+<p>A SENSE circuit goes through five phases, each handled by a dedicated daemon.</p>
+<div class="code"><pre><code>1. STAGE  (SENSEStagerDaemon)
+   Calls: instance_new() → instance_create(IPs, VLANs, no bandwidth)
+   SENSE returns: sense_uuid, available_bandwidth, endpoint URIs
+   Request moves to: STAGED
+                         ↓
+2. PROVISION  (SENSEProvisionerDaemon)
+   Calls: instance_create(topology + bandwidth=X Mbps)
+          → instance_operate(&quot;provision&quot;, sync=&quot;true&quot;)
+   Request moves to: PROVISIONED
+                         ↓
+3. MODIFY  (SENSEModifierDaemon)  — optional, repeats on bandwidth changes
+   Calls: instance_modify(new_bandwidth, sync=&quot;true&quot;)
+   Request returns to: PROVISIONED
+                         ↓
+4. CANCEL  (SENSECancellerDaemon)
+   Calls: instance_operate(&quot;cancel&quot;, force=True if not READY)
+   Frees IPv6 subnets back to their SENSE address pools.
+   Request moves to: CANCELED
+                         ↓
+5. DELETE  (SENSEDeleterDaemon)
+   Calls: instance_delete(si_uuid=sense_uuid)
+   Request moves to: DELETED
+</code></pre></div>
+<h4 id="circuit-states"><a class="anchor" href="#circuit-states" aria-label="Link to this section">#</a>Circuit States</h4>
+<p>Each phase has intermediate states that SENSE progresses through internally. <code>SENSEHandlerDaemon</code> polls <code>get_instance_status()</code> every cycle to track these transitions.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>State Progression</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Create</strong></td>
+<td><code>COMPILED</code> → <code>COMMITTING</code> → <code>COMMITTED</code> → <code>READY</code></td>
+<td>Validated → activating → active ✅</td>
+</tr>
+<tr>
+<td><strong>Modify</strong></td>
+<td><code>COMMITTING</code> → <code>COMMITTED</code> → <code>READY</code></td>
+<td>Bandwidth change in progress → confirmed ✅</td>
+</tr>
+<tr>
+<td><strong>Cancel</strong></td>
+<td><code>COMMITTING</code> → <code>COMMITTED</code> → <code>READY</code></td>
+<td>Teardown in progress → complete ✅</td>
+</tr>
+<tr>
+<td><strong>Failure</strong></td>
+<td><code>CREATE_FAILED</code>, <code>MODIFY_FAILED</code>, <code>CANCEL_FAILED</code></td>
+<td>SENSE internal error ❌ — triggers retry or force-cancel</td>
+</tr>
+</tbody>
+</table></div>
+<p>A circuit is <strong>live and carrying traffic</strong> when its status is <code>CREATE_READY</code>, <code>MODIFY_READY</code>, or <code>REINSTATE_READY</code>. A <code>COMMITTED</code> state that never advances to <code>READY</code> indicates a <strong>stalled circuit</strong> — <code>SENSEHandlerDaemon</code> detects this via configurable <code>stall_verify_seconds</code> / <code>stall_escalate_seconds</code> thresholds.</p>
+<h4 id="endpoint-affiliation"><a class="anchor" href="#endpoint-affiliation" aria-label="Link to this section">#</a>Endpoint Affiliation</h4>
+<p>After a circuit reaches <code>CREATE_COMPILED</code>, DMM must tell SENSE which IPv6 subnets belong to this circuit. <code>SENSEHandlerDaemon</code> calls <code>affiliate_endpoints()</code> once per circuit (tracked by <code>sense_affiliated = True</code>):</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="c1"># dmm/core/allocation.py — affiliate_endpoints()</span>
+<span class="n">address_api</span><span class="o">.</span><span class="n">affiliate_address</span><span class="p">(</span><span class="n">pool</span><span class="o">=</span><span class="n">src_pool_name</span><span class="p">,</span> <span class="n">uri</span><span class="o">=</span><span class="n">sense_src_uri</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">rule_id</span><span class="p">)</span>
+<span class="n">address_api</span><span class="o">.</span><span class="n">expire_address</span><span class="p">(</span><span class="n">pool</span><span class="o">=</span><span class="n">src_pool_name</span><span class="p">,</span> <span class="n">expire</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">rule_id</span><span class="p">)</span>  <span class="c1"># no expiry</span>
+<span class="n">address_api</span><span class="o">.</span><span class="n">affiliate_address</span><span class="p">(</span><span class="n">pool</span><span class="o">=</span><span class="n">dst_pool_name</span><span class="p">,</span> <span class="n">uri</span><span class="o">=</span><span class="n">sense_dst_uri</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">rule_id</span><span class="p">)</span>
+<span class="n">address_api</span><span class="o">.</span><span class="n">expire_address</span><span class="p">(</span><span class="n">pool</span><span class="o">=</span><span class="n">dst_pool_name</span><span class="p">,</span> <span class="n">expire</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">rule_id</span><span class="p">)</span>
+</code></pre></div>
+<h4 id="ipv6-address-pools"><a class="anchor" href="#ipv6-address-pools" aria-label="Link to this section">#</a>IPv6 Address Pools</h4>
+<p>Each site has a named SENSE-managed address pool (e.g., <code>RUCIO_Site_BGP_Subnet_Pool-T2_US_SDSC</code>). The pool name is derived from the <strong>logical</strong> site name. When a transfer starts:</p>
+<ol>
+<li><code>AllocatorDaemon</code> calls <code>allocate_address()</code> to request a <code>/64</code> IPv6 subnet from each site's pool</li>
+<li>SENSE returns unique ranges (e.g., <code>2001:48d0:3001:112::/64</code> for SDSC, <code>2620:6a:0:2841::/64</code> for FNAL)</li>
+<li>These ranges are embedded in the circuit intent so SENSE routes that traffic through the dedicated circuit</li>
+<li>When the transfer completes, <code>SENSECancellerDaemon</code> calls <code>free_address()</code> to release the subnets back to the pool</li>
+</ol>
+<h4 id="key-functions-in-dmmcoresensepy"><a class="anchor" href="#key-functions-in-dmmcoresensepy" aria-label="Link to this section">#</a>Key Functions in <code>dmm/core/sense.py</code></h4>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stage_link()</code></td>
+<td>Create a new SENSE instance; queries available bandwidth and endpoint URIs</td>
+</tr>
+<tr>
+<td><code>parse_staging_response()</code></td>
+<td>Extract <code>sense_uuid</code>, <code>bandwidth_mbps</code>, <code>src_uri</code>, <code>dst_uri</code> from the staging reply</td>
+</tr>
+<tr>
+<td><code>provision_link()</code></td>
+<td>Commit bandwidth and activate the circuit via <code>instance_create</code> + <code>instance_operate(&quot;provision&quot;)</code></td>
+</tr>
+<tr>
+<td><code>modify_link()</code></td>
+<td>Change bandwidth on a live circuit via <code>instance_modify</code></td>
+</tr>
+<tr>
+<td><code>cancel_link()</code></td>
+<td>Tear down a circuit; sets <code>force=True</code> when the circuit is not in a <code>READY</code> state</td>
+</tr>
+<tr>
+<td><code>delete_instance()</code></td>
+<td>Remove the instance record from SENSE via <code>instance_delete</code></td>
+</tr>
+<tr>
+<td><code>get_instance_status()</code></td>
+<td>Poll the current circuit state; returns <code>&quot;UNKNOWN&quot;</code> on 404 (zombie detection)</td>
+</tr>
+<tr>
+<td><code>is_circuit_active()</code></td>
+<td><code>True</code> when status is <code>CREATE_READY</code>, <code>MODIFY_READY</code>, or <code>REINSTATE_READY</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="62-rucio-integration"><a class="anchor" href="#62-rucio-integration" aria-label="Link to this section">#</a>6.2 Rucio Integration</h3>
+<h4 id="how-dmm-identifies-sense-rules"><a class="anchor" href="#how-dmm-identifies-sense-rules" aria-label="Link to this section">#</a>How DMM Identifies SENSE Rules</h4>
+<p>Not every Rucio rule needs a SENSE circuit. DMM identifies SENSE rules by checking the rule's <code>activity</code> field:</p>
+<div class="code"><span class="code-lang">python</span><pre><code><span class="k">def</span><span class="w"> </span><span class="nf">is_sense_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">):</span>
+    <span class="n">activity</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'activity'</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">activity</span> <span class="ow">and</span> <span class="s2">"sense"</span> <span class="ow">in</span> <span class="n">activity</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="c1"># Examples: "sense-physics", "SENSE-HIGH-PRIORITY", "sense" all match</span>
+</code></pre></div>
+<p>Rules without &quot;sense&quot; in their activity get status <code>NOT_SENSE</code> and are tracked (for reporting) but never provisioned.</p>
+<h4 id="logical-vs-physical-rucio-site-names"><a class="anchor" href="#logical-vs-physical-rucio-site-names" aria-label="Link to this section">#</a>Logical vs. Physical Rucio Site Names</h4>
+<p>A single physical site often has more than one Rucio RSE name. For example, <code>T2_US_UCSD</code> is the physical site SENSE knows about, but Rucio may also have an RSE called <code>T2_US_UCSD_Blackhole</code> that resolves to the same physical location. The <code>src/dmm/core/sitemap.py</code> module handles this translation.</p>
+<p><strong>The two layers:</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">Layer</th>
+<th style="text-align:left">Example</th>
+<th style="text-align:left">Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>Logical site name</strong></td>
+<td style="text-align:left"><code>T2_US_UCSD_Blackhole</code></td>
+<td style="text-align:left">Stored on the <code>Request</code>; selects the IPv6 subnet pool (<code>RUCIO_Site_BGP_Subnet_Pool-&lt;logical name&gt;</code>)</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Physical site name</strong></td>
+<td style="text-align:left"><code>T2_US_UCSD</code></td>
+<td style="text-align:left">SENSE-O discovery, Mesh/VLAN lookups, Endpoint table, FTS stream caps, bandwidth LP</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Resolution algorithm (<code>physical_site_candidates</code>):</strong></p>
+<ol>
+<li>Check <code>[site-aliases]</code> in <code>dmm.cfg</code> for an explicit override → use that, done.</li>
+<li>Try the name itself first (a physical site is always its own candidate).</li>
+<li>Progressively strip trailing <code>_ExtName</code> components until fewer than 3 underscore-separated parts remain (never resolves to e.g. <code>T2_US</code>).</li>
+</ol>
+<div class="code"><pre><code>T2_US_UCSD_Blackhole  →  candidates: [T2_US_UCSD_Blackhole, T2_US_UCSD]
+T2_US_UCSD            →  candidates: [T2_US_UCSD]            (already at min)
+</code></pre></div>
+<p><code>resolve_physical_site(name, session)</code> walks that candidate list and returns the first <code>Site</code> row found in DMM's database.</p>
+<p><strong>Configuration (<code>[site-aliases]</code> — optional):</strong></p>
+<div class="code"><span class="code-lang">ini</span><pre><code><span class="k">[site-aliases]</span>
+<span class="na">T2_US_UCSD_Blackhole</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">T2_US_UCSD</span><span class="w">   </span><span class="c1"># explicit override</span>
+<span class="na">MY_SPECIAL_RSE</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">T2_US_Caltech</span><span class="w">       </span><span class="c1"># completely different name</span>
+</code></pre></div>
+<h4 id="rucio-rule-states"><a class="anchor" href="#rucio-rule-states" aria-label="Link to this section">#</a>Rucio Rule States</h4>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th style="text-align:left">Rucio State</th>
+<th style="text-align:left">Meaning</th>
+<th style="text-align:left">DMM Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>REPLICATING</code></td>
+<td style="text-align:left">Files are being transferred</td>
+<td style="text-align:left">Continue normally</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>OK</code></td>
+<td style="text-align:left">All files transferred successfully</td>
+<td style="text-align:left">Mark <code>FINISHED</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>STUCK</code></td>
+<td style="text-align:left">Transfer failed/stalled in Rucio</td>
+<td style="text-align:left">Mark <code>FINISHED</code> (clean up circuit)</td>
+</tr>
+<tr>
+<td style="text-align:left">(deleted by reaper)</td>
+<td style="text-align:left"><code>RuleNotFound</code> exception</td>
+<td style="text-align:left">Mark <code>FINISHED</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="63-fts-integration"><a class="anchor" href="#63-fts-integration" aria-label="Link to this section">#</a>6.3 FTS Integration</h3>
+<h4 id="fts-stream-limits"><a class="anchor" href="#fts-stream-limits" aria-label="Link to this section">#</a>FTS Stream Limits</h4>
+<p>FTS uses the concept of &quot;streams&quot; (parallel connections) between a source and destination. More streams = higher throughput, but too many overwhelm the system.</p>
+<p>DMM controls FTS streams through the FTS REST API on a per-<code>(src_endpoint, dst_endpoint)</code> pair basis.</p>
+<h4 id="proportional-stream-rebalancing-algorithm"><a class="anchor" href="#proportional-stream-rebalancing-algorithm" aria-label="Link to this section">#</a>Proportional Stream Rebalancing Algorithm</h4>
+<p><code>SENSEHandlerDaemon._rebalance_fts_streams()</code> uses the <strong>Largest Remainder Method</strong> to fairly distribute streams:</p>
+<div class="code"><pre><code>Example: Site pair SDSC→FNAL has a max of 200 streams (from dmm.cfg)
+  Transfer A: priority=5
+  Transfer B: priority=3
+
+  Exact shares: A=200×5/8=125, B=200×3/8=75
+  Floor shares: A=125, B=75 (total=200, no remainder)
+
+  Result: A gets 125 streams, B gets 75 streams
+</code></pre></div>
+<p>If the priorities don't divide evenly, fractional remainders are distributed one-by-one to the transfers with the largest fractional parts.</p>
+<p>Per-site-pair stream caps are defined in <code>dmm.cfg</code> under <code>[fts-streams]</code>:</p>
+<div class="code"><span class="code-lang">ini</span><pre><code><span class="k">[fts-streams]</span>
+<span class="na">T2_US_SDSC-T1_US_FNAL</span><span class="o">=</span><span class="s">200</span>
+<span class="na">T2_US_SDSC-T2_US_Caltech</span><span class="o">=</span><span class="s">400</span>
+</code></pre></div>
+<hr />
+
+</article>
+</main>
+</div>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs";
+const scheme = matchMedia("(prefers-color-scheme: dark)");
+const blocks = [...document.querySelectorAll("pre.mermaid")];
+blocks.forEach(el => { el.dataset.src = el.textContent; });
+async function draw() {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: scheme.matches ? "dark" : "neutral",
+    fontFamily: getComputedStyle(document.body).fontFamily,
+    flowchart: { htmlLabels: true, curve: "basis" },
+  });
+  blocks.forEach(el => { el.removeAttribute("data-processed"); el.textContent = el.dataset.src; });
+  await mermaid.run({ nodes: blocks, suppressErrors: true });
+}
+draw();
+scheme.addEventListener("change", draw);
+</script>
+<script>
+const links = new Map([...document.querySelectorAll(".sidebar a")].map(a => [a.hash.slice(1), a]));
+const heads = [...document.querySelectorAll(".doc h2[id], .doc h3[id]")].filter(h => links.has(h.id));
+const io = new IntersectionObserver(() => {
+  const top = heads.filter(h => h.getBoundingClientRect().top < 120).pop();
+  const id = top ? top.id : heads[0] && heads[0].id;
+  links.forEach((a, k) => a.classList.toggle("active", k === id));
+}, { rootMargin: "0px 0px -70% 0px" });
+heads.forEach(h => io.observe(h));
+</script>
+</body>
+</html>
