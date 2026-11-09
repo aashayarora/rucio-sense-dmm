@@ -8,6 +8,7 @@ from dmm.models.request import Request
 from dmm.models.site import Site
 from dmm.models.endpoint import Endpoint
 from dmm.models.mesh import Mesh
+from dmm.models.path_port import PathPort
 
 from dmm.db.session import get_engine
 

@@ -1,3 +1,4 @@
+from sqlalchemy import Column, JSON
 from sqlmodel import Field, Relationship, or_, select
 from typing import Optional
 
@@ -9,6 +10,7 @@ class Mesh(ModelBase, table=True):
     site_2: Optional[str] = Field(default=None, foreign_key='site.name')
     vlan_range: Optional[str] = Field(default=None)
     link_capacity_mbps: Optional[int] = Field(default=None)
+    path_ports: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     site1: Optional["Site"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Mesh.site_1]"})
     site2: Optional["Site"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Mesh.site_2]"})

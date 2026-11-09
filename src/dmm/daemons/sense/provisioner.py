@@ -5,12 +5,16 @@ from dmm.db.session import databased
 
 from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
+from dmm.models.path_port import PathPort
+
+from dmm.core.path_ports import refresh_path_ports
 
 from dmm.core.config import config_get
 from dmm.core.utils import is_sync_timeout
 from dmm.core.sense import (
     provision_link,
     parse_circuit_vlans,
+    parse_circuit_ports,
     is_create_ready,
     is_create_compiled,
     is_being_provisioned,
@@ -111,6 +115,13 @@ class SENSEProvisionerDaemon(DaemonBase):
                 if src_vlan is None and dst_vlan is None:
                     logging.warning(f"No circuit VLAN in the provision response for {req.rule_id}, it will not be monitored")
                 req.set_circuit_vlans(src_vlan, dst_vlan, session=session)
+                # Staging compiled a candidate; this is the circuit's actual route.
+                ports = parse_circuit_ports(response)
+                if ports:
+                    try:
+                        self._record_route(req, ports, session)
+                    except Exception as e:
+                        logging.warning(f"Could not record the route of {req.rule_id}'s circuit: {e}")
                 req.clear_failure_reason(session=session)
                 req.set_status(status=RequestStatus.PROVISIONED, session=session)
                 logging.info(f"Successfully provisioned request {req.rule_id}")
@@ -126,3 +137,18 @@ class SENSEProvisionerDaemon(DaemonBase):
                 else:
                     logging.error(f"Failed to provision link for {req.rule_id}: {e}", exc_info=True)
                     req.mark_retry(f"Provisioning failed: {e}", session=session)
+
+    @staticmethod
+    def _record_route(req, ports, session):
+        """
+        Keep the ports a new circuit crosses, on the request and as its pair's route,
+        and read the capacity of any the decider doesn't know yet (rare: a model
+        read the first time a route shows up).
+        """
+        req.set_path_ports(ports, session=session)
+        mesh = Mesh.get_by_sites(req.src_site, req.dst_site, session=session, use_lock=False)
+        if mesh is not None and sorted(mesh.path_ports or []) != ports:
+            logging.info(f"Route of {mesh.site_1}-{mesh.site_2} is now {', '.join(ports)} (from {req.rule_id})")
+            mesh.update({"path_ports": ports}, session=session)
+        if set(ports) - set(PathPort.get_by_uris(ports, session=session)):
+            refresh_path_ports(ports, session)

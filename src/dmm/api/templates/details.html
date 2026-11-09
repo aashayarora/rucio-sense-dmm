@@ -120,7 +120,10 @@
             <div class="kpi">
                 <div class="kpi-label">Allocated bandwidth</div>
                 <div class="kpi-value">{{ rate(data.allocated_bandwidth_mbps) }}</div>
-                <div class="kpi-sub">{% if data.available_bandwidth_mbps is not none %}{{ rate(data.available_bandwidth_mbps) }} available on the path{% else %}&nbsp;{% endif %}</div>
+                {#- available_bandwidth_mbps is SENSE-O's figure with every circuit on the path
+                    deducted, DMM's own included; DMM shares the pair's total between its
+                    requests, so a request can get more than its own figure. -#}
+                <div class="kpi-sub">{% if data.pair_available_mbps is not none %}{{ rate(data.pair_available_mbps) }} free for DMM on the site pair at staging{% if data.available_bandwidth_mbps is not none and data.available_bandwidth_mbps < data.pair_available_mbps %} ({{ rate(data.available_bandwidth_mbps) }} beyond DMM's circuits already there){% endif %}{% elif data.available_bandwidth_mbps is not none %}{{ rate(data.available_bandwidth_mbps) }} available on the path at staging{% else %}&nbsp;{% endif %}</div>
             </div>
             <div class="kpi">
                 <div class="kpi-label">Circuit throughput</div>

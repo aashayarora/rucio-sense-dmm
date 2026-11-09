@@ -59,6 +59,7 @@ class Request(ModelBase, table=True):
     src_vlan: Optional[int] = Field(default=None)
     dst_vlan: Optional[int] = Field(default=None)
     circuit_path: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    path_ports: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
     sense_circuit_status: Optional[str] = Field(default=None, index=True)
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_streams_current: Optional[int] = Field(default=0)
@@ -300,6 +301,13 @@ class Request(ModelBase, table=True):
         path = ", ".join(f"{hop['site']}:{hop['host']}/vlan{hop['vlan']}" for hop in hops)
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit path {path}")
         self.circuit_path = {"sense_uuid": self.sense_uuid, "hops": hops}
+        self.save(session)
+
+    def set_path_ports(self, ports: list, session=None):
+        ports = sorted(set(ports))
+        if ports != (self.path_ports or []):
+            logging.info(f"REQUEST UPDATE: {self.rule_id} -> path_ports={', '.join(ports)}")
+        self.path_ports = ports
         self.save(session)
 
     def set_allocated_bandwidth(self, bandwidth_mbps: float, session=None):

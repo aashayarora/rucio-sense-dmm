@@ -130,6 +130,7 @@ class AllocatorDaemon(DaemonBase):
                     "sense_dst_uri": reused_dst_uri,
                     "src_vlan": reused_src_vlan,
                     "dst_vlan": reused_dst_vlan,
+                    "path_ports": req_fin.path_ports,
                     "allocated_bandwidth_mbps": req_fin.allocated_bandwidth_mbps,
                     "available_bandwidth_mbps": req_fin.available_bandwidth_mbps,
                     "pair_available_mbps": req_fin.pair_available_mbps,

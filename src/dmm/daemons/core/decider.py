@@ -8,6 +8,7 @@ from dmm.daemons.base import DaemonBase
 
 from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
+from dmm.models.path_port import PathPort
 from dmm.db.session import databased
 from dmm.core.config import config_get_float
 from dmm.core.sense import is_circuit_active, is_being_provisioned
@@ -37,7 +38,8 @@ class DeciderDaemon(DaemonBase):
             return
 
         simple_graph, nodes, edges = self._simplify_graph(multi_graph)
-        A, c, b, edge_index = self._prepare_optimization_matrices(simple_graph, nodes, edges)
+        ports = self._load_ports(edges, session)
+        A, c, b, edge_index = self._prepare_optimization_matrices(simple_graph, nodes, edges, ports)
         current = np.array([data['current'] for _, _, data in edges], dtype=float)
         optim_result = self._optimize_bandwidth(A, b, c, edges, current)
 
@@ -97,6 +99,7 @@ class DeciderDaemon(DaemonBase):
                 pair_available_at=req.pair_available_at,
                 fixed=is_fixed,
                 fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
+                path_ports=list(req.path_ports or []),
             )
         return multi_graph
 
@@ -187,8 +190,10 @@ class DeciderDaemon(DaemonBase):
             # What the edge's live requests hold now; NaN once any of them has
             # nothing decided yet, since there is then no allocation to keep.
             current = 0.0 if data.get('fixed') else (data['bandwidth'] if data['bandwidth'] is not None else np.nan)
+            path_ports = set(data.get('path_ports') or ())
             if simple_graph.has_edge(u, v):
                 edge = simple_graph[u][v]
+                edge['path_ports'] |= path_ports
                 edge['priority'] += priority
                 edge['fixed_bandwidth'] += fixed_bandwidth
                 edge['current'] += current
@@ -206,15 +211,66 @@ class DeciderDaemon(DaemonBase):
                                       link_capacity=link_capacity, max_bandwidth=max_bandwidth,
                                       pair_available=pair_available,
                                       pair_available_at=pair_available_at if pair_available is not None else None,
-                                      current=current)
+                                      current=current, path_ports=path_ports)
 
         return simple_graph, list(simple_graph.nodes), list(simple_graph.edges(data=True))
 
-    def _prepare_optimization_matrices(self, simple_graph, nodes, edges) -> tuple:
+    def _load_ports(self, edges, session) -> dict:
+        """
+        The ports each edge's circuits cross, and what each port can give DMM.
+
+        An edge crosses the ports of every request on it - a staged one's are those
+        of the candidate SENSE-O compiled - and those of its pair's last provisioned
+        circuit, since SENSE-O doesn't always provision on the route it staged.
+        Sets each edge's path_ports to that, and returns {port uri: (capacity Mbps,
+        Mbps held there by circuits that aren't DMM's)} for the ports with a known
+        capacity (PathPort). Ports without one constrain nothing.
+        """
+        for u, v, data in edges:
+            mesh = Mesh.get_by_sites(u, v, session=session, use_lock=False)
+            data['path_ports'] = set(data.get('path_ports') or ()) | set((mesh.path_ports if mesh else None) or ())
+        uris = set().union(*(data['path_ports'] for _, _, data in edges)) if edges else set()
+        return {
+            uri: (row.capacity_mbps, row.foreign_mbps or 0)
+            for uri, row in PathPort.get_by_uris(uris, session=session).items()
+            if row.capacity_mbps is not None
+        }
+
+    def _port_rows(self, edges, ports) -> tuple:
+        """
+        One constraint per port: the edges whose circuits cross it carry no more than
+        its capacity, less what circuits that aren't DMM's hold there and the
+        finished reservations crossing it.
+        """
+        rows, limits, shared = [], [], []
+        for uri, (capacity, foreign) in sorted(ports.items()):
+            crossing = [i for i, (_, _, data) in enumerate(edges) if uri in (data.get('path_ports') or ())]
+            if not crossing:
+                continue
+            row = np.zeros(len(edges))
+            row[crossing] = 1
+            reserved = sum(edges[i][2]['fixed_bandwidth'] for i in crossing)
+            rows.append(row)
+            limits.append(capacity - foreign - reserved)
+            if len(crossing) > 1:
+                pairs = ", ".join(f"{edges[i][0]}-{edges[i][1]}" for i in crossing)
+                shared.append(f"{uri.split(':', 5)[-1]} {capacity - foreign - reserved:.0f} Mbps ({pairs})")
+        # Said once per change, not every cycle.
+        if shared != getattr(self, '_shared_ports', None):
+            self._shared_ports = shared
+            if shared:
+                logging.info(f"Ports shared by site pairs: {'; '.join(shared)}")
+        return np.array(rows).reshape(len(rows), len(edges)), np.array(limits, dtype=float)
+
+    def _prepare_optimization_matrices(self, simple_graph, nodes, edges, ports=None) -> tuple:
         """
         Prepare the matrices for the linear programming optimization.
         Capacity reserved by finished circuits is subtracted from both the per-edge
         and the per-node constraints before optimizing the active requests.
+
+        Constraints: each site carries no more than its largest mesh link, each
+        port in ports no more than it has free for DMM (see _port_rows), and each
+        edge no more than its link and SENSE-O's figure for the pair allow.
         """
         n_edges = len(edges)
         edge_index = {edge[:2]: i for i, edge in enumerate(edges)}
@@ -242,8 +298,10 @@ class DeciderDaemon(DaemonBase):
              for _, _, data in edges], dtype=float
         )
 
-        A = np.vstack([A, np.eye(n_edges)])
-        b = np.concatenate([b, edge_bounds])
+        port_A, port_b = self._port_rows(edges, ports or {})
+
+        A = np.vstack([A, port_A, np.eye(n_edges)])
+        b = np.concatenate([b, port_b, edge_bounds])
         b = np.clip(b, 0, None)
 
         return A, c, b, edge_index

@@ -416,6 +416,21 @@ def parse_circuit_vlans(response, src_uri, dst_uri, src_site_uri=None, dst_site_
         vlans.append(vlan)
     return tuple(vlans)
 
+
+def parse_circuit_ports(response):
+    """
+    Every switch port the circuit crosses, from the model in a stage, provision or
+    modify response: the port each of its vlanports hangs off, as SENSE-O's
+    /model names it (urn:...:aristaeos_s0:Port-Channel501). Sorted, or [] when
+    the response carries no model.
+    """
+    model = response.get("model") if isinstance(response, dict) else None
+    if not model:
+        return []
+    if not isinstance(model, str):
+        model = json.dumps(model)
+    return sorted({uri.split(":conn+", 1)[0] for uri, _tag in _VLANPORT.findall(html.unescape(model))})
+
 # Every switch port an instance's circuit crosses, as SENSE-O's RTMon addon asks
 # for it (sense-rtmon SenseAPI.s_getManifest), without the host and address parts.
 # ?node_name? is the node's nml:name, which SiteRM sets to "<sitename>:<hostname>",

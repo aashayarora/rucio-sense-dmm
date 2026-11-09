@@ -675,6 +675,47 @@ def _run_ladder(ix, srcs, dsts, need_mbps):
 
 
 # --------------------------------------------------------------------------
+# port capacities for the decider
+# --------------------------------------------------------------------------
+
+# ES.net names circuits it didn't get from SENSE-O conn+foreign_<uuid>.
+_CONN_UUID = re.compile(r":conn\+(?:foreign_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+# Key for capacity a domain reports as used without itemising who holds it.
+UNITEMISED = "(unitemised)"
+
+
+def read_ports(uris):
+    """What SENSE-O's model says each of these ports carries.
+
+    Returns {uri: {"capacity": Mbps, "holds": {holder: Mbps}}} for every port the
+    model lists with a capacity. A holder is the SENSE instance uuid of the
+    circuit (its vlanport's conn+<uuid>), or the hold's name when it has none.
+    If the domain publishes an availableCapacity below what the itemised holds
+    leave, the difference is held by UNITEMISED.
+
+    Raises if the model can't be fetched or parsed; the caller keeps what it had.
+    """
+    graph, meta = _fetch_model()
+    ix = Index(graph, meta)
+    out = {}
+    for uri in uris:
+        info = ix.port_info.get(uri)
+        if not info or info["total"] is None:
+            continue
+        holds = collections.defaultdict(float)
+        for r in info["reservations"]:
+            m = _CONN_UUID.search(r["subport"])
+            holds[m.group(1) if m else r["name"]] += r["mbps"] or 0.0
+        if info["free"] is not None:
+            hidden = info["total"] - info["committed"] - info["free"]
+            if hidden > 0:
+                holds[UNITEMISED] += hidden
+        out[uri] = {"capacity": info["total"], "holds": dict(holds)}
+    return out
+
+
+# --------------------------------------------------------------------------
 # public entry point
 # --------------------------------------------------------------------------
 

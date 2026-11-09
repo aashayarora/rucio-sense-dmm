@@ -65,16 +65,10 @@ class DaemonBase:
                     continue
                 try:
                     with lock:
-                        # Asked again with the lock held: the wait for it is
-                        # longest when a daemon ahead is hung on the very
-                        # outage this one would be waiting out.
                         if self._must_wait():
                             continue
                         try:
                             process(**kwargs)
-                            # Only a completed cycle counts. Staleness is
-                            # measured from this, so bumping it on entry would
-                            # make a wedged daemon look healthy.
                             self.last_success = time()
                             self._publish(running=True)
                         except Exception as e:
@@ -88,8 +82,6 @@ class DaemonBase:
                     sleep(min(1, sleep_remaining))
                     sleep_remaining -= 1
         finally:
-            # Also covers the thread dying outside the loop, which nothing
-            # else notices.
             self._publish(running=False)
 
     def start(self, lock):

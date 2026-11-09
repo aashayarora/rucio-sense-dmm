@@ -7,7 +7,8 @@ from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
 
 from dmm.core.config import config_get
-from dmm.core.sense import stage_link, parse_staging_response, delete_instance
+from dmm.core.sense import stage_link, parse_staging_response, parse_circuit_ports, delete_instance
+from dmm.core.path_ports import refresh_path_ports
 from dmm.core.utils import release_endpoints_and_addresses
 from dmm.core.sense_triage import triage, NO_RESOURCES, NO_CAPACITY, NO_VLANS, NO_TOPOLOGY
 from dmm.core.sense_model import check_path
@@ -25,6 +26,7 @@ class SENSEStagerDaemon(DaemonBase):
         reqs_allocated = Request.get_by_status(statuses=[RequestStatus.ALLOCATED], session=session)
         if reqs_allocated == []:
             return
+        staged_ports = set()
         for req in reqs_allocated:
             try:
                 vlan_range = Mesh.get_vlan_range(site_1=req.src_site, site_2=req.dst_site, session=session)
@@ -73,6 +75,15 @@ class SENSEStagerDaemon(DaemonBase):
                 req.set_sense_uuid(sense_uuid, session=session)
                 req.set_sense_uris(src_uri, dst_uri, session=session)
                 req.set_available_bandwidth(bandwidth_mbps, session=session)
+                ports = parse_circuit_ports(response)
+                if ports:
+                    req.set_path_ports(ports, session=session)
+                    staged_ports.update(ports)
+                else:
+                    logging.warning(
+                        f"No ports in the staging response for {req.rule_id}: the decider can't "
+                        "tell which other site pairs its circuit shares ports with"
+                    )
                 req.clear_failure_reason(session=session)
                 req.set_status(status=RequestStatus.STAGED, session=session)
 
@@ -86,6 +97,11 @@ class SENSEStagerDaemon(DaemonBase):
                 t = triage(e)
                 if t.kind == NO_RESOURCES:
                     self._probe_path_on_no_resources(req, session)
+
+        # Committed with the STAGED requests, so the decider never plans them
+        # against ports it hasn't read yet.
+        if staged_ports:
+            refresh_path_ports(staged_ports, session)
 
     @staticmethod
     def _probe_path_on_no_resources(req, session):
