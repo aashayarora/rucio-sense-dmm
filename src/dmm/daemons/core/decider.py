@@ -22,6 +22,24 @@ _PRECISION_MBPS = 5
 def _whole_gbps(mbps):
     return floor(mbps / 1000) * 1000
 
+
+def _max_utilization():
+    """
+    The share of each site's, link's and port's capacity DMM's circuits may hold
+    between them, [decider] max_utilization (0.8 by default).
+
+    Holding all of a port leaves SENSE-O no room to compile another circuit across
+    it: it refuses with "cannot find feasible path", before the decider could make
+    room. In prod that failed every rule staged behind a circuit holding the whole
+    of UCSD's 200G (2026-11-04..11). What's left over also carries best-effort
+    transfers.
+    """
+    u = config_get_float("decider", "max_utilization", default=0.8, constraint="pos")
+    if u > 1:
+        raise ValueError(f"[decider] max_utilization must be at most 1, not {u}")
+    return u
+
+
 class DeciderDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
         super().__init__(frequency, **kwargs)
@@ -236,11 +254,12 @@ class DeciderDaemon(DaemonBase):
             if row.capacity_mbps is not None
         }
 
-    def _port_rows(self, edges, ports) -> tuple:
+    def _port_rows(self, edges, ports, utilization=1.0) -> tuple:
         """
         One constraint per port: the edges whose circuits cross it carry no more than
-        its capacity, less what circuits that aren't DMM's hold there and the
-        finished reservations crossing it.
+        utilization of its capacity, less what circuits that aren't DMM's hold there
+        and the finished reservations crossing it. Everything reserved on the port
+        then stays within utilization of it, whoever holds it.
         """
         rows, limits, shared = [], [], []
         for uri, (capacity, foreign) in sorted(ports.items()):
@@ -250,11 +269,12 @@ class DeciderDaemon(DaemonBase):
             row = np.zeros(len(edges))
             row[crossing] = 1
             reserved = sum(edges[i][2]['fixed_bandwidth'] for i in crossing)
+            limit = utilization * capacity - foreign - reserved
             rows.append(row)
-            limits.append(capacity - foreign - reserved)
+            limits.append(limit)
             if len(crossing) > 1:
                 pairs = ", ".join(f"{edges[i][0]}-{edges[i][1]}" for i in crossing)
-                shared.append(f"{uri.split(':', 5)[-1]} {capacity - foreign - reserved:.0f} Mbps ({pairs})")
+                shared.append(f"{uri.split(':', 5)[-1]} {limit:.0f} Mbps ({pairs})")
         # Said once per change, not every cycle.
         if shared != getattr(self, '_shared_ports', None):
             self._shared_ports = shared
@@ -270,10 +290,14 @@ class DeciderDaemon(DaemonBase):
 
         Constraints: each site carries no more than its largest mesh link, each
         port in ports no more than it has free for DMM (see _port_rows), and each
-        edge no more than its link and SENSE-O's figure for the pair allow.
+        edge no more than its link and SENSE-O's figure for the pair allow. Site,
+        link and port capacities count at _max_utilization() of their size.
+        SENSE-O's figure is taken as it is: it already leaves out what other
+        circuits hold, and the rows for the sites and ports cap the total anyway.
         """
         n_edges = len(edges)
         edge_index = {edge[:2]: i for i, edge in enumerate(edges)}
+        util = _max_utilization()
 
         c = np.zeros(n_edges)
         for i, (u, v, data) in enumerate(edges):
@@ -281,24 +305,24 @@ class DeciderDaemon(DaemonBase):
             c[i] = -priority
 
         A = nx.incidence_matrix(simple_graph, nodelist=nodes, edgelist=edges).toarray()
-        b = np.array([simple_graph.nodes[node]['link_capacity_mbps'] for node in nodes], dtype=float)
+        b = np.array([util * simple_graph.nodes[node]['link_capacity_mbps'] for node in nodes], dtype=float)
 
         node_index = {node: i for i, node in enumerate(nodes)}
         for u, v, data in edges:
             b[node_index[u]] -= data['fixed_bandwidth']
             b[node_index[v]] -= data['fixed_bandwidth']
 
-        # An edge carries no more than min(link_capacity, what SENSE-O has free for
-        # the pair) less finished reservations. pair_available counts those too (it
-        # adds back everything DMM held on the pair), so they come off both.
+        # An edge carries no more than min(its share of the link, what SENSE-O has
+        # free for the pair) less finished reservations. pair_available counts those
+        # too (it adds back everything DMM held on the pair), so they come off both.
         edge_bounds = np.array(
-            [min(data['link_capacity'], _whole_gbps(data['pair_available'])) - data['fixed_bandwidth']
+            [min(util * data['link_capacity'], _whole_gbps(data['pair_available'])) - data['fixed_bandwidth']
              if data.get('pair_available') is not None
-             else min(data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth'])
+             else min(util * data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth'])
              for _, _, data in edges], dtype=float
         )
 
-        port_A, port_b = self._port_rows(edges, ports or {})
+        port_A, port_b = self._port_rows(edges, ports or {}, util)
 
         A = np.vstack([A, port_A, np.eye(n_edges)])
         b = np.concatenate([b, port_b, edge_bounds])
@@ -446,6 +470,7 @@ class DeciderDaemon(DaemonBase):
         """
         reqs_provisioned = Request.get_by_status(statuses=[RequestStatus.MODIFIED, RequestStatus.PROVISIONED, RequestStatus.DECIDED], session=session)
         min_upward_step = config_get_float("decider", "min_upward_modify_fraction", default=0.1, constraint="nonneg")
+        util = _max_utilization()
         for req in reqs_provisioned:
             allocated_bandwidth = None  # Initialize to prevent NameError
             req_u = None  # source-node name on the multi_graph (needed for cap logic)
@@ -479,7 +504,11 @@ class DeciderDaemon(DaemonBase):
                     and r.sense_uuid is not None
                     and (r.transfer_status != RequestStatus.FINISHED or self._holds_reservation(r))
                 )
-                capped = int(min(allocated_bandwidth, link_capacity - reserved_by_others))
+                # Within the same share the plan keeps to, so growing into room a
+                # co-tenant's cut hasn't freed yet can't fill the link meanwhile.
+                # Never below what it has now: this guards a raise, not a cut.
+                capped = int(max(min(allocated_bandwidth, util * link_capacity - reserved_by_others),
+                                 req.allocated_bandwidth_mbps or 0))
                 if capped != allocated_bandwidth:
                     logging.info(
                         f"Capping upward MODIFY for {req.rule_id}: "

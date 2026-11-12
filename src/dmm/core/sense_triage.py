@@ -113,7 +113,7 @@ def triage(error) -> Triage:
         return Triage(
             NO_RESOURCES, RETRY,
             config_get_int("sense", "no_resources_max_retries", default=1, constraint="nonneg"),
-            0,
+            config_get_int("sense", "no_resources_backoff_seconds", default=120, constraint="nonneg"),
         )
     if "no longer known to sense-o" in text:
         return Triage(INSTANCE_GONE, RETRY, max_retries, 0)

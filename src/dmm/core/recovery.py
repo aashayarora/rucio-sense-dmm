@@ -22,18 +22,59 @@ from dmm.core.sense import (
     delete_instance,
     get_instance_status,
     is_being_cancelled,
+    is_being_provisioned,
     is_cancel_failed,
     is_cancel_ready,
+    is_circuit_active,
     is_stalled_status,
     verify_instance,
 )
 from dmm.core.sense_triage import RECOMMENDATIONS, triage, backoff_seconds, ESCALATE
 from dmm.models.base import utcnow
-from dmm.models.request import RequestStatus, SenseCircuitStatus
+from dmm.models.mesh import Mesh
+from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
 
 CREATE = "create"
 CANCEL = "cancel"
 MODIFY = "modify"
+
+# Starts the failure_reason of a staging SENSE-O refused for lack of resources
+# while one of DMM's own circuits held the path (written by the stager). The
+# handler then stages it again rather than failing it.
+BLOCKED_BY_DMM = "[path held by DMM]"
+
+# Requests whose circuit may hold bandwidth, by DMM's status.
+_HOLDER_STATUSES = [
+    RequestStatus.PROVISIONED, RequestStatus.STALE, RequestStatus.MODIFIED,
+    RequestStatus.DECIDED, RequestStatus.FINISHED, RequestStatus.CANCELED,
+]
+
+
+def dmm_circuit_on_path(req, session):
+    """
+    Another of DMM's requests whose circuit holds bandwidth through a site or a
+    known port of req's path, or None.
+
+    When SENSE-O refuses req for lack of resources and there is one, the refusal
+    may be DMM's own doing, and stop once that circuit shrinks or ends. A circuit
+    counts while it is up, committing (a create or modify) or being cancelled:
+    it holds its bandwidth until the cancel is through. The path's ports are
+    those of req's last staging and of its pair's last provisioned circuit
+    (Mesh.path_ports); a refused staging records none.
+    """
+    sites = {req.src_site_, req.dst_site_} - {None}
+    mesh = Mesh.get_by_sites(req.src_site_, req.dst_site_, session=session, use_lock=False) \
+        if len(sites) == 2 else None
+    ports = set(req.path_ports or []) | set((mesh.path_ports if mesh else None) or [])
+    for other in Request.get_by_status(statuses=_HOLDER_STATUSES, session=session, use_lock=False):
+        if other.rule_id == req.rule_id or not other.sense_uuid or other.sense_uuid == req.sense_uuid:
+            continue
+        status = other.sense_circuit_status
+        if not (is_circuit_active(status) or is_being_provisioned(status) or is_being_cancelled(status)):
+            continue
+        if sites & {other.src_site_, other.dst_site_} or ports & set(other.path_ports or []):
+            return other
+    return None
 
 
 def escalate(req, stage, reason, detail, session):

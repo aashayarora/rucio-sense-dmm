@@ -9,6 +9,7 @@ from dmm.models.mesh import Mesh
 from dmm.core.config import config_get
 from dmm.core.sense import stage_link, parse_staging_response, parse_circuit_ports, delete_instance
 from dmm.core.path_ports import refresh_path_ports
+from dmm.core.recovery import BLOCKED_BY_DMM, dmm_circuit_on_path
 from dmm.core.utils import release_endpoints_and_addresses
 from dmm.core.sense_triage import triage, NO_RESOURCES, NO_CAPACITY, NO_VLANS, NO_TOPOLOGY
 from dmm.core.sense_model import check_path
@@ -96,6 +97,14 @@ class SENSEStagerDaemon(DaemonBase):
                 req.mark_retry(f"Staging failed: {e}", session=session)
                 t = triage(e)
                 if t.kind == NO_RESOURCES:
+                    holder = dmm_circuit_on_path(req, session)
+                    if holder is not None:
+                        logging.info(
+                            f"SENSE-O refused {req.rule_id} while {holder.rule_id}'s circuit "
+                            f"({holder.src_site_}->{holder.dst_site_}, {holder.allocated_bandwidth_mbps} Mbps) "
+                            f"shares its path"
+                        )
+                        req.set_failure_reason(f"{BLOCKED_BY_DMM} {req.failure_reason}", session=session)
                     self._probe_path_on_no_resources(req, session)
 
         # Committed with the STAGED requests, so the decider never plans them
@@ -109,7 +118,7 @@ class SENSEStagerDaemon(DaemonBase):
 
         Runs check_path() (GET /model + local NML graph search; read-only, no side
         effects) and refines the failure_reason written by mark_retry() with the
-        more specific verdict:
+        more specific verdict, added after SENSE-O's error:
 
           NO_CAPACITY   — topology joined; bottleneck Mbps is the problem.
                           Also writes available_bandwidth_mbps so the optimizer
@@ -149,7 +158,7 @@ class SENSEStagerDaemon(DaemonBase):
         }.get(result.verdict, result.verdict.lower())
 
         refined_reason = f"[{verdict_kind}] {result.detail}"
-        req.set_failure_reason(refined_reason, session=session)
+        req.set_failure_reason(f"{req.failure_reason} | model probe: {refined_reason}", session=session)
 
         if result.verdict == "NO_CAPACITY" and result.bottleneck_free_mbps is not None:
             req.set_available_bandwidth(result.bottleneck_free_mbps, session=session)

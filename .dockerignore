@@ -1,0 +1,15 @@
+# Allowlist: aaarora/dmm is a public image, and a local build runs against the
+# working tree, where gitignored files (dmm.cfg, dmm.db, logs, env/, kubeconfigs)
+# would otherwise be copied in by the Dockerfile's `COPY .`. Only what the
+# build (pip install /opt/dmm/) and the entrypoint need goes in.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!src
+!docker
+
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/*.log

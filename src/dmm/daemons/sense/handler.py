@@ -3,8 +3,10 @@ from collections import defaultdict
 from math import floor
 
 from dmm.core.config import config_get_bool, config_get_int
-from dmm.core.recovery import CREATE, attempt_due, check_stall, escalate, reset_circuit
-from dmm.core.sense_triage import ESCALATE, backoff_seconds, triage, http_code
+from dmm.core.recovery import (
+    BLOCKED_BY_DMM, CREATE, attempt_due, check_stall, dmm_circuit_on_path, escalate, reset_circuit,
+)
+from dmm.core.sense_triage import ESCALATE, NO_RESOURCES, backoff_seconds, triage, http_code
 from dmm.daemons.base import DaemonBase
 from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
@@ -129,7 +131,12 @@ class SENSEHandlerDaemon(DaemonBase):
         Discard failures are handled in two ways:
           - HTTP 400: SENSE-O structurally prohibits the delete (e.g. non-admin
             credential cannot delete an instance in CREATE - FAILED). Escalates and
-            marks FAILED immediately — retrying cannot fix this.
+            marks FAILED immediately — retrying cannot fix this. Except for a
+            staging refused for lack of resources while DMM's own circuits share
+            the path (_blocked_by_dmm): that refusal goes away as they shrink or
+            end, so the refused instance, which holds nothing, is left for an
+            admin and the request is staged again on a new one, up to
+            [sense] no_resources_blocked_max_retries times.
           - Other errors: counted toward sense_retries so the retry budget drains.
             Once the budget is exhausted the request is failed and escalated; it
             cannot loop silently forever.
@@ -138,7 +145,13 @@ class SENSEHandlerDaemon(DaemonBase):
         """
         result = triage(req.failure_reason)
         retries = req.sense_retries or 0
-        if result.action == ESCALATE or retries >= result.max_retries:
+        staged = req.sense_uuid and req.available_bandwidth_mbps is not None
+        blocked = result.kind == NO_RESOURCES and not staged and self._blocked_by_dmm(req, session)
+        max_retries = result.max_retries
+        if blocked:
+            max_retries = max(max_retries, config_get_int(
+                "sense", "no_resources_blocked_max_retries", default=3, constraint="nonneg"))
+        if result.action == ESCALATE or retries >= max_retries:
             last_error = req.failure_reason or "unknown error"
             escalate(req, CREATE, result.kind, last_error, session)
             if result.action == ESCALATE:
@@ -161,18 +174,29 @@ class SENSEHandlerDaemon(DaemonBase):
             return False
 
         status = get_instance_status(req.sense_uuid) if req.sense_uuid else None
-        staged = req.sense_uuid and req.available_bandwidth_mbps is not None
         if staged and status in self._USABLE_CREATE_STATUSES:
             target = RequestStatus.DECIDED
         else:
             if req.sense_uuid:
                 try:
                     discard_instance(req.sense_uuid, status)
+                    logging.info(f"Discarded SENSE instance {req.sense_uuid} ({status}) of {req.rule_id}, restaging")
                 except Exception as e:
                     # HTTP 400 means SENSE-O structurally prohibits this delete
                     # (e.g. "Non-admin users cannot delete instance in its current state").
-                    # Retrying will never fix it — escalate immediately.
-                    if http_code(e) == 400:
+                    # Retrying will never fix it — escalate immediately, unless the
+                    # request was only refused for room DMM's own circuits hold.
+                    if http_code(e) == 400 and blocked:
+                        # Logged, not set on the request: an escalated request is
+                        # skipped by the modifier, and this one is carrying on.
+                        logging.error(
+                            f"ESCALATION: SENSE instance {req.sense_uuid} ({status}) needs an admin to "
+                            f"delete it: SENSE-O refused DMM's delete ({e}). It holds nothing; its "
+                            f"staging for {req.rule_id} ({req.src_site_}->{req.dst_site_}) was refused "
+                            f"while DMM's own circuits held the path, so {req.rule_id} is staged "
+                            f"again on a new instance."
+                        )
+                    elif http_code(e) == 400:
                         reason = (
                             f"SENSE-O refused discard with HTTP 400 (non-admin or bad state): {e}. "
                             f"Original failure: {req.failure_reason}"
@@ -185,33 +209,51 @@ class SENSEHandlerDaemon(DaemonBase):
                         req.mark_failed(reason, session=session)
                         release_endpoints_and_addresses(req, session)
                         return False
-                    # count this failure toward the retry budget so the request
-                    # cannot loop forever when discard fails for other transient reasons.
-                    req.increment_sense_retries(session=session)
-                    retries = req.sense_retries or 0
-                    if retries >= result.max_retries:
-                        reason = f"Discard of SENSE instance {req.sense_uuid} failed {retries} time(s), giving up: {e}"
+                    else:
+                        # count this failure toward the retry budget so the request
+                        # cannot loop forever when discard fails for other transient reasons.
+                        req.increment_sense_retries(session=session)
+                        retries = req.sense_retries or 0
+                        if retries >= max_retries:
+                            reason = f"Discard of SENSE instance {req.sense_uuid} failed {retries} time(s), giving up: {e}"
+                            logging.error(
+                                f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
+                                f"{e} — retry budget exhausted ({retries}/{max_retries}), marking as FAILED"
+                            )
+                            escalate(req, CREATE, result.kind, reason, session)
+                            req.mark_failed(reason, session=session)
+                            release_endpoints_and_addresses(req, session)
+                            return False
                         logging.error(
                             f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
-                            f"{e} — retry budget exhausted ({retries}/{result.max_retries}), marking as FAILED"
+                            f"{e} — will retry next cycle ({retries}/{max_retries})"
                         )
-                        escalate(req, CREATE, result.kind, reason, session)
-                        req.mark_failed(reason, session=session)
-                        release_endpoints_and_addresses(req, session)
                         return False
-                    logging.error(
-                        f"Could not discard SENSE instance {req.sense_uuid} of {req.rule_id}: "
-                        f"{e} — will retry next cycle ({retries}/{result.max_retries})"
-                    )
-                    return False
-                logging.info(f"Discarded SENSE instance {req.sense_uuid} ({status}) of {req.rule_id}, restaging")
                 reset_circuit(req, session)
             target = RequestStatus.ALLOCATED
 
-        logging.info(f"Request {req.rule_id} retry {retries + 1}/{result.max_retries} ({result.kind}), resuming from {target}")
+        logging.info(f"Request {req.rule_id} retry {retries + 1}/{max_retries} ({result.kind}), resuming from {target}")
         req.increment_sense_retries(session=session)
         req.set_status(target, session=session)
         return target == RequestStatus.DECIDED
+
+    @staticmethod
+    def _blocked_by_dmm(req, session) -> bool:
+        """
+        Whether req's staging was refused for room DMM's own circuits held: the
+        stager saw one on the path when SENSE-O refused (BLOCKED_BY_DMM), or one
+        is there still. Either way the refusal can go away as they shrink or end.
+        """
+        if (req.failure_reason or "").startswith(BLOCKED_BY_DMM):
+            return True
+        other = dmm_circuit_on_path(req, session)
+        if other is not None:
+            logging.info(
+                f"{req.rule_id}'s path is shared with {other.rule_id}'s circuit "
+                f"({other.src_site_}->{other.dst_site_}, {other.sense_circuit_status}, "
+                f"{other.allocated_bandwidth_mbps} Mbps)"
+            )
+        return other is not None
 
     @staticmethod
     def _rtmon_deployment(cache):
