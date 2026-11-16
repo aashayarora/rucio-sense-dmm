@@ -5,7 +5,7 @@ from dmm.daemons.base import DaemonBase
 from dmm.db.session import databased
 from dmm.models.request import Request, RequestStatus
 
-from dmm.core.recovery import retry_cancel
+from dmm.core.recovery import retry_cancel, escalate, DELETE
 from dmm.core.sense import (
     delete_instance,
     is_cancel_failed,
@@ -13,6 +13,7 @@ from dmm.core.sense import (
     is_create_compiled,
     is_delete_refused,
 )
+from dmm.core.sense_triage import NON_ADMIN_DELETE_REFUSED
 
 class SENSEDeleterDaemon(DaemonBase):
     def __init__(self, frequency, **kwargs):
@@ -62,10 +63,9 @@ class SENSEDeleterDaemon(DaemonBase):
                     # retrying every cycle would only repeat the refusal.
                     if not (is_create_compiled(status) and is_delete_refused(e)):
                         raise
-                    logging.warning(
-                        f"SENSE-O won't let DMM delete instance {req.sense_uuid} ({status}) of {req.rule_id}; "
-                        f"it was never provisioned, so it is left for a SENSE-O admin to remove"
-                    )
+                    # Escalate before marking DELETED so the orphaned instance is
+                    # visible via dmm_request_sense_escalated and the ERROR log.
+                    escalate(req, DELETE, NON_ADMIN_DELETE_REFUSED, e, session)
                     req.set_status(status=RequestStatus.DELETED, session=session)
                     continue
                 req.set_status(status=RequestStatus.DELETED, session=session)

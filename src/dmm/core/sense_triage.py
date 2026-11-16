@@ -39,6 +39,9 @@ AUTH = "auth"
 # Any other server-side error from SENSE-O.
 SENSE_ERROR = "sense_error"
 OTHER = "other"
+# SENSE-O refused a delete because the instance was not in a cancellable state
+# and DMM's account lacks admin privileges to force it.
+NON_ADMIN_DELETE_REFUSED = "non_admin_refused"
 
 _RM_UNREACHABLE = (
     "failed to communicate with subsystem",
@@ -80,6 +83,11 @@ RECOMMENDATIONS = {
     OTHER: "check the error in the DMM log",
     "stalled": "check why SENSE-O has not verified the instance; a site RM on the path may be down",
     "retries_exhausted": "check the instance in SENSE-O; DMM's automatic recovery gave up",
+    NON_ADMIN_DELETE_REFUSED: (
+        "delete the orphaned SENSE-O instance manually: "
+        "it compiled but was never provisioned, so it holds no site resources, "
+        "but SENSE-O will not let a non-admin account remove it"
+    ),
 }
 
 

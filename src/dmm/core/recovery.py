@@ -37,6 +37,7 @@ from dmm.models.request import Request, RequestStatus, SenseCircuitStatus
 CREATE = "create"
 CANCEL = "cancel"
 MODIFY = "modify"
+DELETE = "delete"
 
 # Starts the failure_reason of a staging SENSE-O refused for lack of resources
 # while one of DMM's own circuits held the path (written by the stager). The
