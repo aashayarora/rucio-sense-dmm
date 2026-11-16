@@ -3,11 +3,14 @@ Core SENSE API operations and logic.
 This module contains all SENSE-related API calls and business logic,
 extracted from the SENSE daemons for better separation of concerns.
 """
+import ast
 import logging
 import json
 import html
 import ipaddress
 import re
+import time
+from datetime import datetime
 
 from sense.client.workflow_combined_api import WorkflowCombinedApi
 from sense.client.discover_api import DiscoverApi
@@ -275,6 +278,16 @@ def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vla
                             "sparql": "SELECT DISTINCT ?ipv6_subnet_uri ?ipv6_subnet WHERE {?route mrs:routeFrom ?ipv6_subnet_uri. ?ipv6_subnet_uri mrs:type 'ipv6-prefix-list'. ?ipv6_subnet_uri mrs:value ?ipv6_subnet}"
                         }
                     ]
+                },
+                {
+                    "ask": "path-bandwidth-calendar",
+                    "options": [
+                        {
+                            "name": "Connection 1",
+                            "start": "now",
+                            "end-before": f"+{calendar_hours()}h"
+                        }
+                    ]
                 }
             ],
             "alias": rule_id
@@ -291,6 +304,51 @@ def stage_link(profile_uuid, src_site, dst_site, src_ip_range, dst_ip_range, vla
         sense_uuid = getattr(workflow_api, "si_uuid", None)
         logging.error(f"Failed to stage link for {rule_id} on SENSE instance {sense_uuid}: {e}")
         raise StagingError(f"Failed to stage link for {rule_id}: {e}", sense_uuid=sense_uuid) from e
+
+def calendar_hours():
+    """The window the staging intent asks SENSE-O's path calendar for, in hours."""
+    return max(1, int(config_get("decider", "schedule_horizon_hours", default="24")))
+
+
+def _calendar_time(value):
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z").timestamp()
+
+
+def parse_path_calendar(response):
+    """
+    SENSE-O's path-bandwidth-calendar from a staging response, as
+    {"at": epoch, "slots": [[start, end, free Mbps], ...]} (epoch seconds), or None.
+
+    The calendar comes as a string in Python literal syntax, not JSON:
+    "[{'start-time':'2026-11-12T21:27:49.000+0000','bandwidth':40000000000,'end-time':...}]"
+    """
+    if not isinstance(response, dict):
+        return None
+    for query in response.get("queries") or []:
+        if not isinstance(query, dict) or (query.get("asked") or query.get("ask")) != "path-bandwidth-calendar":
+            continue
+        for result in query.get("results") or []:
+            raw = result.get("bandwidth-calendar") if isinstance(result, dict) else None
+            try:
+                entries = ast.literal_eval(raw) if isinstance(raw, str) else raw
+                slots = sorted(
+                    [_calendar_time(e["start-time"]), _calendar_time(e["end-time"]), int(e["bandwidth"]) / 1e6]
+                    for e in entries or []
+                )
+            except (ValueError, SyntaxError, KeyError, TypeError) as e:
+                logging.warning(f"Unreadable path calendar in the staging response: {e}: {str(raw)[:200]}")
+                return None
+            if slots:
+                return {"at": time.time(), "slots": slots}
+    return None
+
+
+def archive_instance(sense_uuid):
+    """Archive a SENSE instance, for one SENSE-O won't let DMM delete."""
+    workflow_api = WorkflowCombinedApi()
+    workflow_api.si_uuid = sense_uuid
+    return workflow_api.instance_archive()
+
 
 def parse_staging_response(response, src_ip_range=None, dst_ip_range=None):
     """

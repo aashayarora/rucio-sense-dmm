@@ -118,6 +118,7 @@ def reset_circuit(req, session, **extra):
         "src_vlan": None,
         "dst_vlan": None,
         "path_ports": None,
+        "path_calendar": None,
         "sense_circuit_status": None,
         "sense_status_since": None,
         "sense_verify_sent_at": None,

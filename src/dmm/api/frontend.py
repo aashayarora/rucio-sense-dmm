@@ -681,7 +681,7 @@ async def api_list_mesh(session=None):
 
 _TERMINAL_STATUSES = [
     RequestStatus.FINISHED, RequestStatus.CANCELED,
-    RequestStatus.DELETED, RequestStatus.FAILED,
+    RequestStatus.DELETED, RequestStatus.FAILED, RequestStatus.REJECTED,
 ]
 
 _SENSE_STATE_RESET = {

@@ -21,7 +21,7 @@
 {%- endmacro -%}
 {%- macro status_class(status) -%}
 {%- if status in ['PROVISIONED', 'FINISHED', 'DELETED'] -%}status-good
-{%- elif status in ['FAILED', 'CANCELED'] -%}status-bad
+{%- elif status in ['FAILED', 'CANCELED', 'REJECTED'] -%}status-bad
 {%- else -%}status-warn
 {%- endif -%}
 {%- endmacro -%}

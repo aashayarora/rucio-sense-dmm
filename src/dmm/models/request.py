@@ -22,6 +22,7 @@ class RequestStatus(str, Enum):
     FINISHED    = "FINISHED"    # Rucio rule done; circuit kept for sense_keep_alive_seconds for reuse, then cancelled
     CANCELED    = "CANCELED"    # SENSE circuit cancelled, endpoints freed
     DELETED     = "DELETED"     # SENSE instance deleted, record fully retired
+    REJECTED    = "REJECTED"    # Can't be scheduled within the horizon; its instance and endpoints are released
 
 class SenseCircuitStatus(str, Enum):
     CREATE_COMPILED    = "CREATE - COMPILED"
@@ -60,6 +61,8 @@ class Request(ModelBase, table=True):
     dst_vlan: Optional[int] = Field(default=None)
     circuit_path: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     path_ports: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # SENSE-O's path-bandwidth-calendar at staging: {"at": epoch, "slots": [[start, end, free Mbps], ...]}
+    path_calendar: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     sense_circuit_status: Optional[str] = Field(default=None, index=True)
     sense_affiliated: Optional[bool] = Field(default=False)
     fts_streams_current: Optional[int] = Field(default=0)
@@ -301,6 +304,20 @@ class Request(ModelBase, table=True):
         path = ", ".join(f"{hop['site']}:{hop['host']}/vlan{hop['vlan']}" for hop in hops)
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> circuit path {path}")
         self.circuit_path = {"sense_uuid": self.sense_uuid, "hops": hops}
+        self.save(session)
+
+    def set_path_calendar(self, calendar: dict, session=None):
+        slots = calendar.get("slots") or []
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> path_calendar={len(slots)} slot(s), "
+                     f"free {', '.join(f'{s[2]:.0f}' for s in slots[:4])} Mbps")
+        self.path_calendar = calendar
+        self.save(session)
+
+    def reject(self, reason: str, session=None):
+        reason = self._truncate_reason(reason)
+        logging.info(f"REQUEST UPDATE: {self.rule_id} -> REJECTED ({reason})")
+        self.transfer_status = RequestStatus.REJECTED
+        self.failure_reason = reason
         self.save(session)
 
     def set_path_ports(self, ports: list, session=None):
