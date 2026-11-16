@@ -46,10 +46,26 @@ class RucioFinisherDaemon(DaemonBase):
             return
 
         if is_rule_ok(status):
-            logging.info(f"Request {req.rule_id} finished with status {status}")
-            req.set_status(status=RequestStatus.FINISHED, session=session)  # Mark request as finished
+            if req.transfer_status in (
+                RequestStatus.ALLOCATED, RequestStatus.STAGED, RequestStatus.DECIDED
+            ):
+                logging.warning(
+                    f"Request {req.rule_id} finished in Rucio but was never provisioned "
+                    f"(DMM status: {req.transfer_status}); marking FINISHED without a live circuit"
+                )
+            else:
+                logging.info(f"Request {req.rule_id} finished with status {status}")
+            req.set_status(status=RequestStatus.FINISHED, session=session)
             req.update({"rucio_finished_at": utcnow()}, session=session)
         elif is_rule_stuck(status):
-            logging.info(f"Request {req.rule_id} is stuck, marking as FINISHED in DMM so circuit can be taken down")
+            if req.transfer_status in (
+                RequestStatus.ALLOCATED, RequestStatus.STAGED, RequestStatus.DECIDED
+            ):
+                logging.warning(
+                    f"Request {req.rule_id} is stuck in Rucio and was never provisioned "
+                    f"(DMM status: {req.transfer_status}); marking FINISHED without a live circuit"
+                )
+            else:
+                logging.info(f"Request {req.rule_id} is stuck, marking as FINISHED in DMM so circuit can be taken down")
             req.set_status(status=RequestStatus.FINISHED, session=session)
             req.update({"rucio_finished_at": utcnow()}, session=session)
