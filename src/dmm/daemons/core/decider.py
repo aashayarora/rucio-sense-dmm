@@ -1,8 +1,9 @@
 import logging
+import time
 import numpy as np
 from scipy.optimize import linprog
 import networkx as nx
-from math import floor
+from math import ceil, floor
 
 from dmm.daemons.base import DaemonBase
 
@@ -10,8 +11,9 @@ from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
 from dmm.models.path_port import PathPort
 from dmm.db.session import databased
-from dmm.core.config import config_get_float
-from dmm.core.sense import is_circuit_active, is_being_provisioned
+from dmm.core.config import config_get, config_get_float
+from dmm.core.least_waste import MAX_RULES, final_allocation
+from dmm.core.sense import calendar_hours, is_circuit_active, is_being_provisioned
 
 # How close the binary search gets the floor to its best value. An allocation that
 # sits on the floor is up to this far below a round number, so rounding allows for
@@ -21,6 +23,72 @@ _PRECISION_MBPS = 5
 
 def _whole_gbps(mbps):
     return floor(mbps / 1000) * 1000
+
+
+_TICK_S = 60
+
+
+def _whole_gbps_share(bandwidth):
+    """
+    Down to whole Gbps, at least 1 Gbps if anything. The search leaves the floor up
+    to _PRECISION_MBPS short, which is not a reason to give up a whole Gbps.
+    """
+    rounded = floor((bandwidth + _PRECISION_MBPS) // 1000) * 1000
+    return 1000 if bandwidth > 0 and rounded == 0 else rounded
+
+
+def _calendar_now(req):
+    """SENSE-O's figure for the path when req was staged: its calendar's first slot, or the window's minimum."""
+    slots = (req.path_calendar or {}).get("slots")
+    return sorted(slots)[0][2] if slots else req.available_bandwidth_mbps
+
+
+def _calendar_reservations(live, total, horizon):
+    """
+    The part of an edge's share (total Mbps) the pair's latest SENSE-O calendar
+    shows won't be free later, as least_waste reservations [(start, end, Mbps)]
+    in ticks from now.
+
+    The calendar's first slot is what was free at staging; pair_available is that
+    plus what DMM held on the pair, so at time t DMM has pair_available less the
+    calendar's drop since then. DMM's circuits are open-ended, so a step in the
+    calendar is someone else's reservation starting or ending.
+    """
+    staged = [d for _, d in live if (d.get('calendar') or {}).get('slots')]
+    if not staged:
+        return []
+    latest = max(staged, key=lambda d: (d.get('calendar') or {}).get('at') or 0)
+    slots = sorted(latest['calendar']['slots'])
+    free_then = slots[0][2]
+    pair_available = latest.get('pair_available') or free_then
+    now = time.time()
+    out = []
+    for start, end, free in slots:
+        held = total - (pair_available - (free_then - free))
+        a = max(0.0, (start - now) / _TICK_S)
+        b = min(float(horizon), (end - now) / _TICK_S)
+        if held > 0 and b > a:
+            out.append((floor(a), ceil(b), min(held, total)))
+    return out
+
+
+def _plan_fits(allocations, reservations, total):
+    """Every share positive, within the edge's total, and clear of the reservations."""
+    eps = 1e-6
+    for x1, x2, y1, y2, _ in allocations:
+        if y2 - y1 <= 0 or y2 > total + eps:
+            return False
+        if any(x1 < b - eps and x2 > a + eps and y1 < h - eps for a, b, h in reservations):
+            return False
+    return True
+
+
+def _remaining_mbit(req):
+    """What the rule has left to move, in Mbit, or None when its size isn't known."""
+    if not req.rule_size or req.rule_size <= 0:
+        return None
+    done = (req.fts_summary or {}).get("bytes_done") or 0
+    return max(req.rule_size - done, 1e5) * 8 / 1e6
 
 
 def _max_utilization():
@@ -62,6 +130,7 @@ class DeciderDaemon(DaemonBase):
         optim_result = self._optimize_bandwidth(A, b, c, edges, current)
 
         self._allocate_bandwidth(multi_graph, simple_graph, edges, edge_index, optim_result)
+        self._reject_unschedulable(multi_graph, session)
 
         self._allocate_new_bandwidth(multi_graph, session)
         self._modify_existing_bandwidth(multi_graph, session)
@@ -118,14 +187,18 @@ class DeciderDaemon(DaemonBase):
                 fixed=is_fixed,
                 fixed_bandwidth=(req.allocated_bandwidth_mbps or 0) if is_fixed else 0,
                 path_ports=list(req.path_ports or []),
+                size_mbit=_remaining_mbit(req),
+                committed=is_circuit_active(req.sense_circuit_status) or is_being_provisioned(req.sense_circuit_status),
+                calendar=req.path_calendar,
             )
         return multi_graph
 
     def _record_pair_available(self, session) -> None:
         """
         For each request staged since the last run, record what SENSE-O has free for
-        DMM on its site pair: the request's available bandwidth plus what DMM's
-        circuits on the pair hold.
+        DMM on its site pair: what its staging found free now (the calendar's first
+        slot; the window's minimum without a calendar) plus what DMM's circuits on
+        the pair hold. Later changes in the calendar are the schedule's to handle.
 
         SENSE-O's figure for a new rule is what its path has left after every circuit
         on it, DMM's own included, and DMM shares a pair between its requests, so a
@@ -135,7 +208,7 @@ class DeciderDaemon(DaemonBase):
         """
         staged = [
             r for r in Request.get_by_status(statuses=[RequestStatus.STAGED], session=session)
-            if r.available_bandwidth_mbps is not None and r.src_site_ and r.dst_site_
+            if _calendar_now(r) is not None and r.src_site_ and r.dst_site_
         ]
         if not staged:
             return
@@ -154,12 +227,13 @@ class DeciderDaemon(DaemonBase):
                 if r.rule_id != req.rule_id and r.sense_uuid != req.sense_uuid
                 and {r.src_site_, r.dst_site_} == pair
             )
+            free = _calendar_now(req)
             logging.info(
-                f"SENSE-O has {req.available_bandwidth_mbps + held:.4f} Mbps free for DMM on "
-                f"{req.src_site_}-{req.dst_site_}: {req.available_bandwidth_mbps:.4f} reported for "
+                f"SENSE-O has {free + held:.4f} Mbps free for DMM on "
+                f"{req.src_site_}-{req.dst_site_}: {free:.4f} reported for "
                 f"{req.rule_id} + {held:.0f} held by DMM circuits on the pair"
             )
-            req.set_pair_available(req.available_bandwidth_mbps + held, session=session)
+            req.set_pair_available(free + held, session=session)
 
     @staticmethod
     def _holds_reservation(req) -> bool:
@@ -418,30 +492,101 @@ class DeciderDaemon(DaemonBase):
 
     def _allocate_bandwidth(self, multi_graph, simple_graph, edges, edge_index, bandwidths) -> None:
         """
-        Set the bandwidths in the graph based on the optimization result.
-        @param multi_graph: the network multi_graph
-        @param simple_graph: the simplified graph
-        @param edges: the edges of the graph
-        @param edge_index: the edge index mapping
-        @param x: the optimization result
+        Split each edge's bandwidth between its live requests and set it in the graph.
+
+        With [decider] split = least_waste (the default), an edge's share is
+        scheduled by the requests' remaining sizes and priorities (_schedule_edge),
+        and a request the schedule can't fit within the horizon is marked
+        'rejected'. Otherwise, or when there is no usable schedule, the share is
+        split in proportion to priority.
         """
+        least_waste = config_get("decider", "split", default="least_waste") == "least_waste"
+        live_by_edge = {}
         for u, v, key, data in multi_graph.edges(keys=True, data=True):
-            if data.get('fixed'):
-                continue
+            if not data.get('fixed'):
+                live_by_edge.setdefault((u, v), []).append((key, data))
+        for (u, v), live in live_by_edge.items():
             total_priority = simple_graph[u][v]['priority']
-            if total_priority > 0:
-                proportion = data['priority'] / total_priority
-                bandwidth = bandwidths[edge_index[(u, v)]] * proportion
-                # Round to lowest 1000 Mbps, but ensure minimum of 1000 if bandwidth > 0.
-                # The search leaves the floor up to _PRECISION_MBPS short, which is
-                # not a reason to give up a whole Gbps.
-                rounded_bandwidth = floor((bandwidth + _PRECISION_MBPS) // 1000) * 1000
-                if bandwidth > 0 and rounded_bandwidth == 0:
-                    rounded_bandwidth = 1000  # Minimum bandwidth
-                multi_graph[u][v][key]['bandwidth'] = rounded_bandwidth
-            else:
+            if total_priority <= 0:
                 logging.warning(f"Total priority is 0 for edge {u}->{v}, setting bandwidth to 0")
-                multi_graph[u][v][key]['bandwidth'] = 0
+                for key, _ in live:
+                    multi_graph[u][v][key]['bandwidth'] = 0
+                continue
+            total = bandwidths[edge_index[(u, v)]]
+            schedule = self._schedule_edge(u, v, live, total) if least_waste else None
+            for key, data in live:
+                if schedule is None:
+                    bandwidth = total * (data['priority'] / total_priority)
+                elif key in schedule[0]:
+                    bandwidth = schedule[0][key]
+                else:
+                    multi_graph[u][v][key]['bandwidth'] = 0
+                    multi_graph[u][v][key]['rejected'] = schedule[1][key]
+                    continue
+                multi_graph[u][v][key]['bandwidth'] = _whole_gbps_share(bandwidth)
+
+    def _schedule_edge(self, u, v, live, total):
+        """
+        Schedule an edge's live requests within its share (total Mbps) with
+        dmm.core.least_waste: by remaining size and priority, over the next
+        schedule_horizon_hours, around what SENSE-O's latest calendar for the pair
+        shows others will hold beyond what they held at staging.
+
+        Returns ({key: Mbps}, {key: why it was dropped}), or None to split the
+        share by priority as before when nothing is reserved later. Without a
+        usable schedule (a size isn't known, too many requests, the plan fails its
+        checks or would drop a request whose circuit is up) the split is by
+        priority over the least the pair will have within the horizon.
+        """
+        if total <= 0:
+            return None
+        hours = calendar_hours()
+        horizon = hours * 3600 // _TICK_S
+        reservations = _calendar_reservations(live, total, horizon)
+        lowest = total - max((h for _, _, h in reservations), default=0)
+        if lowest >= total:
+            fallback = None
+        elif lowest > 0:
+            psum = sum(d['priority'] for _, d in live) or 1
+            fallback = ({key: lowest * (d['priority'] / psum) for key, d in live}, {})
+        else:
+            logging.warning(f"{u}-{v} is reserved by others in full within {hours} h, splitting it by priority")
+            fallback = None
+        if len(live) > MAX_RULES or any(d.get('size_mbit') is None for _, d in live):
+            return fallback
+        rules = [(d['size_mbit'] / _TICK_S, max(d['priority'] or 0, 1)) for _, d in live]
+        keep = [i for i, (_, d) in enumerate(live) if d.get('committed')]
+        try:
+            allocations, dropped = final_allocation(reservations, (total, horizon), rules, keep=keep)
+        except Exception as e:
+            logging.warning(f"Could not schedule {u}-{v}, splitting it by priority: {e}")
+            return fallback
+        placed = {rid - 1 for *_, rid in allocations}
+        if (not _plan_fits(allocations, reservations, total) or any(i in keep for i in dropped)
+                or placed | set(dropped) != set(range(len(live)))):
+            logging.warning(f"The schedule for {u}-{v} overlaps a reservation or drops a running circuit, "
+                            f"splitting it by priority within {lowest:.0f} Mbps")
+            return fallback
+        shares = {live[rid - 1][0]: y2 - y1 for _, _, y1, y2, rid in allocations}
+        for x1, x2, y1, y2, rid in allocations:
+            logging.debug(f"Schedule {u}-{v}: {live[rid - 1][1]['rule_id']} {y2 - y1:.0f} Mbps, "
+                          f"done in {x2 * _TICK_S / 3600:.1f} h")
+        why = {live[i][0]: (f"Can't move its remaining {live[i][1]['size_mbit'] / 8e6:.2f} TB within {hours} h "
+                            f"in the {total / 1000:.0f} Gbps {u}-{v} has for DMM's rules")
+               for i in dropped}
+        return shares, why
+
+    def _reject_unschedulable(self, multi_graph, session) -> None:
+        """Reject the requests the schedule dropped; none of them has a circuit up yet."""
+        for _, _, data in multi_graph.edges(data=True):
+            if not data.get('rejected'):
+                continue
+            req = Request.get_by_id(data['rule_id'], session=session)
+            if req is None or req.transfer_status not in (RequestStatus.STAGED, RequestStatus.DECIDED):
+                continue
+            if is_circuit_active(req.sense_circuit_status) or is_being_provisioned(req.sense_circuit_status):
+                continue
+            req.reject(data['rejected'], session=session)
 
     def _allocate_new_bandwidth(self, multi_graph, session) -> None:
         """

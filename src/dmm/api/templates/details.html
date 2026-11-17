@@ -21,7 +21,7 @@
 {%- endmacro -%}
 {%- macro status_class(status) -%}
 {%- if status in ['PROVISIONED', 'FINISHED', 'DELETED'] -%}status-good
-{%- elif status in ['FAILED', 'CANCELED'] -%}status-bad
+{%- elif status in ['FAILED', 'CANCELED', 'REJECTED'] -%}status-bad
 {%- else -%}status-warn
 {%- endif -%}
 {%- endmacro -%}
@@ -91,7 +91,7 @@
         {% if data.failure_reason %}
         <div class="alert alert-error" role="alert">
             <div class="alert-title">
-                {% if transfer_status == 'FAILED' %}Request failed{% else %}Last error &mdash; retrying{% endif %}
+                {% if transfer_status == 'FAILED' %}Request failed{% elif transfer_status == 'REJECTED' %}Request rejected{% else %}Last error &mdash; retrying{% endif %}
                 {% if data.failed_at %}<span class="alert-time">{{ ts(data.failed_at) }}</span>{% endif %}
             </div>
             <pre class="alert-body">{{ data.failure_reason }}</pre>

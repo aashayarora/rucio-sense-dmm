@@ -7,7 +7,9 @@ from dmm.models.request import Request, RequestStatus
 from dmm.models.mesh import Mesh
 
 from dmm.core.config import config_get
-from dmm.core.sense import stage_link, parse_staging_response, parse_circuit_ports, delete_instance
+from dmm.core.sense import (
+    stage_link, parse_staging_response, parse_circuit_ports, parse_path_calendar, delete_instance,
+)
 from dmm.core.path_ports import refresh_path_ports
 from dmm.core.recovery import BLOCKED_BY_DMM, dmm_circuit_on_path
 from dmm.core.utils import release_endpoints_and_addresses
@@ -76,6 +78,9 @@ class SENSEStagerDaemon(DaemonBase):
                 req.set_sense_uuid(sense_uuid, session=session)
                 req.set_sense_uris(src_uri, dst_uri, session=session)
                 req.set_available_bandwidth(bandwidth_mbps, session=session)
+                calendar = parse_path_calendar(response)
+                if calendar:
+                    req.set_path_calendar(calendar, session=session)
                 ports = parse_circuit_ports(response)
                 if ports:
                     req.set_path_ports(ports, session=session)

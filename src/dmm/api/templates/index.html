@@ -81,7 +81,7 @@
                     data-search="{{ req.rule_id }} {{ src_site }} {{ dst_site }} {{ src_rse }} {{ dst_rse }} {{ req.src_endpoint.hostname if req.src_endpoint else '' }} {{ req.dst_endpoint.hostname if req.dst_endpoint else '' }}">
                     <td title="{{ req.rule_id }}">{{ req.rule_id }}</td>
                     <td>
-                        <span class="status-badge {% if status in ['PROVISIONED', 'FINISHED', 'DELETED'] %}status-good{% elif status in ['FAILED', 'CANCELED'] %}status-bad{% else %}status-warn{% endif %}">{{ status }}</span>{% if req.sense_escalation %} <span class="status-badge status-warn" title="Needs admin attention: {{ req.sense_escalation }}">⚠</span>{% endif %}
+                        <span class="status-badge {% if status in ['PROVISIONED', 'FINISHED', 'DELETED'] %}status-good{% elif status in ['FAILED', 'CANCELED', 'REJECTED'] %}status-bad{% else %}status-warn{% endif %}">{{ status }}</span>{% if req.sense_escalation %} <span class="status-badge status-warn" title="Needs admin attention: {{ req.sense_escalation }}">⚠</span>{% endif %}
                     </td>
                     <td>
                         {% if circuit %}
@@ -114,7 +114,7 @@
             active: ["PROVISIONED"],
             progress: ["INIT", "ALLOCATED", "RETRY", "STAGED", "DECIDED", "STALE", "MODIFIED"],
             finished: ["FINISHED", "CANCELED", "DELETED"],
-            failed: ["FAILED"],
+            failed: ["FAILED", "REJECTED"],
         };
 
         // Rules DMM does not manage (no SENSE circuit): listed under Total only.

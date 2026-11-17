@@ -5,8 +5,10 @@ from dmm.daemons.base import DaemonBase
 from dmm.db.session import databased
 from dmm.models.request import Request, RequestStatus
 
+from dmm.core.utils import release_endpoints_and_addresses
 from dmm.core.recovery import retry_cancel, escalate, DELETE
 from dmm.core.sense import (
+    archive_instance,
     delete_instance,
     is_cancel_failed,
     is_cancel_ready,
@@ -24,6 +26,7 @@ class SENSEDeleterDaemon(DaemonBase):
 
     @databased
     def run_once(self, session=None):
+        self._release_rejected(session)
         reqs_cancelled = Request.get_by_status(statuses=[RequestStatus.CANCELED], session=session)
         if reqs_cancelled == []:
             return
@@ -73,3 +76,30 @@ class SENSEDeleterDaemon(DaemonBase):
                 
             except Exception as e:
                 logging.error(f"Failed to delete link for {req.rule_id}: {e}", exc_info=True)
+
+    @staticmethod
+    def _release_rejected(session):
+        """
+        Free what a rejected request still holds: its SENSE instance, deleted or,
+        when SENSE-O won't let DMM delete it, archived, and its endpoints.
+        """
+        for req in Request.get_by_status(statuses=[RequestStatus.REJECTED], session=session):
+            if not req.sense_uuid:
+                continue
+            try:
+                delete_instance(req.sense_uuid)
+                logging.info(f"Deleted SENSE instance {req.sense_uuid} of rejected request {req.rule_id}")
+            except Exception as e:
+                if not is_delete_refused(e):
+                    logging.error(f"Failed to delete SENSE instance {req.sense_uuid} of rejected request "
+                                  f"{req.rule_id}, will try again: {e}")
+                    continue
+                try:
+                    archive_instance(req.sense_uuid)
+                    logging.info(f"Archived SENSE instance {req.sense_uuid} of rejected request {req.rule_id}")
+                except Exception as e:
+                    logging.error(f"Failed to archive SENSE instance {req.sense_uuid} of rejected request "
+                                  f"{req.rule_id}, will try again: {e}")
+                    continue
+            release_endpoints_and_addresses(req, session)
+            req.set_sense_uuid(None, session=session)
