@@ -53,6 +53,7 @@ class RucioFinisherDaemon(DaemonBase):
                     f"Request {req.rule_id} finished in Rucio but was never provisioned "
                     f"(DMM status: {req.transfer_status}); marking FINISHED without a live circuit"
                 )
+                req.set_escalation("finish:provisioning_skipped", session=session)
             else:
                 logging.info(f"Request {req.rule_id} finished with status {status}")
             req.set_status(status=RequestStatus.FINISHED, session=session)
@@ -65,6 +66,7 @@ class RucioFinisherDaemon(DaemonBase):
                     f"Request {req.rule_id} is stuck in Rucio and was never provisioned "
                     f"(DMM status: {req.transfer_status}); marking FINISHED without a live circuit"
                 )
+                req.set_escalation("finish:provisioning_skipped", session=session)
             else:
                 logging.info(f"Request {req.rule_id} is stuck, marking as FINISHED in DMM so circuit can be taken down")
             req.set_status(status=RequestStatus.FINISHED, session=session)
