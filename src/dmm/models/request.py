@@ -151,6 +151,7 @@ class Request(ModelBase, table=True):
         RequestStatus.FAILED,
         RequestStatus.CANCELED,
         RequestStatus.DELETED,
+        RequestStatus.REJECTED,
     ]
 
     @classmethod

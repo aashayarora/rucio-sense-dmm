@@ -770,11 +770,11 @@ async def update_fts_limit(request: Request, authorization: Optional[str] = Head
 
         req = _get_request_or_404(rule_id, session)
         _validate_sense_request(req)
-        if req.transfer_status not in [RequestStatus.CANCELED, RequestStatus.FINISHED, RequestStatus.DELETED]:
+        if req.transfer_status not in _TERMINAL_STATUSES:
             req.set_fts_streams(desired=limit, session=session)
             return "FTS limit updated"
         else:
-            raise HTTPException(status_code=400, detail="Cannot update FTS limit for cancelled, finished or deleted requests")
+            raise HTTPException(status_code=400, detail=f"Cannot update FTS limit for a {req.transfer_status} request")
     except HTTPException:
         raise
     except Exception as e:
