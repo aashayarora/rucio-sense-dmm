@@ -42,6 +42,10 @@ OTHER = "other"
 # SENSE-O refused a delete because the instance was not in a cancellable state
 # and DMM's account lacks admin privileges to force it.
 NON_ADMIN_DELETE_REFUSED = "non_admin_refused"
+# Rucio finished (or the rule was reaped) before DMM reached the PROVISIONED
+# state. No circuit was ever live; the SENSE instance (if any) is in
+# CREATE-COMPILED and holds no site resources.
+PROVISIONING_SKIPPED = "finish:provisioning_skipped"
 
 _RM_UNREACHABLE = (
     "failed to communicate with subsystem",
@@ -87,6 +91,11 @@ RECOMMENDATIONS = {
         "delete the orphaned SENSE-O instance manually: "
         "it compiled but was never provisioned, so it holds no site resources, "
         "but SENSE-O will not let a non-admin account remove it"
+    ),
+    PROVISIONING_SKIPPED: (
+        "check whether a SENSE instance was created for this rule (sense_uuid column): "
+        "if one exists it is in CREATE-COMPILED and holds no site resources, "
+        "but should be deleted from SENSE-O to avoid accumulating orphaned instances"
     ),
 }
 
