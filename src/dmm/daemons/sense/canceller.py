@@ -64,20 +64,30 @@ class SENSECancellerDaemon(DaemonBase):
                     req.set_status(status=RequestStatus.DELETED, session=session)
                     continue
                     
-                keep_alive_secs = config_get_int(
-                    "sense", "sense_keep_alive_seconds", default=60, constraint="nonneg"
-                )
-                if req.rucio_finished_at is None:
-                    logging.warning(
-                        f"Request {req.rule_id} has no rucio_finished_at timestamp; "
-                        "proceeding with cancellation immediately"
+                # The keep-alive window lets a freshly-finished provisioned circuit
+                # be reused by the next rule on the same site pair. A circuit that
+                # was never provisioned (sense_provisioned_at is None) has no
+                # traffic on it and nothing to reuse — skip the wait entirely.
+                if req.sense_provisioned_at is not None:
+                    keep_alive_secs = config_get_int(
+                        "sense", "sense_keep_alive_seconds", default=60, constraint="nonneg"
                     )
-                elif (utcnow() - req.rucio_finished_at).total_seconds() < keep_alive_secs:
-                    logging.debug(
-                        f"Request {req.rule_id} finished {(utcnow() - req.rucio_finished_at).total_seconds():.0f}s ago, "
-                        f"waiting for keep-alive window ({keep_alive_secs}s) before cancellation"
+                    if req.rucio_finished_at is None:
+                        logging.warning(
+                            f"Request {req.rule_id} has no rucio_finished_at timestamp; "
+                            "proceeding with cancellation immediately"
+                        )
+                    elif (utcnow() - req.rucio_finished_at).total_seconds() < keep_alive_secs:
+                        logging.debug(
+                            f"Request {req.rule_id} finished {(utcnow() - req.rucio_finished_at).total_seconds():.0f}s ago, "
+                            f"waiting for keep-alive window ({keep_alive_secs}s) before cancellation"
+                        )
+                        continue
+                else:
+                    logging.info(
+                        f"Request {req.rule_id} was never provisioned (sense_provisioned_at is None); "
+                        "skipping keep-alive window and proceeding with cancellation immediately"
                     )
-                    continue
 
                 logging.info(f"Cancelling SENSE link with uuid {req.sense_uuid} for request {req.rule_id}")
 

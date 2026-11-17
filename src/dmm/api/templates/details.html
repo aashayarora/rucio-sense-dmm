@@ -100,7 +100,21 @@
         {% if data.sense_escalation %}
         <div class="alert alert-warn" role="alert">
             <div class="alert-title">Needs an administrator<span class="alert-time">{{ ts(data.sense_escalated_at) }}</span></div>
+            {% if data.sense_escalation == 'finish:provisioning_skipped' %}
+            <div class="alert-body">
+                Rucio finished this rule before DMM could provision a circuit
+                (DMM never reached <span class="mono">PROVISIONED</span>).
+                {% if data.sense_uuid %}
+                A SENSE instance <span class="mono">{{ data.sense_uuid }}</span> was created but
+                holds no site resources (stuck in <span class="mono">CREATE-COMPILED</span>).
+                Delete it from SENSE-O to avoid accumulating orphaned instances.
+                {% else %}
+                No SENSE instance was created, so no manual cleanup is needed.
+                {% endif %}
+            </div>
+            {% else %}
             <div class="alert-body">SENSE recovery stopped retrying: <span class="mono">{{ data.sense_escalation }}</span></div>
+            {% endif %}
         </div>
         {% endif %}
 
@@ -202,7 +216,8 @@
                     <dt>Rule size</dt><dd>{{ bytes(data.rule_size) }}</dd>
                     <dt>SENSE retries</dt><dd>{{ data.sense_retries or 0 }}</dd>
                     <dt>Created</dt><dd>{{ ts(data.created_at) }}</dd>
-                    <dt>Provisioned</dt><dd>{{ ts(data.sense_provisioned_at) }}</dd>
+                    <dt>Provisioned</dt>
+                    <dd>{{ ts(data.sense_provisioned_at) }}{% if data.sense_provisioned_at is none and data.rucio_finished_at %} <span class="status-badge status-warn" title="Rucio finished this rule before DMM reached PROVISIONED">never provisioned</span>{% endif %}</dd>
                     <dt>Rucio finished</dt><dd>{{ ts(data.rucio_finished_at) }}</dd>
                     <dt>Last updated</dt><dd>{{ ts(data.updated_at) }}</dd>
                 </dl>
