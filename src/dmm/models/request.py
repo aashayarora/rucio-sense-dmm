@@ -275,10 +275,11 @@ class Request(ModelBase, table=True):
         self.available_bandwidth_mbps = bandwidth_mbps
         self.save(session)
 
-    def set_pair_available(self, bandwidth_mbps: float, session=None):
+    def set_pair_available(self, bandwidth_mbps: float, at: Optional[datetime] = None, session=None):
+        """at: when SENSE-O gave the figure, its staging; now when that isn't known."""
         logging.info(f"REQUEST UPDATE: {self.rule_id} -> pair_available={bandwidth_mbps} Mbps")
         self.pair_available_mbps = bandwidth_mbps
-        self.pair_available_at = utcnow()
+        self.pair_available_at = at or utcnow()
         self.save(session)
 
     def set_sense_uuid(self, sense_uuid: str, session=None):
