@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, timezone
 import numpy as np
 from scipy.optimize import linprog
 import networkx as nx
@@ -43,7 +44,19 @@ def _calendar_now(req):
     return sorted(slots)[0][2] if slots else req.available_bandwidth_mbps
 
 
-def _calendar_reservations(live, total, horizon):
+def _staged_at(req):
+    """When req was staged, from its calendar, or None without one."""
+    at = (req.path_calendar or {}).get("at")
+    return datetime.fromtimestamp(at, timezone.utc).replace(tzinfo=None) if at else None
+
+
+def _ports_known(data, ports):
+    """Whether every port on an edge's path has a known capacity, so the port rows bound it."""
+    path = data.get('path_ports') or ()
+    return bool(path) and bool(ports) and all(uri in ports for uri in path)
+
+
+def _calendar_reservations(live, total, horizon, ports_known=False):
     """
     The part of an edge's share (total Mbps) the pair's latest SENSE-O calendar
     shows won't be free later, as least_waste reservations [(start, end, Mbps)]
@@ -52,7 +65,9 @@ def _calendar_reservations(live, total, horizon):
     The calendar's first slot is what was free at staging; pair_available is that
     plus what DMM held on the pair, so at time t DMM has pair_available less the
     calendar's drop since then. DMM's circuits are open-ended, so a step in the
-    calendar is someone else's reservation starting or ending.
+    calendar is someone else's reservation starting or ending. When the ports
+    bound the edge (ports_known) its share stands in for pair_available, so the
+    drop comes off the share in full.
     """
     staged = [d for _, d in live if (d.get('calendar') or {}).get('slots')]
     if not staged:
@@ -60,7 +75,7 @@ def _calendar_reservations(live, total, horizon):
     latest = max(staged, key=lambda d: (d.get('calendar') or {}).get('at') or 0)
     slots = sorted(latest['calendar']['slots'])
     free_then = slots[0][2]
-    pair_available = latest.get('pair_available') or free_then
+    pair_available = total if ports_known else (latest.get('pair_available') or free_then)
     now = time.time()
     out = []
     for start, end, free in slots:
@@ -199,6 +214,8 @@ class DeciderDaemon(DaemonBase):
         DMM on its site pair: what its staging found free now (the calendar's first
         slot; the window's minimum without a calendar) plus what DMM's circuits on
         the pair hold. Later changes in the calendar are the schedule's to handle.
+        Each figure is stamped with its staging, so an edge takes the latest
+        staging's figure even when one run records several.
 
         SENSE-O's figure for a new rule is what its path has left after every circuit
         on it, DMM's own included, and DMM shares a pair between its requests, so a
@@ -233,7 +250,7 @@ class DeciderDaemon(DaemonBase):
                 f"{req.src_site_}-{req.dst_site_}: {free:.4f} reported for "
                 f"{req.rule_id} + {held:.0f} held by DMM circuits on the pair"
             )
-            req.set_pair_available(free + held, session=session)
+            req.set_pair_available(free + held, at=_staged_at(req), session=session)
 
     @staticmethod
     def _holds_reservation(req) -> bool:
@@ -364,10 +381,17 @@ class DeciderDaemon(DaemonBase):
 
         Constraints: each site carries no more than its largest mesh link, each
         port in ports no more than it has free for DMM (see _port_rows), and each
-        edge no more than its link and SENSE-O's figure for the pair allow. Site,
-        link and port capacities count at _max_utilization() of their size.
-        SENSE-O's figure is taken as it is: it already leaves out what other
-        circuits hold, and the rows for the sites and ports cap the total anyway.
+        edge no more than its link allows. Site, link and port capacities count at
+        _max_utilization() of their size.
+
+        An edge with a port of unknown capacity on its path is also held to
+        SENSE-O's figure for the pair, taken as it is: it already leaves out what
+        other circuits hold, and the rows for the sites and ports cap the total
+        anyway. Once every port is known the port rows bound the edge as SENSE-O
+        does, without the figure's snapshot of DMM's circuits on other pairs:
+        SENSE-O counted those as taken at staging, though the decider may move
+        them, and the figure is renewed only by the next staging on the pair.
+        Marks each edge's data with ports_known.
         """
         n_edges = len(edges)
         edge_index = {edge[:2]: i for i, edge in enumerate(edges)}
@@ -386,15 +410,25 @@ class DeciderDaemon(DaemonBase):
             b[node_index[u]] -= data['fixed_bandwidth']
             b[node_index[v]] -= data['fixed_bandwidth']
 
-        # An edge carries no more than min(its share of the link, what SENSE-O has
-        # free for the pair) less finished reservations. pair_available counts those
-        # too (it adds back everything DMM held on the pair), so they come off both.
-        edge_bounds = np.array(
-            [min(util * data['link_capacity'], _whole_gbps(data['pair_available'])) - data['fixed_bandwidth']
-             if data.get('pair_available') is not None
-             else min(util * data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth'])
-             for _, _, data in edges], dtype=float
-        )
+        # pair_available counts finished reservations too (it adds back everything
+        # DMM held on the pair), so they come off both it and the link.
+        bounds, figures = [], []
+        for u, v, data in edges:
+            data['ports_known'] = _ports_known(data, ports)
+            if data['ports_known']:
+                bounds.append(util * data['link_capacity'] - data['fixed_bandwidth'])
+            elif data.get('pair_available') is not None:
+                bounds.append(min(util * data['link_capacity'], _whole_gbps(data['pair_available']))
+                              - data['fixed_bandwidth'])
+                figures.append(f"{u}-{v} {data['pair_available']:.0f} Mbps")
+            else:
+                bounds.append(min(util * data['link_capacity'] - data['fixed_bandwidth'], data['max_bandwidth']))
+        edge_bounds = np.array(bounds, dtype=float)
+        if figures != getattr(self, '_pair_figures', None):
+            self._pair_figures = figures
+            if figures:
+                logging.info(f"Pairs held to SENSE-O's figure at staging, a port on their path having "
+                             f"no known capacity: {'; '.join(figures)}")
 
         port_A, port_b = self._port_rows(edges, ports or {}, util)
 
@@ -513,7 +547,8 @@ class DeciderDaemon(DaemonBase):
                     multi_graph[u][v][key]['bandwidth'] = 0
                 continue
             total = bandwidths[edge_index[(u, v)]]
-            schedule = self._schedule_edge(u, v, live, total) if least_waste else None
+            ports_known = simple_graph[u][v].get('ports_known', False)
+            schedule = self._schedule_edge(u, v, live, total, ports_known) if least_waste else None
             for key, data in live:
                 if schedule is None:
                     bandwidth = total * (data['priority'] / total_priority)
@@ -525,7 +560,7 @@ class DeciderDaemon(DaemonBase):
                     continue
                 multi_graph[u][v][key]['bandwidth'] = _whole_gbps_share(bandwidth)
 
-    def _schedule_edge(self, u, v, live, total):
+    def _schedule_edge(self, u, v, live, total, ports_known=False):
         """
         Schedule an edge's live requests within its share (total Mbps) with
         dmm.core.least_waste: by remaining size and priority, over the next
@@ -542,7 +577,7 @@ class DeciderDaemon(DaemonBase):
             return None
         hours = calendar_hours()
         horizon = hours * 3600 // _TICK_S
-        reservations = _calendar_reservations(live, total, horizon)
+        reservations = _calendar_reservations(live, total, horizon, ports_known)
         lowest = total - max((h for _, _, h in reservations), default=0)
         if lowest >= total:
             fallback = None
