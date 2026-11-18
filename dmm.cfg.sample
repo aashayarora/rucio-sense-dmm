@@ -1,16 +1,15 @@
 [dmm]
-; Shared secret for the mutating POST endpoints. Unset means they are
-; open to anyone who can reach DMM. Set this whenever DMM is exposed.
-; api_token = change-me
 port=80
+log_level=INFO
+api_token=
 
-;[auth]
-; client_id = dmm
-; redirect_uri = https://dmm.example.org/auth/callback
-; client_secret =
-; metadata_url = https://sense-o.es.net:8543/realms/StackV/.well-known/openid-configuration
-; session_hours = 12
-; session_secret = change-me
+[auth]
+client_id=
+client_secret=
+redirect_uri=https://dmm.example.org/auth/callback
+metadata_url=https://sense-o.es.net:8543/realms/StackV/.well-known/openid-configuration
+session_hours=12
+session_secret=
 
 [db]
 db_type=postgres
@@ -23,28 +22,19 @@ db_name=dmm
 [sense]
 profile_uuid=
 sense_keep_alive_seconds=60
-finished_r_hold_seconds=120
 keep_failed_instances=false
-; After a NO_RESOURCES staging failure, fetch GET /model and run a local path
-; search to refine the failure reason into NO_CAPACITY / NO_VLANS / NO_TOPOLOGY
-; / FEASIBLE_IN_MODEL. Set to false to skip the probe (e.g. if SENSE-O is slow).
-; path_check_enabled=true
+path_check_enabled=true
+no_resources_backoff_seconds=120
+no_resources_blocked_max_retries=3
 
 [rtmon]
-; The RTMon deployment to register each ready circuit with, named exactly as
-; SENSE-O has it. GET /addon/RTMon lists them; on sense-o.es.net that is
-; "Real Time Mon" alongside several local and image-server deployments.
-; When unset, DMM asks the orchestrator and uses the answer only if exactly one
-; deployment is registered. With several it logs them and enables nothing,
-; because registering grants that deployment's delegate user READ on the
-; instance and the choice is not DMM's to guess. Set this on any orchestrator
-; with more than one.
-; deployment = Real Time Mon
+deployment=
 
 [decider]
-; Skip raising a live circuit's bandwidth by less than this fraction of what it
-; has now; each change costs a SENSE modify. Decreases are never skipped.
 min_upward_modify_fraction=0.1
+max_utilization=0.8
+split=least_waste
+schedule_horizon_hours=24
 
 [prometheus]
 host=
@@ -55,14 +45,14 @@ password=
 fts_host=https://fts3-pilot.cern.ch:8446
 cert=/opt/certs/cert.pem
 key=/opt/certs/key.pem
-monit_host=https://monit-grafana.cern.ch
-monit_auth_token=
 default_num_streams=20
-# Attempts at removing a request's link/SE config before leaving it in FTS
 max_delete_retries=3
 
 [rucio]
 max_retries=1
+heartbeat_timeout=30
+activities=SENSE Test
+rule_lookback_hours=24
 
 [fts-streams]
 T2_US_SDSC-T2_US_Caltech=400
@@ -77,18 +67,10 @@ sense=10
 fts=10
 monit=60
 db=7200
+rucio_heartbeat=60
 
 [vlan-ranges]
-# Keyed by physical site names (see [site-aliases])
 T2_US_SDSC-T2_US_Caltech=3602-3606
 T2_US_SDSC-T2_US_Caltech_Test=3602-3606
 
-# Rucio site names that are extra "logical" names for a physical SENSE site.
-# Each logical site gets its own SENSE-O subnet pool
-# (RUCIO_Site_BGP_Subnet_Pool-<logical name>); everything else - SENSE site
-# name, VLAN ranges, link capacity, FTS stream caps - uses the physical name.
-# Names of the form PhysicalSiteName_ExtName are resolved automatically, so an
-# entry is only needed when the physical name cannot be derived from the
-# logical one. The physical site must be one DMM or SENSE already knows.
 [site-aliases]
-# T2_US_UCSD_Blackhole=T2_US_UCSD

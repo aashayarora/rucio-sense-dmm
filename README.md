@@ -16,7 +16,7 @@ DMM enables Software-Defined Networking (SDN) operated high-energy physics (HEP)
 
 DMM requires the following configuration files:
 
-1. **`dmm.cfg`**: DMM-specific configuration, refer to the sample config for an example.
+1. **`dmm.cfg`**: DMM-specific configuration, refer to [`docs/configuration.md`](docs/configuration.md) for an example.
 2. **`rucio.cfg`**: Rucio client configuration
 3. **X.509 Certificates**: Host certificate and key (`hostcert.pem`, `hostcert.key.pem`)
 4. **`.sense-o-auth.yaml`**: SENSE OAuth credentials
