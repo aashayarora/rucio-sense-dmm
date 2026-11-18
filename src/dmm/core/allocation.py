@@ -231,6 +231,50 @@ def get_site_uris(site_name):
         logging.error(f"get_site_uris: {str(e)}")
         raise ValueError(f"Getting URI failed for {site_name}")
 
+_SENSE_SITES_MANIFEST = {
+    "Sites": [
+        {
+            "sitename": "?sitename?",
+            "apiroot": "?webdomain?",
+            "sparql-ext": "SELECT DISTINCT ?sitename ?webdomain WHERE { ?site nml:hasService ?md_svc .  ?md_svc mrs:hasNetworkAttribute ?sn .  ?sn mrs:tag '/sitename' .  ?sn mrs:value ?sitename .  ?md_svc mrs:hasNetworkAddress ?wd .  ?wd mrs:type 'metadata:webdomain' .  ?wd mrs:value ?webdomain .  }",
+            "required": "true",
+        }
+    ]
+}
+
+def list_sense_sites():
+    """
+    The /sitename of every site in SENSE-O's model, from one manifest query.
+
+    Returns:
+        Set of site names
+
+    Raises:
+        ValueError: If SENSE-O gives no usable answer
+    """
+    try:
+        response = WorkflowCombinedApi().manifest_create(json.dumps(_SENSE_SITES_MANIFEST))
+    except Exception as e:
+        raise ValueError(f"SENSE site manifest failed: {e}") from e
+    logging.debug(f"SENSE site manifest: {json.dumps(response, default=str)}")
+    if not isinstance(response, dict) or not response.get("jsonTemplate"):
+        raise ValueError(f"Invalid response from SENSE site manifest: {response}")
+
+    template = response["jsonTemplate"]
+    if isinstance(template, str):
+        template = json.loads(template)
+    sites = template.get("Sites") or []
+    if isinstance(sites, dict):
+        sites = [sites]
+    names = {
+        str(site["sitename"]).strip()
+        for site in sites
+        if isinstance(site, dict) and site.get("sitename") and not str(site["sitename"]).startswith("?")
+    }
+    if not names:
+        raise ValueError(f"SENSE site manifest listed no sites: {response}")
+    return names
+
 def get_site_info(root_uri):
     """
     Get site info for a given root URI from SENSE.
@@ -425,29 +469,38 @@ def get_endpoints_for_site(sense_uri, site_name):
 
 def refresh_all_sites(rucio_client, session):
     """
-    Refresh all sites from Rucio and SENSE.
+    Refresh the Rucio sites that SENSE-O knows, from Rucio and SENSE.
     This is a high-level function that can be called from the frontend API.
-    
+
+    Only RSEs that resolve to a site in SENSE-O's model are refreshed; the rest
+    cost no SENSE calls.
+
     Args:
         rucio_client: Rucio client instance
         session: Database session
-        
-    Returns:
-        List of Rucio site names that were processed
-    """
 
-    logging.debug("Getting list of sites registered in Rucio")
+    Returns:
+        List of Rucio site names that map to a SENSE site
+
+    Raises:
+        ValueError: If SENSE-O can't list its sites
+    """
+    sense_sites = list_sense_sites()
     rse_names = [i['rse'] for i in list_rses(rucio_client)]
-    logging.debug(f"Got list of sites: {rse_names}, adding to database")
+    matched = {}
+    for rse_name in rse_names:
+        physical_name = _resolve_physical_site_name(rse_name, sense_sites, session)
+        if physical_name:
+            matched[rse_name] = physical_name
+    logging.info(
+        f"{len(matched)} of {len(rse_names)} Rucio sites are SENSE sites: "
+        + ", ".join(f"{r}->{p}" if r != p else r for r, p in matched.items())
+    )
 
     site_objs = []
     refreshed = {}  # physical site name -> Rucio site name that refreshed it
-    for rse_name in rse_names:
+    for rse_name, physical_name in matched.items():
         try:
-            physical_name = _resolve_physical_site_name(rse_name, session)
-            if physical_name != rse_name:
-                logging.info(f"Rucio site {rse_name} maps to physical site {physical_name}")
-
             if physical_name in refreshed:
                 logging.debug(
                     f"Physical site {physical_name} already refreshed this cycle "
@@ -469,44 +522,35 @@ def refresh_all_sites(rucio_client, session):
 
     _ensure_mesh_links(site_objs, session, config_get)
 
-    return rse_names
+    return list(matched)
 
-def _resolve_physical_site_name(rse_name, session):
+def _resolve_physical_site_name(rse_name, sense_sites, session):
     """
-    Resolve a Rucio (logical) site name to its physical site name.
+    Resolve a Rucio (logical) site name to the SENSE site it belongs to.
 
-    Known sites win over SENSE lookups so an existing site is never folded into
-    a shorter name; SENSE discovery is only consulted for names DMM has not seen
-    before.
+    Candidates come from physical_site_candidates, so [site-aliases] entries and
+    _ExtName suffixes both apply, most specific first. A candidate that is a
+    known site SENSE-O no longer lists stops the search, so an existing site is
+    never folded into a shorter name.
 
     Args:
         rse_name: Rucio site name
+        sense_sites: Site names in SENSE-O's model
         session: Database session
 
     Returns:
-        Physical site name
-
-    Raises:
-        ValueError: If no candidate is a known site
+        Physical site name, or None if the RSE is not a SENSE site
     """
-    candidates = physical_site_candidates(rse_name)
-
-    for candidate in candidates:
+    for candidate in physical_site_candidates(rse_name):
+        if candidate in sense_sites:
+            return candidate
         if Site.get_by_name(name=candidate, session=session, use_lock=False):
-            return candidate
-
-    for candidate in candidates:
-        try:
-            get_site_uris(candidate)
-            return candidate
-        except Exception:
-            logging.debug(f"SENSE does not know a site named {candidate}")
-
-    raise ValueError(
-        f"Cannot resolve Rucio site '{rse_name}' to a known physical site "
-        f"(tried: {', '.join(candidates)}). Add a [site-aliases] entry to dmm.cfg "
-        "if its physical site cannot be derived from the name."
-    )
+            logging.warning(f"Rucio site {rse_name} maps to known site {candidate}, which SENSE-O no longer lists")
+            return None
+    alias = config_get("site-aliases", rse_name, default="").strip()
+    if alias:
+        logging.warning(f"[site-aliases] maps {rse_name} to {alias}, which SENSE-O does not list")
+    return None
 
 def _get_or_create_site(site_name, session):
     """
