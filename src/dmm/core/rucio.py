@@ -99,21 +99,34 @@ def rucio_unreachable(client):
     """
     return getattr(client, "reachable", True) is False
 
-def list_replication_rules(client):
+# How Rucio parses its date filters (rucio.common.utils.DATE_FORMAT).
+_RUCIO_DATE_FORMAT = '%a, %d %b %Y %H:%M:%S UTC'
+
+def list_replication_rules(client, activities, created_after):
     """
-    List all replication rules from Rucio.
-    
+    List the replication rules of the given activities created since a time.
+
+    Rucio filters on the server. It matches activity exactly, case included,
+    and takes one activity per query.
+
     Args:
         client: Rucio client instance
-        
+        activities: Rucio activity names
+        created_after: Naive UTC datetime
+
     Returns:
         List of replication rules
-        
+
     Raises:
         Exception: If listing fails
     """
+    since = created_after.strftime(_RUCIO_DATE_FORMAT)
     try:
-        return client.list_replication_rules()
+        return [
+            rule
+            for activity in activities
+            for rule in client.list_replication_rules(filters={"activity": activity, "created_after": since})
+        ]
     except Exception as e:
         logging.error(f"Failed to list Rucio rules: {e}", exc_info=True)
         raise
@@ -306,19 +319,6 @@ def parse_rule_for_request(rule):
         'name': rule.get('name'),
         'activity': rule.get('activity'),
     }
-
-def is_sense_rule(rule):
-    """
-    Check if a rule is a SENSE rule based on activity.
-    
-    Args:
-        rule: Rucio rule dict
-        
-    Returns:
-        True if SENSE rule, False otherwise
-    """
-    activity = rule.get('activity')
-    return activity and "sense" in activity.lower()
 
 # Rucio request states: SUBMITTED requests are in flight in FTS; DONE ones have
 # been archived to the request history.

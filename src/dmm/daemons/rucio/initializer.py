@@ -1,18 +1,18 @@
 import json
 import logging
+from datetime import timedelta
 
 from dmm.daemons.base import DaemonBase
 from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus
 from dmm.db.session import databased
 
-from dmm.core.config import config_get_int
+from dmm.core.config import config_get, config_get_int
 from dmm.core.sitemap import resolve_physical_site
 from dmm.core.rucio import (
     list_replication_rules,
     get_rule_size,
     parse_rule_for_request,
-    is_sense_rule,
     is_rule_ok,
     is_rule_stuck,
     rucio_unreachable,
@@ -36,8 +36,10 @@ class RucioInitDaemon(DaemonBase):
         """
         Process Rucio rules and create requests in the database.
         """
+        activities = [a.strip() for a in config_get("rucio", "activities", default="SENSE Test").split(",") if a.strip()]
+        since = utcnow() - timedelta(hours=config_get_int("rucio", "rule_lookback_hours", default=24))
         try:
-            rules = list_replication_rules(client)
+            rules = list_replication_rules(client, activities, since)
         except Exception as e:
             logging.error(f"Failed to list Rucio rules: {e}", exc_info=True)
             return
@@ -131,11 +133,4 @@ class RucioInitDaemon(DaemonBase):
                 **request_kwargs,
             )
 
-        if is_sense_rule(rule):
-            logging.info(f"Rule {rule_id} identified as a SENSE rule.")
-            transfer_status = RequestStatus.INIT
-        else:
-            logging.info(f"Rule {rule_id} is not a SENSE rule; setting status to 'NOT_SENSE'.")
-            transfer_status = RequestStatus.NOT_SENSE
-
-        return Request(transfer_status=transfer_status, **request_kwargs)
+        return Request(transfer_status=RequestStatus.INIT, **request_kwargs)
