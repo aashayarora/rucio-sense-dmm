@@ -11,9 +11,9 @@ are Rucio RSEs that SENSE knows as the single site T2_US_UCSD.
 
 DMM keeps the logical name on the request and uses it for exactly one thing:
 picking the SENSE-O subnet pool the endpoints are allocated from
-(RUCIO_Site_BGP_Subnet_Pool-<logical name>).  Everything else - SENSE
-discovery, mesh/VLAN lookups, endpoints, bandwidth decisions, FTS stream caps -
-uses the physical name.
+(RUCIO_Site_BGP_Subnet_Pool-<logical name>, or the pool a [subnet-pools] entry
+names instead).  Everything else - SENSE discovery, mesh/VLAN lookups,
+endpoints, bandwidth decisions, FTS stream caps - uses the physical name.
 
 Resolution tries the name itself before stripping any suffix, so a site SENSE
 already knows about is never folded into a shorter name.  An explicit
@@ -59,6 +59,24 @@ def physical_site_candidates(name: str) -> list:
         parts = parts[:-1]
         candidates.append("_".join(parts))
     return candidates
+
+def subnet_pool_site(name: str):
+    """
+    Site whose SENSE-O subnet pool serves a logical site name.
+
+    Each logical site has its own pool unless [subnet-pools] points it at
+    another one, for an RSE that is just the physical site's own storage
+    (T1_US_FNAL_Disk=T1_US_FNAL) rather than a set of hosts of its own.
+
+    Args:
+        name: Logical site name (a Rucio RSE name)
+
+    Returns:
+        Site name the pool is named after
+    """
+    if not name:
+        return name
+    return config_get("subnet-pools", name, default="").strip() or name
 
 def resolve_physical_site(name: str, session=None):
     """

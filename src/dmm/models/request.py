@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from dmm.models.base import *
+from dmm.core.sitemap import subnet_pool_site
 
 class RequestStatus(str, Enum):
     INIT        = "INIT"        # New rule detected, not yet processed
@@ -137,13 +138,13 @@ class Request(ModelBase, table=True):
     # back to it keeps their allocations addressable.
     @property
     def src_pool_site(self) -> Optional[str]:
-        """Logical site whose SENSE-O subnet pool holds the source allocation."""
-        return self.src_logical_site or (self.src_site.name if self.src_site else None)
+        """Site whose SENSE-O subnet pool holds the source allocation."""
+        return subnet_pool_site(self.src_logical_site or (self.src_site.name if self.src_site else None))
 
     @property
     def dst_pool_site(self) -> Optional[str]:
-        """Logical site whose SENSE-O subnet pool holds the destination allocation."""
-        return self.dst_logical_site or (self.dst_site.name if self.dst_site else None)
+        """Site whose SENSE-O subnet pool holds the destination allocation."""
+        return subnet_pool_site(self.dst_logical_site or (self.dst_site.name if self.dst_site else None))
 
     # Requests in these states never change again, so exporting them forever
     # only grows the series count.

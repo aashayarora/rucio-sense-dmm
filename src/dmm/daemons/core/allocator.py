@@ -249,14 +249,14 @@ class AllocatorDaemon(DaemonBase):
             # Clean up SENSE-O allocations
             if src_allocation:
                 try:
-                    free_address(new_request.src_site.name, new_request.rule_id)
+                    free_address(src_pool_site, new_request.rule_id)
                     logging.info(f"Freed source allocation for {new_request.rule_id}")
                 except Exception as free_err:
                     logging.error(f"Failed to free source allocation for {new_request.rule_id}: {free_err}")
 
             if dst_allocation:
                 try:
-                    free_address(new_request.dst_site.name, new_request.rule_id)
+                    free_address(dst_pool_site, new_request.rule_id)
                     logging.info(f"Freed destination allocation for {new_request.rule_id}")
                 except Exception as free_err:
                     logging.error(f"Failed to free destination allocation for {new_request.rule_id}: {free_err}")
