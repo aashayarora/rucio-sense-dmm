@@ -45,7 +45,7 @@ class SENSECancellerDaemon(DaemonBase):
             return
 
         live_reqs = Request.get_by_status(statuses=[RequestStatus.PROVISIONED, RequestStatus.STALE, RequestStatus.DECIDED, RequestStatus.STAGED], session=session)
-        live_uuids = {r.sense_uuid for r in live_reqs if r.sense_uuid}
+        live_uuids = {r.sense_uuid: r.rule_id for r in live_reqs if r.sense_uuid}
             
         for req in reqs_finished:
             try:
@@ -55,6 +55,8 @@ class SENSECancellerDaemon(DaemonBase):
                         f"Request {req.rule_id} is FINISHED but its circuit {req.sense_uuid} is still "
                         f"in use by another live request — skipping cancellation, marking as DELETED"
                     )
+                    if not req.sense_handed_to:
+                        req.update({"sense_handed_to": live_uuids[req.sense_uuid]}, session=session)
                     req.set_status(status=RequestStatus.DELETED, session=session)
                     continue
 
