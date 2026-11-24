@@ -2,6 +2,7 @@ import logging
 
 from dmm.daemons.base import DaemonBase
 
+from dmm.models.base import utcnow
 from dmm.models.request import Request, RequestStatus
 from dmm.models.endpoint import Endpoint
 
@@ -138,8 +139,11 @@ class AllocatorDaemon(DaemonBase):
                     "sense_circuit_status": req_fin.sense_circuit_status,
                     "sense_affiliated": req_fin.sense_affiliated,
                     "sense_alloc_rule_id": inherited_alloc_rule_id,
+                    # The handler only stamps this on CREATE - READY, which a reused circuit may be past
+                    "sense_provisioned_at": req_fin.sense_provisioned_at or utcnow(),
                     "transfer_status": RequestStatus.PROVISIONED
                 }, session=session)
+                req_fin.update({"sense_handed_to": new_request.rule_id}, session=session)
                 req_fin.set_status(status=RequestStatus.DELETED, session=session)
                 session.commit()  # commit reuse atomically before continuing loop — prevents a later session.rollback() from erasing this request's writes
                 claimed_rule_ids.add(req_fin.rule_id)

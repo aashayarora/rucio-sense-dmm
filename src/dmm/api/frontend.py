@@ -424,6 +424,9 @@ async def metrics():
 # smaller than this.
 MAX_BULK_RULE_IDS = 1000
 
+# No circuit any more, and the endpoints are released: they may already be another rule's.
+_NOT_ROUTED = {RequestStatus.FAILED, RequestStatus.REJECTED, RequestStatus.CANCELED, RequestStatus.DELETED}
+
 
 def _allocation_of(req):
     """The four fields Rucio needs to reroute a transfer, or None.
@@ -439,6 +442,8 @@ def _allocation_of(req):
     to reroute. Same rule the `src_rse` metrics label follows.
     """
     if not (req.src_endpoint and req.dst_endpoint):
+        return None
+    if req.transfer_status in _NOT_ROUTED:
         return None
     source = req.src_endpoint.hostname
     destination = req.dst_endpoint.hostname

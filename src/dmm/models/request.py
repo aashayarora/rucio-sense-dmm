@@ -86,6 +86,8 @@ class Request(ModelBase, table=True):
     sense_escalation: Optional[str] = Field(default=None)
     sense_escalated_at: Optional[datetime] = Field(default=None)
     sense_alloc_rule_id: Optional[str] = Field(default=None)
+    # Rule that took over this request's live circuit (allocator reuse).
+    sense_handed_to: Optional[str] = Field(default=None)
     # True once SENSE-O has been asked to register this circuit with RTMon
     # (addon RTMon, instance registration). Guards a once-per-circuit enable.
     rtmon_enabled: Optional[bool] = Field(default=None)

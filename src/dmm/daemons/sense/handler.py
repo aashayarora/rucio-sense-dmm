@@ -167,6 +167,7 @@ class SENSEHandlerDaemon(DaemonBase):
                 )
             else:
                 self._cleanup_failed_instance(req)
+            self._record_final_status(req, session)
             release_endpoints_and_addresses(req, session)
             return False
 
@@ -207,6 +208,7 @@ class SENSEHandlerDaemon(DaemonBase):
                         )
                         escalate(req, CREATE, "sense_error", reason, session)
                         req.mark_failed(reason, session=session)
+                        self._record_final_status(req, session)
                         release_endpoints_and_addresses(req, session)
                         return False
                     else:
@@ -222,6 +224,7 @@ class SENSEHandlerDaemon(DaemonBase):
                             )
                             escalate(req, CREATE, result.kind, reason, session)
                             req.mark_failed(reason, session=session)
+                            self._record_final_status(req, session)
                             release_endpoints_and_addresses(req, session)
                             return False
                         logging.error(
@@ -307,7 +310,7 @@ class SENSEHandlerDaemon(DaemonBase):
 
     @databased
     def run_once(self, session=None):
-        reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED], session=session)
+        reqs = Request.get_by_status(statuses=[RequestStatus.RETRY, RequestStatus.STAGED, RequestStatus.PROVISIONED, RequestStatus.MODIFIED, RequestStatus.CANCELED, RequestStatus.STALE, RequestStatus.DECIDED], session=session)
         if not reqs:
             return
 
@@ -408,6 +411,16 @@ class SENSEHandlerDaemon(DaemonBase):
             self._rebalance_fts_streams(session)
         except Exception as e:
             logging.error(f"Failed to rebalance FTS streams: {e}", exc_info=True)
+
+    @staticmethod
+    def _record_final_status(req, session) -> None:
+        """Best-effort refresh of the circuit status of a request being failed; nothing polls it after."""
+        if not req.sense_uuid:
+            return
+        try:
+            req.set_sense_circuit_status(get_instance_status(req.sense_uuid), session=session)
+        except Exception as e:
+            logging.warning(f"Could not read the final status of {req.sense_uuid} ({req.rule_id}): {e}")
 
     @staticmethod
     def _cleanup_failed_instance(req) -> None:
